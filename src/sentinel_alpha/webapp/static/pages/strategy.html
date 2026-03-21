@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sentinel-Alpha | 策略训练</title>
+  <link rel="stylesheet" href="../styles.css" />
+</head>
+<body>
+  <main class="page">
+    <header class="shell-header">
+      <div class="shell-brand">
+        <img class="shell-logo" src="../assets/logo.jpg" alt="Sentinel-Alpha logo" />
+        <div>
+          <p class="eyebrow">Sentinel-Alpha</p>
+          <h2>策略训练模块</h2>
+        </div>
+      </div>
+      <div class="shell-nav" data-shell="nav"></div>
+      <div data-shell="summary"></div>
+    </header>
+    <section class="page-grid">
+      <article class="panel">
+        <p class="eyebrow">Strategy Lab</p>
+        <h2>策略训练页面</h2>
+        <p>这里独立显示策略候选、默认策略推荐、检查结果和用户训练反馈。</p>
+        <div class="trade-config">
+          <label class="config-field">
+            <span>类型</span>
+            <select id="universe-type-input">
+              <option value="stocks">股票</option>
+              <option value="etfs">ETF</option>
+              <option value="sector">板块</option>
+            </select>
+          </label>
+          <label class="config-field">
+            <span>标的列表</span>
+            <input id="universe-symbols-input" type="text" value="TSLA,NVDA,QQQ" />
+          </label>
+        </div>
+        <div class="action-buttons secondary">
+          <button id="submit-universe">提交交易标的</button>
+        </div>
+        <div class="trade-config">
+          <label class="config-field">
+            <span>策略类型</span>
+            <select id="strategy-type-input">
+              <option value="rule_based_aligned">Rule-Based Aligned</option>
+              <option value="trend_following_aligned">Trend Following Aligned</option>
+              <option value="mean_reversion_aligned">Mean Reversion Aligned</option>
+            </select>
+          </label>
+          <label class="config-field">
+            <span>训练反馈</span>
+            <input id="strategy-feedback-input" type="text" value="Reduce concentration and avoid earnings week." />
+          </label>
+        </div>
+        <div class="action-buttons secondary">
+          <button id="apply-strategy-recommendation">应用策略推荐</button>
+          <button id="iterate-strategy">生成下一版策略</button>
+        </div>
+        <div class="action-buttons secondary">
+          <button id="approve-strategy">确认当前策略</button>
+        </div>
+        <p class="profiler-note" id="strategy-recommendation-note">完成模拟测试后，这里会给出默认策略类型推荐。</p>
+        <p class="profiler-note" id="strategy-note">每个策略版本都会自动经过 Integrity 与 Stress/Overfit 检查。</p>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Package</p>
+        <h3>策略包</h3>
+        <ul id="strategy-package-list" class="result-list">
+          <li>还没有策略包。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Checks</p>
+        <h3>检查结果</h3>
+        <ul id="strategy-check-list" class="result-list">
+          <li>等待策略检查。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Feedback</p>
+        <h3>训练反馈记录</h3>
+        <ul id="feedback-list" class="result-list">
+          <li>还没有训练反馈。</li>
+        </ul>
+      </article>
+    </section>
+  </main>
+  <script src="../session-shell.js"></script>
+  <script src="../page-strategy.js"></script>
+</body>
+</html>

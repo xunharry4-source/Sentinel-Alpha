@@ -1,0 +1,6 @@
+{
+  "apiBase": "http://127.0.0.1:8001",
+  "healthRetryMs": 5000,
+  "frontendLabel": "Sentinel-Alpha Web",
+  "expectedApiService": "sentinel-alpha-api"
+}

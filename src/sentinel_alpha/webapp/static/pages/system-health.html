@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sentinel-Alpha | 系统健康</title>
+  <link rel="stylesheet" href="../styles.css" />
+</head>
+<body>
+  <main class="page">
+    <header class="shell-header">
+      <div class="shell-brand">
+        <img class="shell-logo" src="../assets/logo.jpg" alt="Sentinel-Alpha logo" />
+        <div>
+          <p class="eyebrow">Sentinel-Alpha</p>
+          <h2>系统健康模块</h2>
+        </div>
+      </div>
+      <div class="shell-nav" data-shell="nav"></div>
+      <div data-shell="summary"></div>
+    </header>
+    <section class="page-grid">
+      <article class="panel">
+        <p class="eyebrow">System Health</p>
+        <h2>系统软件与模块状态</h2>
+        <p>这里独立监控当前 API、配置、Agent、策略注册表、Web 模块，以及持久化版外部依赖是否正常运行。</p>
+        <div class="action-buttons secondary compact-actions">
+          <button id="refresh-system-health">刷新系统健康</button>
+        </div>
+        <div class="result-summary">
+          <div class="result-card">
+            <span>Overall</span>
+            <strong id="system-health-status">CHECKING</strong>
+          </div>
+          <div class="result-card">
+            <span>Healthy</span>
+            <strong id="health-ok-count">0</strong>
+          </div>
+          <div class="result-card">
+            <span>Warnings</span>
+            <strong id="health-warning-count">0</strong>
+          </div>
+          <div class="result-card">
+            <span>Errors</span>
+            <strong id="health-error-count">0</strong>
+          </div>
+        </div>
+        <p class="profiler-note" id="system-health-note">正在检查系统健康。</p>
+      </article>
+      <section class="check-grid" id="system-health-grid"></section>
+    </section>
+  </main>
+  <script src="../session-shell.js"></script>
+  <script src="../page-system-health.js"></script>
+</body>
+</html>

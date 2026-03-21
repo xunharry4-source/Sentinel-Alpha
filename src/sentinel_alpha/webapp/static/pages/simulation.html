@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sentinel-Alpha | 模拟测试</title>
+  <link rel="stylesheet" href="../styles.css" />
+</head>
+<body>
+  <main class="page">
+    <header class="shell-header">
+      <div class="shell-brand">
+        <img class="shell-logo" src="../assets/logo.jpg" alt="Sentinel-Alpha logo" />
+        <div>
+          <p class="eyebrow">Sentinel-Alpha</p>
+          <h2>模拟测试模块</h2>
+        </div>
+      </div>
+      <div class="shell-nav" data-shell="nav"></div>
+      <div data-shell="summary"></div>
+    </header>
+    <section class="panel simulator-panel">
+      <div class="simulator-head">
+        <p class="eyebrow">Simulation</p>
+        <h2>30-60 天日度决策模拟舱</h2>
+        <p id="simulation-note">请根据盘面、新闻和讨论信息，自主决定当天交易动作。</p>
+      </div>
+      <div class="simulator-toolbar">
+        <div class="chip-row">
+          <span class="status-chip outline-chip" id="campaign-chip">0 个交易日</span>
+          <span class="status-chip outline-chip" id="step-chip">Step 1</span>
+          <span class="status-chip outline-chip" id="pause-chip">第 1 次暂停 / 5</span>
+        </div>
+      </div>
+      <div class="grid simulator-grid">
+        <article class="panel simulation-stage">
+          <div class="chart-head">
+            <div>
+              <p class="eyebrow">Campaign Daily Chart</p>
+              <h3>测试周期日线图</h3>
+            </div>
+            <div class="stage-stats">
+              <div><span>Current Close</span><strong id="campaign-close">0</strong></div>
+              <div><span>Campaign Return</span><strong id="campaign-return">0%</strong></div>
+              <div><span>Day</span><strong id="campaign-day-label">-</strong></div>
+            </div>
+          </div>
+          <div class="chart-shell">
+            <div class="chart-legend">
+              <span class="legend-item"><i class="legend-swatch bullish"></i>上涨日线</span>
+              <span class="legend-item"><i class="legend-swatch bearish"></i>下跌日线</span>
+            </div>
+            <svg id="campaign-chart" viewBox="0 0 720 250" role="img" aria-label="campaign daily chart"></svg>
+          </div>
+        </article>
+        <article class="panel simulation-stage">
+          <div class="chart-head">
+            <div>
+              <p class="eyebrow">Daily Trading Day</p>
+              <h3 id="scenario-title">-</h3>
+            </div>
+            <div class="stage-stats">
+              <div><span>Close</span><strong id="current-price">0</strong></div>
+              <div><span>Drawdown</span><strong id="current-drawdown">0%</strong></div>
+              <div><span>IV</span><strong id="current-iv">0</strong></div>
+            </div>
+          </div>
+          <div class="chart-shell">
+            <div class="chart-legend">
+              <span class="legend-item"><i class="legend-swatch bullish"></i>上涨 K 线</span>
+              <span class="legend-item"><i class="legend-swatch bearish"></i>下跌 K 线</span>
+              <span class="legend-item"><i class="legend-swatch volume"></i>成交量</span>
+            </div>
+            <svg id="price-chart" viewBox="0 0 720 320" role="img" aria-label="intraday candlestick chart"></svg>
+          </div>
+          <div class="timeline-meta">
+            <span id="current-time">-</span>
+            <span id="noise-channel">-</span>
+          </div>
+          <div class="metric-strip tape-strip">
+            <div class="mini-metric"><span>开盘缺口</span><strong id="open-gap">0%</strong></div>
+            <div class="mini-metric"><span>振幅</span><strong id="day-range">0%</strong></div>
+            <div class="mini-metric"><span>总量</span><strong id="day-volume">0</strong></div>
+            <div class="mini-metric"><span>市场热度</span><strong id="sentiment-heat">0</strong></div>
+          </div>
+        </article>
+        <aside class="panel control-panel">
+          <div class="noise-card">
+            <p class="eyebrow">Narrative Pressure</p>
+            <strong id="noise-headline">-</strong>
+            <p id="noise-body">-</p>
+            <div class="noise-meta">
+              <span id="noise-sentiment">-</span>
+            </div>
+          </div>
+          <div class="headline-card">
+            <p class="eyebrow">Headline Feed</p>
+            <div id="headline-feed" class="headline-feed">
+              <article class="headline-item">
+                <strong>等待新闻流。</strong>
+                <p>开盘后这里会显示当天的重要资讯。</p>
+              </article>
+            </div>
+          </div>
+          <div class="discussion-card">
+            <p class="eyebrow">Community Noise</p>
+            <div id="discussion-feed" class="discussion-feed">
+              <article class="discussion-item">
+                <strong>等待讨论流。</strong>
+                <p>开盘后这里会显示社区讨论和盘中观点。</p>
+              </article>
+            </div>
+          </div>
+          <div class="action-card">
+            <p class="eyebrow">Trade Config</p>
+            <div class="trade-config">
+              <label class="config-field">
+                <span>下单模式</span>
+                <select id="order-mode-input">
+                  <option value="amount">按金额</option>
+                  <option value="shares">按股数</option>
+                </select>
+              </label>
+              <label class="config-field">
+                <span>模拟本金</span>
+                <input id="capital-input" type="number" min="10000" step="10000" value="500000" />
+              </label>
+              <label class="config-field">
+                <span id="order-value-label">本次交易金额 (CNY)</span>
+                <input id="order-amount-input" type="number" min="1000" step="1000" value="50000" />
+              </label>
+              <label class="config-field">
+                <span>限价价格</span>
+                <input id="limit-price-input" type="number" min="0.01" step="0.01" value="100.00" />
+              </label>
+            </div>
+            <p class="profiler-note compact-note">测试开始后，模拟本金会锁定。所有交易都按你输入的限价单撮合，未触发不会成交。</p>
+            <div class="action-buttons">
+              <button id="buy-day">今天买入 / 加仓</button>
+              <button id="sell-day">今天按输入卖出</button>
+              <button id="hold-day">本次暂停不交易</button>
+            </div>
+            <div class="action-buttons secondary">
+              <button id="skip-day">直接跳过今天</button>
+              <button id="sell-all-day">一键全卖</button>
+              <button id="reset-sim">重新生成整段测试</button>
+              <button id="complete-simulation">生成测试报告</button>
+            </div>
+          </div>
+          <div class="impact-card">
+            <p class="eyebrow">Position</p>
+            <p><strong id="position-state">Flat</strong></p>
+            <p>可用现金: <span id="cash-state">0</span></p>
+            <p>仓位占比: <span id="size-state">0%</span></p>
+            <p>Account Equity: <span id="equity-state">0</span></p>
+            <p>Net PnL: <span id="pnl-state">0</span></p>
+            <p>Unrealized: <span id="day-unrealized">0</span></p>
+            <p>Cost: <span id="cost-state">0</span></p>
+          </div>
+        </aside>
+      </div>
+      <div class="metric-strip">
+        <div class="mini-metric"><span>开盘价 / Open</span><strong id="day-open">0</strong></div>
+        <div class="mini-metric"><span>最高价 / High</span><strong id="day-high">0</strong></div>
+        <div class="mini-metric"><span>最低价 / Low</span><strong id="day-low">0</strong></div>
+        <div class="mini-metric"><span>收盘价 / Close</span><strong id="day-close">0</strong></div>
+      </div>
+      <div class="metric-strip">
+        <div class="mini-metric"><span>Day Return</span><strong id="day-return">0%</strong></div>
+        <div class="mini-metric"><span>Rebound</span><strong id="day-rebound">0%</strong></div>
+        <div class="mini-metric"><span>盘型结构</span><strong id="pattern-label">-</strong></div>
+        <div class="mini-metric"><span>Bar Size</span><strong>5m</strong></div>
+      </div>
+      <div class="panel log-table-wrap">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Daily Decision Log</p>
+            <h3>日度决策记录</h3>
+          </div>
+        </div>
+        <table class="log-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Date</th>
+              <th>Action</th>
+              <th>Status</th>
+              <th>Amount</th>
+              <th>Shares</th>
+              <th>Limit</th>
+              <th>Fill</th>
+              <th>Cash After</th>
+              <th>Position After</th>
+              <th>Regime</th>
+              <th>Day Return</th>
+              <th>Day Drawdown</th>
+              <th>Note</th>
+            </tr>
+          </thead>
+          <tbody id="log-body">
+            <tr><td colspan="14">还没有日度决策记录。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+  <script src="../session-shell.js"></script>
+  <script src="../page-simulation.js"></script>
+</body>
+</html>

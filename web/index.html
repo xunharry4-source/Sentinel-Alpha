@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sentinel-Alpha</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Behavior-Aligned Personal Trading Framework</p>
+        <h1>Sentinel-Alpha</h1>
+        <p class="hero-text">
+          一个为个人交易者打造的多智能体系统。它不是追求最大收益的黑箱，而是把行为习惯、风险边界、实时市场和执行纪律统一到同一条决策链里。
+        </p>
+        <div class="hero-tags">
+          <span>8 Agents</span>
+          <span>3 Phases</span>
+          <span>4 Storage Layers</span>
+        </div>
+      </div>
+      <div class="hero-panel">
+        <div class="metric-card">
+          <span class="metric-label">目标函数</span>
+          <strong>U = E(R) - λσ² - φ(behavior)</strong>
+        </div>
+        <div class="metric-card">
+          <span class="metric-label">系统重点</span>
+          <strong>Behavior First, Execution Second</strong>
+        </div>
+      </div>
+    </section>
+
+    <section class="grid two-up">
+      <article class="panel">
+        <h2>三阶段流程</h2>
+        <ol class="flow-list">
+          <li><strong>Simulation</strong>：压力场景与噪音干扰，测出用户真实反应。</li>
+          <li><strong>Synthesis</strong>：把行为弱点变成风险参数与仓位纪律。</li>
+          <li><strong>Execution</strong>：由执行代理落单，风控代理硬性兜底。</li>
+        </ol>
+      </article>
+      <article class="panel">
+        <h2>核心 Agent</h2>
+        <ul class="agent-list">
+          <li>Scenario Director</li>
+          <li>Noise Agent</li>
+          <li>Behavioral Profiler</li>
+          <li>Intelligence Agent</li>
+          <li>Strategy Evolver</li>
+          <li>Portfolio Manager</li>
+          <li>Intent Aligner</li>
+          <li>Risk Guardian</li>
+        </ul>
+      </article>
+    </section>
+
+    <section class="panel">
+      <div class="section-head">
+        <h2>存储架构</h2>
+        <p>按数据本质分层，而不是把所有状态塞进一个数据库。</p>
+      </div>
+      <div class="storage-table-wrap">
+        <table class="storage-table">
+          <thead>
+            <tr>
+              <th>存储类型</th>
+              <th>推荐技术</th>
+              <th>存储内容示例</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>关系型 (SQL)</td>
+              <td>PostgreSQL</td>
+              <td>用户基本信息、实盘资产余额、订单状态</td>
+            </tr>
+            <tr>
+              <td>时序型 (TSDB)</td>
+              <td>TimescaleDB</td>
+              <td>过去 10 年的 1 分钟线数据、用户模拟交易的行为轨迹</td>
+            </tr>
+            <tr>
+              <td>向量型 (Vector)</td>
+              <td>Qdrant</td>
+              <td>用户心理侧写向量、金融新闻语义块、策略特征</td>
+            </tr>
+            <tr>
+              <td>缓存层 (Cache)</td>
+              <td>Redis</td>
+              <td>实时盘口、Agent 通信队列、会话 Session</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="grid architecture-grid">
+      <article class="panel accent">
+        <h2>基础设施职责</h2>
+        <p><strong>PostgreSQL</strong> 保存可审计、可追责的交易状态。</p>
+        <p><strong>TimescaleDB</strong> 保存高频行情和行为轨迹，支撑回放与分析。</p>
+        <p><strong>Qdrant</strong> 保存用户记忆与语义检索上下文。</p>
+        <p><strong>Redis</strong> 支撑低延迟缓存与多 Agent 协调。</p>
+      </article>
+      <article class="panel accent-soft">
+        <h2>编排层</h2>
+        <p><strong>LangChain</strong> 负责将检索、解释、摘要和 Agent 间上下文拼接成一条可维护的推理链。</p>
+        <p>它不替代交易逻辑，而是组织交易逻辑、记忆和解释输出。</p>
+      </article>
+    </section>
+
+    <section class="panel workflow-panel">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow">Product Flow</p>
+          <h2>系统流程控制台</h2>
+        </div>
+        <p id="session-status">尚未创建测试会话。</p>
+      </div>
+      <div class="api-status-bar">
+        <div class="chip-row">
+          <span class="status-chip outline-chip" id="frontend-status-chip">前端未检测</span>
+          <span class="status-chip outline-chip" id="api-status-chip">API 未检测</span>
+          <span class="status-chip outline-chip" id="database-status-chip">数据库未检测</span>
+        </div>
+        <p class="profiler-note" id="api-status-note">页面加载后会自动检查前端、API 与数据库状态。</p>
+      </div>
+      <div class="chip-row flow-steps">
+        <span class="status-chip outline-chip" id="flow-created">1. 创建会话</span>
+        <span class="status-chip outline-chip" id="flow-sim">2. 模拟测试</span>
+        <span class="status-chip outline-chip" id="flow-report">3. 测试报告</span>
+        <span class="status-chip outline-chip" id="flow-universe">4. 标的输入</span>
+        <span class="status-chip outline-chip" id="flow-strategy">5. 策略训练</span>
+        <span class="status-chip outline-chip" id="flow-deploy">6. 部署模式</span>
+      </div>
+      <div class="workflow-grid">
+        <article class="panel">
+          <p class="eyebrow">Step 1</p>
+          <h3>首次打开系统</h3>
+          <div class="trade-config">
+            <label class="config-field">
+              <span>用户名称</span>
+              <input id="user-name-input" type="text" value="Harry" />
+            </label>
+            <label class="config-field">
+              <span>测试本金 (CNY)</span>
+              <input id="starting-capital-input" type="number" min="10000" step="10000" value="500000" />
+            </label>
+          </div>
+          <div class="action-buttons secondary">
+            <button id="create-session">创建测试会话</button>
+            <button id="generate-scenarios">生成测试数据</button>
+          </div>
+        </article>
+        <article class="panel">
+          <p class="eyebrow">Step 2</p>
+          <h3>交易节奏与周期偏好</h3>
+          <div class="trade-config">
+            <label class="config-field">
+              <span>交易频次</span>
+              <select id="frequency-input">
+                <option value="low">低频</option>
+                <option value="medium">中频</option>
+                <option value="high">高频</option>
+              </select>
+            </label>
+            <label class="config-field">
+              <span>偏好周期</span>
+              <select id="timeframe-input"></select>
+            </label>
+          </div>
+          <p class="profiler-note" id="frequency-note">低频更强调等待和耐心，通常更适合日线或周线。</p>
+          <p class="profiler-note" id="timeframe-note">请先选一个你真正愿意执行的观察周期，而不是笼统地说“有机会就交易”。</p>
+          <p class="profiler-note" id="recommendation-note">完成模拟测试后，这里会给出基于交易习惯测试的频次和周期推荐。</p>
+          <p class="profiler-note" id="preference-conflict-note">如果你的主观选择和测试结果明显冲突，这里会提示风险。</p>
+          <label class="config-field">
+            <span>补充说明</span>
+            <input id="preference-rationale-input" type="text" value="我不想全天盯盘，更偏向过滤噪音后的机会。" />
+          </label>
+          <div class="action-buttons secondary">
+            <button id="apply-recommendation">应用测试推荐</button>
+            <button id="save-preferences">保存交易偏好</button>
+          </div>
+        </article>
+      </div>
+
+      <div class="workflow-grid">
+        <article class="panel">
+          <p class="eyebrow">Step 3</p>
+          <h3>交易标的输入</h3>
+          <div class="trade-config">
+            <label class="config-field">
+              <span>类型</span>
+              <select id="universe-type-input">
+                <option value="stocks">股票</option>
+                <option value="etfs">ETF</option>
+                <option value="sector">板块</option>
+              </select>
+            </label>
+            <label class="config-field">
+              <span>标的列表</span>
+              <input id="universe-symbols-input" type="text" value="TSLA,NVDA,QQQ" />
+            </label>
+          </div>
+          <div class="action-buttons secondary">
+            <button id="complete-simulation">生成测试报告</button>
+            <button id="submit-universe">提交交易标的</button>
+          </div>
+        </article>
+        <article class="panel">
+          <p class="eyebrow">Step 4</p>
+          <h3>策略生成与用户反馈</h3>
+          <div class="trade-config">
+            <label class="config-field">
+              <span>策略类型</span>
+              <select id="strategy-type-input">
+                <option value="rule_based_aligned">Rule-Based Aligned</option>
+                <option value="trend_following_aligned">Trend Following Aligned</option>
+                <option value="mean_reversion_aligned">Mean Reversion Aligned</option>
+              </select>
+            </label>
+            <label class="config-field">
+              <span>训练反馈</span>
+              <input id="strategy-feedback-input" type="text" value="Reduce concentration and avoid earnings week." />
+            </label>
+          </div>
+          <p class="profiler-note" id="strategy-recommendation-note">完成模拟测试后，这里会给出默认策略类型推荐。</p>
+          <div class="action-buttons secondary">
+            <button id="apply-strategy-recommendation">应用策略推荐</button>
+            <button id="iterate-strategy">生成下一版策略</button>
+            <button id="approve-strategy">确认当前策略</button>
+          </div>
+        </article>
+      </div>
+
+      <div class="workflow-grid">
+        <article class="panel">
+          <p class="eyebrow">Step 5</p>
+          <h3>部署模式</h3>
+          <div class="action-buttons secondary">
+            <button id="set-autonomous">开启自动交易</button>
+            <button id="set-advice-only">只输出意见</button>
+          </div>
+          <p class="profiler-note" id="deployment-note">尚未选择部署模式。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="panel simulator-panel" id="simulator-section">
+      <div class="section-head simulator-head">
+        <div>
+          <p class="eyebrow">Interactive Test Cabin</p>
+          <h2>压力场景模拟舱</h2>
+        </div>
+        <p>切换场景，逐步执行操作，观察价格、噪音与行为记录如何联动。</p>
+      </div>
+
+      <div class="simulator-toolbar">
+        <label class="scenario-picker">
+          <span>场景</span>
+          <select id="scenario-select"></select>
+        </label>
+        <div class="chip-row">
+          <span class="status-chip" id="playbook-chip">Playbook</span>
+          <span class="status-chip muted-chip" id="cohort-chip">Pressure</span>
+          <span class="status-chip outline-chip" id="step-chip">Step 1</span>
+        </div>
+      </div>
+
+      <div class="simulator-grid">
+        <article class="panel simulation-stage">
+          <div class="chart-head">
+            <div>
+              <p class="eyebrow">Scenario Director</p>
+              <h3 id="scenario-title">Scenario</h3>
+            </div>
+            <div class="stage-stats">
+              <div>
+                <span>Price</span>
+                <strong id="current-price">-</strong>
+              </div>
+              <div>
+                <span>Drawdown</span>
+                <strong id="current-drawdown">-</strong>
+              </div>
+              <div>
+                <span>IV</span>
+                <strong id="current-iv">-</strong>
+              </div>
+            </div>
+          </div>
+          <div class="chart-shell">
+            <svg id="price-chart" viewBox="0 0 720 260" role="img" aria-label="Price chart"></svg>
+          </div>
+          <div class="timeline-meta">
+            <span id="current-time">-</span>
+            <span id="current-truth">-</span>
+          </div>
+        </article>
+
+        <article class="panel control-panel">
+          <div class="noise-card">
+            <p class="eyebrow">Noise Agent</p>
+            <h3>当前噪音</h3>
+            <strong id="noise-headline">暂无</strong>
+            <p id="noise-body">切换到某个场景后，噪音诱导会在这里同步显示。</p>
+            <div class="noise-meta">
+              <span id="noise-channel">channel</span>
+              <span id="noise-sentiment">sentiment</span>
+            </div>
+          </div>
+
+          <div class="action-card">
+            <p class="eyebrow">User Actions</p>
+            <h3>执行操作</h3>
+            <div class="trade-config">
+              <label class="config-field">
+                <span>模拟本金 (CNY)</span>
+                <input id="capital-input" type="number" min="10000" step="10000" value="500000" />
+              </label>
+              <label class="config-field">
+                <span>单次仓位 (%)</span>
+                <input id="position-input" type="number" min="1" max="100" step="1" value="25" />
+              </label>
+            </div>
+            <div class="action-buttons">
+              <button data-action="BUY">BUY</button>
+              <button data-action="SELL">SELL</button>
+              <button data-action="HOLD">HOLD</button>
+            </div>
+            <div class="action-buttons secondary">
+              <button id="next-step">Next Step</button>
+              <button id="reset-sim">Reset</button>
+            </div>
+          </div>
+
+          <div class="metric-strip">
+            <div class="mini-metric">
+              <span>Position</span>
+              <strong id="position-state">Flat</strong>
+            </div>
+            <div class="mini-metric">
+              <span>Size</span>
+              <strong id="size-state">0%</strong>
+            </div>
+            <div class="mini-metric">
+              <span>Net PnL</span>
+              <strong id="pnl-state">0.00%</strong>
+            </div>
+            <div class="mini-metric">
+              <span>Cost</span>
+              <strong id="cost-state">0.00%</strong>
+            </div>
+            <div class="mini-metric">
+              <span>Stress</span>
+              <strong id="stress-state">0.00</strong>
+            </div>
+          </div>
+
+          <div class="impact-card">
+            <p class="eyebrow">Reality Translation</p>
+            <h3>盈亏说明</h3>
+            <strong id="impact-headline">目前还没有真实盈亏冲击。</strong>
+            <p id="impact-body">开仓后，这里会把盈亏换算成更直观的现实语义，比如一部手机、一辆车或一套房。</p>
+          </div>
+        </article>
+      </div>
+
+      <div class="grid simulation-bottom">
+        <article class="panel">
+          <p class="eyebrow">Behavioral Profiler</p>
+          <h3>实时侧写</h3>
+          <div class="profile-grid">
+            <div class="profile-item">
+              <span>Action Frequency</span>
+              <strong id="action-frequency">0.00</strong>
+            </div>
+            <div class="profile-item">
+              <span>Noise Susceptibility</span>
+              <strong id="noise-score">0.00</strong>
+            </div>
+            <div class="profile-item">
+              <span>Bottom-Fishing</span>
+              <strong id="bottom-fishing">No</strong>
+            </div>
+            <div class="profile-item">
+              <span>Deception Score</span>
+              <strong id="deception-score">0.00</strong>
+            </div>
+          </div>
+          <p class="profiler-note" id="profiler-note">等待用户操作。</p>
+        </article>
+
+        <article class="panel">
+          <p class="eyebrow">Behavior Log</p>
+          <h3>操作记录</h3>
+          <div class="log-table-wrap">
+            <table class="log-table">
+              <thead>
+                <tr>
+                  <th>Step</th>
+                  <th>Action</th>
+                  <th>Size</th>
+                  <th>Price</th>
+                  <th>Net PnL</th>
+                  <th>Cost</th>
+                  <th>Noise</th>
+                </tr>
+              </thead>
+              <tbody id="log-body">
+                <tr>
+                  <td colspan="7">还没有记录。</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </article>
+      </div>
+
+      <article class="panel result-panel">
+        <p class="eyebrow">Final Assessment</p>
+        <h3>心理侧写师报告</h3>
+        <div class="result-summary">
+          <div class="result-card">
+            <span>性格标签</span>
+            <strong id="result-archetype">等待测试完成</strong>
+          </div>
+          <div class="result-card">
+            <span>风险承受</span>
+            <strong id="result-risk">-</strong>
+          </div>
+          <div class="result-card">
+            <span>持股力</span>
+            <strong id="result-hold">-</strong>
+          </div>
+          <div class="result-card">
+            <span>过度交易</span>
+            <strong id="result-overtrade">-</strong>
+          </div>
+        </div>
+        <p class="result-note" id="result-note">完整走完一个场景后，这里会给出该用户的交易性格结果。</p>
+        <ul class="result-list" id="result-list">
+          <li>等待测试完成。</li>
+        </ul>
+      </article>
+
+      <article class="panel result-panel">
+        <p class="eyebrow">Profiler JSON</p>
+        <h3>正式 JSON 输出</h3>
+        <p class="result-note">该 JSON 直接供 Strategy Evolver 和后续训练流程消费。</p>
+        <pre class="json-panel" id="profiler-json-panel">{}</pre>
+      </article>
+
+      <article class="panel result-panel">
+        <p class="eyebrow">Strategy Package</p>
+        <h3>策略进化师输出</h3>
+        <p class="result-note" id="strategy-note">提交交易标的并开始迭代后，这里会显示策略包。</p>
+        <ul class="result-list" id="strategy-list">
+          <li>等待策略生成。</li>
+        </ul>
+      </article>
+
+      <article class="panel result-panel">
+        <p class="eyebrow">Strategy Checks</p>
+        <h3>策略检查 Agent 输出</h3>
+        <p class="result-note" id="check-note">每个策略版本都必须通过完整性与压力测试检查。</p>
+        <div class="check-grid" id="check-grid">
+          <div class="check-card">
+            <strong>等待策略生成。</strong>
+            <p>Integrity Checker 与 Stress and Overfit Checker 还未运行。</p>
+          </div>
+        </div>
+      </article>
+
+      <article class="panel result-panel">
+        <p class="eyebrow">Monitoring</p>
+        <h3>监控 Agent 输出</h3>
+        <ul class="result-list" id="monitor-list">
+          <li>等待部署或策略阶段完成。</li>
+        </ul>
+      </article>
+    </section>
+  </main>
+  <script src="script.js"></script>
+</body>
+</html>

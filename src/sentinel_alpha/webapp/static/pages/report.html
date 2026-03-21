@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sentinel-Alpha | 测试报告</title>
+  <link rel="stylesheet" href="../styles.css" />
+</head>
+<body>
+  <main class="page">
+    <header class="shell-header">
+      <div class="shell-brand">
+        <img class="shell-logo" src="../assets/logo.jpg" alt="Sentinel-Alpha logo" />
+        <div>
+          <p class="eyebrow">Sentinel-Alpha</p>
+          <h2>测试报告模块</h2>
+        </div>
+      </div>
+      <div class="shell-nav" data-shell="nav"></div>
+      <div data-shell="summary"></div>
+    </header>
+    <section class="page-grid">
+      <article class="panel">
+        <p class="eyebrow">Behavioral Profiler</p>
+        <h2>测试报告页面</h2>
+        <p>这里独立展示用户心理侧写结果，包括风险承受、噪音敏感度、推荐交易节奏和推荐策略类型。</p>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Profile</p>
+        <h3>结构化报告</h3>
+        <div class="action-buttons secondary compact-actions">
+          <button id="refresh-report">刷新报告</button>
+        </div>
+        <p class="profiler-note" id="report-note">这里展示 Behavioral Profiler 的正式输出。</p>
+        <ul id="report-list" class="result-list">
+          <li>当前还没有测试报告。</li>
+        </ul>
+        <pre id="report-json-panel" class="json-panel">{}</pre>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Evolution</p>
+        <h3>画像演化</h3>
+        <ul id="evolution-list" class="result-list">
+          <li>等待画像演化数据。</li>
+        </ul>
+      </article>
+    </section>
+  </main>
+  <script src="../session-shell.js"></script>
+  <script src="../page-report.js"></script>
+</body>
+</html>

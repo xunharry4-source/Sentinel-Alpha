@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sentinel-Alpha | 交易偏好</title>
+  <link rel="stylesheet" href="../styles.css" />
+</head>
+<body>
+  <main class="page">
+    <header class="shell-header">
+      <div class="shell-brand">
+        <img class="shell-logo" src="../assets/logo.jpg" alt="Sentinel-Alpha logo" />
+        <div>
+          <p class="eyebrow">Sentinel-Alpha</p>
+          <h2>交易偏好模块</h2>
+        </div>
+      </div>
+      <div class="shell-nav" data-shell="nav"></div>
+      <div data-shell="summary"></div>
+    </header>
+    <section class="page-grid">
+      <article class="panel">
+        <p class="eyebrow">Preferences</p>
+        <h2>交易偏好页面</h2>
+        <p>这里聚焦交易频次、周期偏好和推荐冲突。用户不应只说“有机会就交易”，而必须明确选择可执行节奏。</p>
+        <div class="trade-config">
+          <label class="config-field">
+            <span>交易频次</span>
+            <select id="frequency-input">
+              <option value="low">低频</option>
+              <option value="medium">中频</option>
+              <option value="high">高频</option>
+            </select>
+          </label>
+          <label class="config-field">
+            <span>偏好周期</span>
+            <select id="timeframe-input"></select>
+          </label>
+        </div>
+        <p class="profiler-note" id="frequency-note">低频更适合日线或周线。</p>
+        <p class="profiler-note" id="timeframe-note">请先选择一个你真的会执行的周期。</p>
+        <label class="config-field">
+          <span>补充说明</span>
+          <input id="preference-rationale-input" type="text" value="我不想全天盯盘，更偏向过滤噪音后的机会。" />
+        </label>
+        <div class="action-buttons secondary">
+          <button id="apply-recommendation">应用测试推荐</button>
+          <button id="save-preferences">保存交易偏好</button>
+        </div>
+        <p class="profiler-note" id="recommendation-note">完成模拟测试后，这里会给出测试推荐。</p>
+        <p class="profiler-note" id="preference-conflict-note">如果你的选择和测试结果冲突，这里会提示风险。</p>
+        <p class="profiler-note" id="preferences-note">保存后会写入当前 workflow session。</p>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Selected</p>
+        <h3>当前选择</h3>
+        <ul id="preference-list" class="result-list">
+          <li>当前还没有偏好设置。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Recommendation</p>
+        <h3>系统推荐</h3>
+        <ul id="preference-rec-list" class="result-list">
+          <li>等待行为测试推荐。</li>
+        </ul>
+      </article>
+    </section>
+  </main>
+  <script src="../session-shell.js"></script>
+  <script src="../page-preferences.js"></script>
+</body>
+</html>

@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sentinel-Alpha | 情报中心</title>
+  <link rel="stylesheet" href="../styles.css" />
+</head>
+<body>
+  <main class="page">
+    <header class="shell-header">
+      <div class="shell-brand">
+        <img class="shell-logo" src="../assets/logo.jpg" alt="Sentinel-Alpha logo" />
+        <div>
+          <p class="eyebrow">Sentinel-Alpha</p>
+          <h2>情报中心模块</h2>
+        </div>
+      </div>
+      <div class="shell-nav" data-shell="nav"></div>
+      <div data-shell="summary"></div>
+    </header>
+    <section class="page-grid">
+      <article class="panel">
+        <p class="eyebrow">Intelligence</p>
+        <h2>情报中心页面</h2>
+        <p>这里聚焦 `Intelligence Agent` 的网站搜索结果、新闻摘要和来源追踪。</p>
+        <div class="trade-config">
+          <label class="config-field">
+            <span>搜索词</span>
+            <input id="intelligence-query-input" type="text" value="TSLA AI semiconductors" />
+          </label>
+          <label class="config-field">
+            <span>返回数量</span>
+            <input id="intelligence-max-input" type="number" min="1" max="10" value="5" />
+          </label>
+        </div>
+        <div class="action-buttons secondary">
+          <button id="search-intelligence">搜索情报</button>
+        </div>
+        <p class="profiler-note" id="intelligence-note">搜索结果会挂到当前 session，并可进入持久化层。</p>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Documents</p>
+        <h3>情报结果</h3>
+        <ul id="intelligence-list" class="result-list">
+          <li>当前还没有情报结果。</li>
+        </ul>
+      </article>
+    </section>
+  </main>
+  <script src="../session-shell.js"></script>
+  <script src="../page-intelligence.js"></script>
+</body>
+</html>

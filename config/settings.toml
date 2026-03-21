@@ -1,0 +1,37 @@
+[app]
+name = "Sentinel-Alpha"
+mode = "development"
+
+[api]
+host = "127.0.0.1"
+port = 8001
+cors_origins = ["http://127.0.0.1:8000", "http://localhost:8000"]
+
+[frontend]
+host = "127.0.0.1"
+port = 8000
+
+[storage]
+postgres_dsn = "postgresql://localhost:5432/sentinel_alpha"
+timescale_dsn = "postgresql://localhost:5432/sentinel_alpha"
+redis_url = "redis://localhost:6379/0"
+qdrant_url = "http://localhost:6333"
+qdrant_collection = "behavior_memory"
+
+[behavior]
+minimum_universe_size = 5
+health_retry_ms = 5000
+
+[monitoring]
+user_monitor_enabled = true
+strategy_monitor_enabled = true
+market_monitor_enabled = true
+
+[intelligence]
+enabled = true
+max_documents = 6
+request_timeout_seconds = 8
+rss_search_templates = [
+  "https://news.google.com/rss/search?q={query}",
+  "https://feeds.finance.yahoo.com/rss/2.0/headline?s={query}&region=US&lang=en-US"
+]
