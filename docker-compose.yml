@@ -3,12 +3,13 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.web
-    environment:
-      SENTINEL_FRONTEND_HOST: 0.0.0.0
-      SENTINEL_FRONTEND_PORT: 8000
     ports:
       - "8000:8000"
     restart: unless-stopped
+    environment:
+      SENTINEL_FRONTEND_HOST: 0.0.0.0
+      SENTINEL_FRONTEND_PORT: 8000
+      SENTINEL_GRAFANA_URL: http://grafana:3000
 
   api:
     profiles: ["memory"]
@@ -40,6 +41,8 @@ services:
       SENTINEL_TIMESCALE_DSN: postgresql://sentinel:sentinel@timescaledb:5432/sentinel_alpha
       SENTINEL_REDIS_URL: redis://redis:6379/0
       SENTINEL_QDRANT_URL: http://qdrant:6333
+      SENTINEL_PROMETHEUS_ENABLED: "1"
+      SENTINEL_LANGFUSE_HOST: http://langfuse-web:3000
     command: ["uvicorn", "sentinel_alpha.api.persistent_app:app", "--host", "0.0.0.0", "--port", "8001"]
     ports:
       - "8001:8001"
@@ -56,6 +59,85 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
+
+  prometheus:
+    profiles: ["observability"]
+    image: prom/prometheus:latest
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+
+  grafana:
+    profiles: ["observability"]
+    image: grafana/grafana:latest
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    ports:
+      - "3001:3000"
+    restart: unless-stopped
+
+  langfuse-web:
+    profiles: ["observability"]
+    image: langfuse/langfuse:latest
+    environment:
+      NEXTAUTH_SECRET: sentinel-alpha-langfuse-secret
+      SALT: sentinel-alpha-langfuse-salt
+      DATABASE_URL: postgresql://langfuse:langfuse@langfuse-postgres:5432/langfuse
+      DIRECT_URL: postgresql://langfuse:langfuse@langfuse-postgres:5432/langfuse
+      REDIS_CONNECTION_STRING: redis://langfuse-redis:6379
+      CLICKHOUSE_MIGRATION_URL: clickhouse://langfuse-clickhouse:9000
+      CLICKHOUSE_URL: http://langfuse-clickhouse:8123
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "false"
+    depends_on:
+      langfuse-postgres:
+        condition: service_healthy
+      langfuse-redis:
+        condition: service_started
+      langfuse-clickhouse:
+        condition: service_started
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+
+  langfuse-postgres:
+    profiles: ["observability"]
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: langfuse
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: langfuse
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - langfuse-postgres-data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  langfuse-redis:
+    profiles: ["observability"]
+    image: redis:7-alpine
+    restart: unless-stopped
+
+  langfuse-clickhouse:
+    profiles: ["observability"]
+    image: clickhouse/clickhouse-server:latest
+    environment:
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+    volumes:
+      - langfuse-clickhouse-data:/var/lib/clickhouse
+    restart: unless-stopped
 
   timescaledb:
     profiles: ["persistent"]
@@ -103,3 +185,5 @@ services:
 volumes:
   timescaledb-data:
   qdrant-data:
+  langfuse-postgres-data:
+  langfuse-clickhouse-data:

@@ -30,11 +30,13 @@ The implemented product flow is:
 6. let the user confirm or override preferences
 7. submit trade universe inputs
 8. iterate strategy candidates with user feedback
-9. run mandatory integrity and stress checks
-10. re-iterate automatically or manually if checks fail
-11. approve strategy
-12. switch to autonomous or advice-only mode
-13. continue monitoring and profile evolution
+9. generate strategy code artifacts and archive each iteration
+10. run mandatory integrity and stress checks
+11. re-iterate automatically or manually if checks fail
+12. optionally send code-change instructions to `Programmer Agent`
+13. approve strategy
+14. switch to autonomous or advice-only mode
+15. continue monitoring and profile evolution
 
 ## Repository Structure
 
@@ -46,6 +48,7 @@ The implemented product flow is:
   - shared contracts
 - `src/sentinel_alpha/agents`
   - `behavioral_profiler`
+  - `programmer_agent`
   - `strategy_evolver`
   - `intelligence_agent`
 - `src/sentinel_alpha/api`
@@ -169,6 +172,11 @@ These files define:
 - default provider/model
 - per-agent model routing
 - per-task model routing
+- programmer-agent command, repo scope, and allowlisted paths
+- Prometheus metrics path
+- Sentry settings
+- LangFuse settings
+- Grafana URL
 
 Detailed configuration rules are documented in [configuration.md](/Users/harry/Documents/git/Sentinel-Alpha/docs/configuration.md).
 
@@ -222,6 +230,21 @@ Each iteration now emits:
 - a strategy training log row
 - generated strategy code artifact
 - LLM route metadata for the current version
+- archived strategy iteration report
+
+The strategy page now exposes a strategy experiment surface rather than a single latest-result panel:
+
+- current training status
+- problem analysis
+- baseline and dual-plan comparison
+- current recommended code
+- strategy iteration history
+- report archive
+- version comparison
+- historical code inspection
+- failure evolution timeline
+- archived version restore
+- Programmer Agent execution records
 
 ## Behavioral Alignment Layer
 
@@ -241,6 +264,9 @@ Relevant workflow fields:
 - `strategy_feedback_log`
 - `trade_records`
 - `market_snapshots`
+- `report_history`
+- `history_events`
+- `programmer_runs`
 
 ## LLM Routing Layer
 
@@ -258,6 +284,53 @@ Current task classes include:
 - `behavior_analysis`
 - `market_summarization`
 - `strategy_analysis`
+- `strategy_codegen`
+- `strategy_critic`
+
+## Programmer Agent Layer
+
+The repository now includes a controlled local coding agent:
+
+- `Programmer Agent`
+
+This role is intended for:
+
+- strategy code self-repair
+- local strategy implementation from natural-language instructions
+- controlled file mutation
+- git diff capture
+- commit capture
+- rollback anchoring
+
+The current implementation does not allow arbitrary repo-wide mutation. It is constrained by configuration:
+
+- command path
+- repository root
+- allowlisted editable paths
+- auto-commit policy
+- timeout
+
+The canonical skill is:
+
+- [programmer-agent SKILL](/Users/harry/Documents/git/Sentinel-Alpha/skills/programmer-agent/SKILL.md)
+
+## Observability and Diagnostics
+
+The system-health surface now includes:
+
+- module status
+- library and SDK diagnostics
+- agent diagnostics
+- recent agent logs
+- recent errors
+- token usage summary
+
+Observability integrations now include:
+
+- Prometheus
+- Grafana
+- Sentry
+- LangFuse
 - `strategy_codegen`
 - `strategy_critic`
 

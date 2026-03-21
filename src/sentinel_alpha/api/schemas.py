@@ -99,6 +99,13 @@ class DeploymentRequest(BaseModel):
     execution_mode: Literal["autonomous", "advice_only"]
 
 
+class ProgrammerTaskRequest(BaseModel):
+    instruction: str
+    target_files: list[str] = Field(default_factory=list)
+    context: str | None = None
+    commit_changes: bool = True
+
+
 class MonitorSignal(BaseModel):
     monitor_type: Literal["user", "strategy", "market"]
     severity: Literal["info", "warning", "critical"]
@@ -138,4 +145,8 @@ class SessionSnapshot(BaseModel):
     strategy_training_log: list[dict]
     intelligence_documents: list[dict]
     information_events: list[dict]
+    history_events: list[dict]
+    report_history: list[dict]
+    intelligence_runs: list[dict]
+    programmer_runs: list[dict]
     monitors: list[MonitorSignal]

@@ -212,3 +212,24 @@ create table if not exists information_events (
     payload jsonb not null,
     created_at timestamptz not null default now()
 );
+
+create table if not exists history_events (
+    id uuid primary key,
+    session_id uuid not null,
+    event_type text not null,
+    summary text not null,
+    phase text,
+    payload jsonb not null,
+    created_at timestamptz not null default now()
+);
+
+create table if not exists report_snapshots (
+    id uuid primary key,
+    session_id uuid not null,
+    report_type text not null,
+    title text not null,
+    phase text,
+    related_refs jsonb not null default '[]'::jsonb,
+    payload jsonb not null,
+    created_at timestamptz not null default now()
+);

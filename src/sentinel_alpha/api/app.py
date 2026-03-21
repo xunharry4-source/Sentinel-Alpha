@@ -11,6 +11,7 @@ from sentinel_alpha.api.schemas import (
     CompleteSimulationRequest,
     CreateSessionRequest,
     DeploymentRequest,
+    ProgrammerTaskRequest,
     InformationEventBatchRequest,
     IntelligenceSearchRequest,
     MarketSnapshotIn,
@@ -23,6 +24,7 @@ from sentinel_alpha.api.schemas import (
 from sentinel_alpha.config import get_settings
 from sentinel_alpha.api.workflow_service import WorkflowService
 from sentinel_alpha.domain.models import BehaviorEvent, MarketDataPoint, TradeExecutionRecord
+from sentinel_alpha.infra.observability import initialize_observability
 
 def create_app(service: WorkflowService | None = None) -> FastAPI:
     settings = get_settings()
@@ -35,6 +37,7 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
         allow_headers=["*"],
     )
     resolved_service = service or WorkflowService()
+    app.state.observability = initialize_observability(app, settings)
 
     def health_payload() -> dict:
         persistent = hasattr(resolved_service, "workflow_store")
@@ -59,6 +62,7 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
                 "status": database_status,
                 "detail": database_detail,
             },
+            "observability": app.state.observability,
         }
 
     def snapshot(session_id: UUID) -> SessionSnapshot:
@@ -83,6 +87,10 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
             strategy_training_log=session.strategy_training_log,
             intelligence_documents=session.intelligence_documents,
             information_events=session.information_events,
+            history_events=session.history_events,
+            report_history=session.report_history,
+            intelligence_runs=session.intelligence_runs,
+            programmer_runs=session.programmer_runs,
             monitors=resolved_service.monitor_signals(session_id),
         )
 
@@ -291,6 +299,22 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Session not found.") from exc
 
+    @app.post("/api/sessions/{session_id}/programmer/execute", response_model=SessionSnapshot)
+    def execute_programmer_task(session_id: UUID, payload: ProgrammerTaskRequest) -> SessionSnapshot:
+        try:
+            resolved_service.execute_programmer_task(
+                session_id,
+                payload.instruction,
+                payload.target_files,
+                payload.context,
+                payload.commit_changes,
+            )
+            return snapshot(session_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Session not found.") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.post("/api/sessions/{session_id}/strategy/approve", response_model=SessionSnapshot)
     def approve_strategy(session_id: UUID) -> SessionSnapshot:
         try:
@@ -329,6 +353,20 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
         try:
             session = resolved_service.get_session(session_id)
             return {"profile_evolution": session.profile_evolution}
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Session not found.") from exc
+
+    @app.get("/api/sessions/{session_id}/history")
+    def get_session_history(session_id: UUID) -> dict:
+        try:
+            return {"history_events": resolved_service.history(session_id)}
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Session not found.") from exc
+
+    @app.get("/api/sessions/{session_id}/reports")
+    def get_session_reports(session_id: UUID) -> dict:
+        try:
+            return {"report_history": resolved_service.reports(session_id)}
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Session not found.") from exc
 

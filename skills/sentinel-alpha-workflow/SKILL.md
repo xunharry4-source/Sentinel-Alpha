@@ -30,6 +30,7 @@ Required rule:
 - behavioral thresholds such as minimum trade universe size must come from backend config
 - if a new service is added and no config entry exists yet, the task is not complete
 - if an agent or workflow step uses LLMs, provider/model selection must be declared in config
+- observability endpoints and credentials must also come from config
 - do not force all agent reasoning and generation through a single model; support per-agent and per-task model routing
 - strategy analysis, strategy code generation, and strategy critique should be allowed to use different models
 
@@ -57,8 +58,26 @@ Required rule:
 - web and API containers must run the canonical module entrypoints, not duplicate ad hoc scripts
 - container configuration must come from the same config contract plus environment overrides
 - persistent container deployments must provision PostgreSQL or TimescaleDB, Redis, and Qdrant explicitly
+- if observability is enabled, Prometheus and Grafana should be provisioned as first-class services
 - database initialization must come from tracked SQL files, not manual undocumented steps
 - Docker documentation must state both memory-mode and persistent-mode startup paths
+
+## Observability Rule
+
+Observability must explain where the failure is, not merely show red or green lights.
+
+Required rule:
+
+- expose Prometheus metrics from the API
+- provide Grafana as the dashboard entrypoint for users
+- route application exceptions into Sentry when enabled
+- trace LLM and intelligence/strategy summarization workloads into LangFuse when enabled
+- system health output must include:
+  - module status
+  - agent status
+  - recent agent logs
+  - recent errors
+  - token usage summary
 
 ## Web Module Rule
 
@@ -95,6 +114,12 @@ The system must preserve the following eight core agents as first-class roles:
 These eight agents define the core product architecture.
 
 The three monitoring agents added later are supervisory agents layered on top of this core.
+
+An additional implementation agent is allowed when local code mutation is required:
+
+| Agent | Core Responsibility | Key Capabilities |
+| --- | --- | --- |
+| `Programmer Agent` | perform controlled local code changes from natural-language instructions and preserve diff/commit/rollback trace | Aider integration, git diff, commit capture, rollback anchoring |
 
 Two additional strategy-check agents are mandatory before any strategy version can be approved:
 
@@ -150,6 +175,15 @@ Required rule:
 - each iteration must run the two mandatory check agents
 - each iteration must be logged
 - iteration failures must be logged with explicit error detail
+- strategy versions must use the canonical version format:
+  - `V<major>.<minor>-<test_version>-<strategy_name>`
+- examples:
+  - `V1.7-0-trend_following_aligned`
+  - `V1.7-1-structural_upgrade`
+  - `V1.7-2-strategy_improvement`
+- `major.minor` identifies the main strategy generation round
+- `test_version` identifies baseline or candidate test branch inside the round
+- `strategy_name` identifies the strategy family or candidate plan name
 - the user must be allowed to choose:
   - guided auto-iteration until the version passes
   - free iteration for a fixed number of rounds even if the user wants to keep exploring
@@ -213,6 +247,26 @@ The effective user trading profile must be allowed to evolve from:
 - later manual trade behavior
 - later automated execution outcomes
 - monitoring drift signals where applicable
+
+## History Rule
+
+Everything important must leave an auditable trace.
+
+Required rule:
+
+- do not keep only the latest state when the event has decision value
+- the system must preserve history for:
+  - behavioral reports
+  - strategy iteration reports
+  - intelligence summaries
+  - strategy feedback
+  - trade records
+  - market snapshots
+  - monitor outputs
+  - profile evolution events
+- reports must be archived, not silently overwritten
+- history entries must preserve timestamp, phase, event type, and a structured payload
+- intelligence history must preserve raw source URLs alongside the summarized report
 
 ## Intelligence Rule
 

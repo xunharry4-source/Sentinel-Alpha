@@ -23,7 +23,7 @@
       <article class="panel">
         <p class="eyebrow">System Health</p>
         <h2>系统软件与模块状态</h2>
-        <p>这里独立监控当前 API、配置、Agent、策略注册表、Web 模块，以及持久化版外部依赖是否正常运行。</p>
+        <p>这里独立监控当前 API、配置、Agent、策略注册表、Web 模块、LLM Token 消耗，以及持久化版外部依赖是否正常运行。</p>
         <div class="action-buttons secondary compact-actions">
           <button id="refresh-system-health">刷新系统健康</button>
         </div>
@@ -47,7 +47,60 @@
         </div>
         <p class="profiler-note" id="system-health-note">正在检查系统健康。</p>
       </article>
-      <section class="check-grid" id="system-health-grid"></section>
+      <article class="panel">
+        <p class="eyebrow">LLM Usage</p>
+        <h3>Token 使用概览</h3>
+        <div class="result-summary">
+          <div class="result-card">
+            <span>Calls</span>
+            <strong id="token-call-count">0</strong>
+          </div>
+          <div class="result-card">
+            <span>Input Tokens</span>
+            <strong id="token-input-count">0</strong>
+          </div>
+          <div class="result-card">
+            <span>Output Tokens</span>
+            <strong id="token-output-count">0</strong>
+          </div>
+          <div class="result-card">
+            <span>Providers</span>
+            <strong id="token-provider-count">0</strong>
+          </div>
+        </div>
+        <ul id="token-usage-list" class="result-list">
+          <li>当前还没有 token 使用记录。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Recent Errors</p>
+        <h3>最近错误定位</h3>
+        <ul id="system-error-list" class="result-list">
+          <li>当前没有错误。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Recent Logs</p>
+        <h3>最近 Agent 日志</h3>
+        <ul id="agent-log-list" class="result-list">
+          <li>当前还没有 Agent 运行日志。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Modules</p>
+        <h3>系统模块</h3>
+        <section class="check-grid" id="system-health-grid"></section>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Libraries</p>
+        <h3>依赖库与 SDK</h3>
+        <section class="check-grid" id="library-health-grid"></section>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Agents</p>
+        <h3>Agent 诊断</h3>
+        <section class="check-grid" id="agent-health-grid"></section>
+      </article>
     </section>
   </main>
   <script src="../session-shell.js"></script>

@@ -357,6 +357,30 @@ th {
   gap: 16px;
 }
 
+.timeline-grid {
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+}
+
+.timeline-card {
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent);
+  border-radius: 18px;
+  padding: 16px 18px;
+  background: rgba(255, 255, 255, 0.7);
+}
+
+.timeline-card strong {
+  display: block;
+  color: var(--ink);
+  margin-bottom: 8px;
+}
+
+.timeline-card p {
+  margin: 6px 0;
+}
+
 .check-card {
   border: 1px solid var(--line);
   border-radius: 20px;
@@ -947,6 +971,15 @@ button[data-action="HOLD"],
   overflow-x: auto;
   font-size: 13px;
   line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.check-label {
+  margin: 10px 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 .step-active {

@@ -36,6 +36,25 @@ class AppSettings:
     llm_provider_envs: dict[str, dict[str, str]]
     llm_agent_configs: dict[str, dict[str, str | float | int]]
     llm_task_configs: dict[str, dict[str, str | float | int]]
+    programmer_agent_enabled: bool
+    programmer_agent_command: str
+    programmer_agent_args: list[str]
+    programmer_agent_repo_path: str
+    programmer_agent_allowed_paths: list[str]
+    programmer_agent_auto_commit: bool
+    programmer_agent_timeout_seconds: int
+    prometheus_enabled: bool
+    prometheus_metrics_path: str
+    sentry_enabled: bool
+    sentry_dsn: str | None
+    sentry_environment: str
+    sentry_traces_sample_rate: float
+    sentry_profiles_sample_rate: float
+    langfuse_enabled: bool
+    langfuse_host: str
+    langfuse_public_key: str | None
+    langfuse_secret_key: str | None
+    grafana_url: str | None
     config_path: str
 
 
@@ -133,6 +152,12 @@ def get_settings() -> AppSettings:
     behavior = payload.get("behavior", {})
     intelligence = payload.get("intelligence", {})
     llm = payload.get("llm", {})
+    programmer_agent = payload.get("programmer_agent", {})
+    observability = payload.get("observability", {})
+    prometheus = observability.get("prometheus", {})
+    sentry = observability.get("sentry", {})
+    langfuse = observability.get("langfuse", {})
+    grafana = observability.get("grafana", {})
     llm_providers = llm.get("providers", {})
     llm_agents = llm.get("agents", {})
     llm_tasks = llm.get("tasks", {})
@@ -164,5 +189,24 @@ def get_settings() -> AppSettings:
         llm_provider_envs={str(name): dict(config) for name, config in llm_providers.items()},
         llm_agent_configs={str(name): dict(config) for name, config in llm_agents.items()},
         llm_task_configs={str(name): dict(config) for name, config in llm_tasks.items()},
+        programmer_agent_enabled=_env_bool("SENTINEL_PROGRAMMER_AGENT_ENABLED", bool(programmer_agent.get("enabled", False))),
+        programmer_agent_command=os.getenv("SENTINEL_PROGRAMMER_AGENT_COMMAND", str(programmer_agent.get("command", "aider"))),
+        programmer_agent_args=list(programmer_agent.get("args", ["--yes-always"])),
+        programmer_agent_repo_path=os.getenv("SENTINEL_PROGRAMMER_AGENT_REPO_PATH", str(programmer_agent.get("repo_path", str(_repo_root())))),
+        programmer_agent_allowed_paths=list(programmer_agent.get("allowed_paths", ["src/sentinel_alpha/strategies", "tests", "scripts"])),
+        programmer_agent_auto_commit=_env_bool("SENTINEL_PROGRAMMER_AGENT_AUTO_COMMIT", bool(programmer_agent.get("auto_commit", True))),
+        programmer_agent_timeout_seconds=int(os.getenv("SENTINEL_PROGRAMMER_AGENT_TIMEOUT_SECONDS", str(programmer_agent.get("timeout_seconds", 180)))),
+        prometheus_enabled=_env_bool("SENTINEL_PROMETHEUS_ENABLED", bool(prometheus.get("enabled", True))),
+        prometheus_metrics_path=os.getenv("SENTINEL_PROMETHEUS_METRICS_PATH", str(prometheus.get("metrics_path", "/metrics"))),
+        sentry_enabled=_env_bool("SENTINEL_SENTRY_ENABLED", bool(sentry.get("enabled", False))),
+        sentry_dsn=os.getenv("SENTINEL_SENTRY_DSN", str(sentry.get("dsn", ""))) or None,
+        sentry_environment=os.getenv("SENTINEL_SENTRY_ENVIRONMENT", str(sentry.get("environment", "development"))),
+        sentry_traces_sample_rate=float(os.getenv("SENTINEL_SENTRY_TRACES_SAMPLE_RATE", str(sentry.get("traces_sample_rate", 0.1)))),
+        sentry_profiles_sample_rate=float(os.getenv("SENTINEL_SENTRY_PROFILES_SAMPLE_RATE", str(sentry.get("profiles_sample_rate", 0.0)))),
+        langfuse_enabled=_env_bool("SENTINEL_LANGFUSE_ENABLED", bool(langfuse.get("enabled", False))),
+        langfuse_host=os.getenv("SENTINEL_LANGFUSE_HOST", str(langfuse.get("host", "http://localhost:3000"))),
+        langfuse_public_key=os.getenv("SENTINEL_LANGFUSE_PUBLIC_KEY", str(langfuse.get("public_key", ""))) or None,
+        langfuse_secret_key=os.getenv("SENTINEL_LANGFUSE_SECRET_KEY", str(langfuse.get("secret_key", ""))) or None,
+        grafana_url=os.getenv("SENTINEL_GRAFANA_URL", str(grafana.get("url", ""))) or None,
         config_path=str(path),
     )

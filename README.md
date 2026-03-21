@@ -12,6 +12,22 @@ The objective is not raw return maximization. The objective is user-aligned util
 
 The current implementation supports multi-model routing rather than a single fixed LLM path. Different agents and tasks can use different providers and models, and strategy training can run as a guided auto-iteration loop or as a free iteration workflow.
 
+Observability now includes:
+
+- Prometheus metrics exposure
+- Grafana dashboard entry configuration
+- Sentry error reporting integration
+- LangFuse tracing hooks for intelligence and strategy LLM tasks
+
+The code mutation layer now includes a controlled `Programmer Agent` backed by `Aider`-style local editing flow:
+
+- natural-language coding instruction intake
+- constrained local file modification scope
+- git diff capture
+- commit hash capture
+- rollback anchor capture
+- strategy-code experiment history
+
 ## What Exists Now
 
 - behavioral stress scenario generation
@@ -24,7 +40,11 @@ The current implementation supports multi-model routing rather than a single fix
 - multi-model LLM configuration for agent routing and task routing
 - generated strategy code artifacts stored in each strategy package
 - iterative strategy training logs and loop state
+- strategy report archive, version history, failure evolution, and version restore workflow
 - profile evolution from feedback and trade records
+- system health diagnostics with module status, agent logs, recent errors, and token usage
+- library and SDK diagnostics inside system health
+- controlled Programmer Agent for local strategy-code mutation and self-repair
 - PostgreSQL / TimescaleDB / Qdrant / Redis persistence adapters
 - dedicated frontend web module
 
@@ -84,6 +104,12 @@ Docker deployment details:
 
 - [docker-deployment.md](/Users/harry/Documents/git/Sentinel-Alpha/docs/docker-deployment.md)
 
+## License
+
+This project is licensed under the Apache License 2.0.
+
+- [LICENSE](/Users/harry/Documents/git/Sentinel-Alpha/LICENSE)
+
 ## Frontend
 
 Canonical frontend module:
@@ -126,6 +152,14 @@ Important task routes now include:
 - `strategy_analysis`
 - `strategy_codegen`
 - `strategy_critic`
+- `Programmer Agent`
+
+Current programmer-agent support:
+
+- controlled execution through local config
+- target-path allowlist
+- diff / commit / rollback outputs
+- session-level archival through `programmer_runs`, `history_events`, and `report_history`
 
 Current API support:
 
@@ -158,6 +192,19 @@ Every iteration writes:
 - strategy checks
 - strategy training log
 - feedback history
+- strategy report archive
+- version-comparison-ready metadata
+
+The strategy frontend now exposes:
+
+- current training status
+- iteration history
+- report archive
+- version A vs version B comparison
+- historical code viewer
+- failure evolution timeline
+- restore archived version into current experiment inputs
+- Programmer Agent execution panel
 
 ## Validation
 

@@ -41,6 +41,15 @@ Generate the next strategy candidate using:
 - automatic strategy integrity checks
 - automatic stress and overfit checks
 
+The resulting session state now includes:
+
+- `strategy_training_log`
+- `report_history`
+- `strategy_package`
+- `candidate_variants`
+- `recommended_variant`
+- generated code artifacts
+
 ### `POST /api/sessions/{session_id}/intelligence/search`
 
 Search configured public websites and news feeds for market intelligence related to a query.
@@ -55,6 +64,33 @@ Request:
 ```
 
 The response includes structured intelligence documents attached to the session.
+
+It also archives:
+
+- summarized intelligence report
+- source URLs
+- intelligence run history
+
+### `POST /api/sessions/{session_id}/programmer/execute`
+
+Run the controlled `Programmer Agent` against local files.
+
+Request:
+
+```json
+{
+  "instruction": "Adjust the strategy parameters and keep the risk guard intact.",
+  "target_files": ["src/sentinel_alpha/strategies/rule_based.py"],
+  "context": "Use the latest failed iteration summary.",
+  "commit_changes": true
+}
+```
+
+Response session state includes:
+
+- `programmer_runs`
+- `history_events`
+- `report_history`
 
 ### `POST /api/sessions/{session_id}/strategy/approve`
 
@@ -80,3 +116,11 @@ Return live monitor outputs:
 ### `GET /api/sessions/{session_id}`
 
 Return the full workflow state for the frontend.
+
+### `GET /api/sessions/{session_id}/history`
+
+Return workflow history events.
+
+### `GET /api/sessions/{session_id}/reports`
+
+Return archived reports, including behavioral reports, intelligence summaries, strategy iteration snapshots, and programmer runs.

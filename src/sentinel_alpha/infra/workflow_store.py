@@ -319,6 +319,45 @@ class PostgresWorkflowStore:
                         ),
                     )
 
+    def save_history_event(self, session_id: UUID, event: dict) -> None:
+        with psycopg.connect(self.dsn) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    insert into history_events (
+                        id, session_id, event_type, summary, phase, payload
+                    ) values (%s, %s, %s, %s, %s, %s::jsonb)
+                    """,
+                    (
+                        uuid4(),
+                        session_id,
+                        event.get("event_type", "unknown"),
+                        event.get("summary", ""),
+                        event.get("phase"),
+                        json.dumps(event),
+                    ),
+                )
+
+    def save_report_snapshot(self, session_id: UUID, report: dict) -> None:
+        with psycopg.connect(self.dsn) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    insert into report_snapshots (
+                        id, session_id, report_type, title, phase, related_refs, payload
+                    ) values (%s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)
+                    """,
+                    (
+                        uuid4(),
+                        session_id,
+                        report.get("report_type", "unknown"),
+                        report.get("title", ""),
+                        report.get("phase"),
+                        json.dumps(report.get("related_refs", [])),
+                        json.dumps(report),
+                    ),
+                )
+
     def compose_market_template_campaign(
         self,
         day_count: int = 40,

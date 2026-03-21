@@ -25,9 +25,15 @@ def test_system_health_endpoint_exposes_module_statuses() -> None:
     assert payload["status"] in {"ok", "warning", "degraded"}
     assert "service_mode" in payload
     assert isinstance(payload["modules"], list)
+    assert isinstance(payload["libraries"], list)
+    assert isinstance(payload["agents"], list)
+    assert "recent_errors" in payload
+    assert "token_usage" in payload
     assert any(item["name"] == "behavioral_profiler" for item in payload["modules"])
     assert any(item["name"] == "strategy_registry" for item in payload["modules"])
     assert any(item["name"] == "llm_runtime" for item in payload["modules"])
+    assert any(item["name"] == "fastapi" for item in payload["libraries"])
+    assert any(item["name"] == "uvicorn" for item in payload["libraries"])
     assert all("recommendation" in item for item in payload["modules"])
 
 
@@ -72,6 +78,7 @@ def test_full_workflow_api() -> None:
     completed = client.post(f"/api/sessions/{session_id}/simulation/complete", json={"symbol": "QQQ"})
     assert completed.status_code == 200
     assert completed.json()["behavioral_report"] is not None
+    assert len(completed.json()["report_history"]) >= 1
     assert completed.json()["behavioral_report"]["recommended_trading_frequency"] in {"low", "medium", "high"}
     assert completed.json()["behavioral_report"]["recommended_timeframe"] in {"minute", "daily", "weekly"}
     assert completed.json()["behavioral_report"]["recommended_strategy_type"] in {
@@ -100,7 +107,17 @@ def test_full_workflow_api() -> None:
 
     strategy = client.post(
         f"/api/sessions/{session_id}/strategy/iterate",
-        json={"feedback": "Reduce concentration", "strategy_type": "trend_following_aligned"},
+        json={
+            "feedback": "Reduce concentration",
+            "strategy_type": "trend_following_aligned",
+            "iteration_mode": "guided",
+            "auto_iterations": 2,
+            "objective_metric": "return",
+            "target_return_pct": 20,
+            "target_win_rate_pct": 58,
+            "target_drawdown_pct": 12,
+            "target_max_loss_pct": 6,
+        },
     )
     assert strategy.status_code == 200
     assert strategy.json()["strategy_package"] is not None
@@ -114,9 +131,16 @@ def test_full_workflow_api() -> None:
     assert strategy.json()["profile_evolution"] is not None
     assert len(strategy.json()["strategy_feedback_log"]) == 1
     assert len(strategy.json()["strategy_training_log"]) >= 1
+    assert len(strategy.json()["report_history"]) >= 2
+    assert len(strategy.json()["history_events"]) >= 1
     assert "llm_profile" in strategy.json()["strategy_package"]
     assert "task_model_map" in strategy.json()["strategy_package"]
     assert "generated_strategy_code" in strategy.json()["strategy_package"]
+    assert "analysis" in strategy.json()["strategy_package"]
+    assert len(strategy.json()["strategy_package"]["upgrade_plans"]) == 2
+    assert len(strategy.json()["strategy_package"]["candidate_variants"]) == 2
+    assert "baseline_evaluation" in strategy.json()["strategy_package"]
+    assert "recommended_variant" in strategy.json()["strategy_package"]
 
     market_snapshot = client.post(
         f"/api/sessions/{session_id}/market-snapshots",
@@ -174,6 +198,14 @@ def test_full_workflow_api() -> None:
     assert evolution_json.status_code == 200
     assert evolution_json.json()["profile_evolution"] is not None
 
+    history_json = client.get(f"/api/sessions/{session_id}/history")
+    assert history_json.status_code == 200
+    assert len(history_json.json()["history_events"]) >= 1
+
+    reports_json = client.get(f"/api/sessions/{session_id}/reports")
+    assert reports_json.status_code == 200
+    assert len(reports_json.json()["report_history"]) >= 1
+
 
 def test_strategy_iteration_requires_rework_when_checks_fail() -> None:
     created = client.post("/api/sessions", json={"user_name": "Stress", "starting_capital": 500000})
@@ -194,7 +226,14 @@ def test_strategy_iteration_requires_rework_when_checks_fail() -> None:
     )
     strategy = client.post(
         f"/api/sessions/{session_id}/strategy/iterate",
-        json={"feedback": "Need faster rebounds", "strategy_type": "mean_reversion_aligned"},
+        json={
+            "feedback": "Need faster rebounds",
+            "strategy_type": "mean_reversion_aligned",
+            "iteration_mode": "free",
+            "auto_iterations": 2,
+            "objective_metric": "win_rate",
+            "target_win_rate_pct": 63,
+        },
     )
 
     assert strategy.status_code == 200
@@ -234,3 +273,27 @@ def test_intelligence_search_attaches_documents_to_session() -> None:
     body = searched.json()
     assert len(body["intelligence_documents"]) == 1
     assert body["intelligence_documents"][0]["query"] == "NVDA AI demand"
+    assert len(body["intelligence_runs"]) == 1
+    assert body["intelligence_runs"][0]["report"]["query"] == "NVDA AI demand"
+    assert len(body["report_history"]) >= 1
+
+
+def test_programmer_agent_run_is_recorded_even_when_disabled() -> None:
+    local_client = TestClient(create_app(WorkflowService()))
+    created = local_client.post("/api/sessions", json={"user_name": "Coder", "starting_capital": 300000})
+    session_id = created.json()["session_id"]
+
+    response = local_client.post(
+        f"/api/sessions/{session_id}/programmer/execute",
+        json={
+            "instruction": "Adjust strategy parameter.",
+            "target_files": ["src/sentinel_alpha/strategies/rule_based.py"],
+            "context": "Keep current risk controls.",
+            "commit_changes": True,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["programmer_runs"]) == 1
+    assert body["programmer_runs"][0]["status"] in {"disabled", "misconfigured", "ok", "error"}

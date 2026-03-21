@@ -29,6 +29,7 @@ Primary output:
 - `IntelligenceAgent`: supplies market priors, volatility estimates, factor summaries, and event context
 - `StrategyEvolverAgent`: transforms market priors and behavioral traits into aligned trading constraints
 - `IntentAlignerAgent`: updates policy when user intent or confidence changes
+- `ProgrammerAgent`: applies controlled local code mutation for strategy implementation, self-repair, and diff/commit capture
 
 This phase now includes an explicit LLM routing layer:
 
@@ -46,6 +47,8 @@ Primary output:
 - user-aligned utility score
 - generated strategy code artifact
 - strategy training log
+- archived strategy iteration report
+- programmer-run diff and commit trace
 
 ### Phase 3: Execution
 
@@ -149,6 +152,16 @@ Every iteration should produce:
 - integrity-check result
 - stress/overfit-check result
 - strategy training log entry
+- archived report snapshot
+
+If code-level strategy mutation is required, `ProgrammerAgent` may be invoked after `StrategyEvolverAgent` produces the change request and before the next validation loop starts.
+
+`ProgrammerAgent` must preserve:
+
+- changed files
+- git diff
+- commit hash
+- rollback commit
 
 If any required strategy check fails, the workflow must remain in rework state until a later iteration passes.
 

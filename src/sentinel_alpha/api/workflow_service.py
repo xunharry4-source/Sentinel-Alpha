@@ -2,12 +2,24 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import importlib.util
 from pathlib import Path
 from uuid import UUID, uuid4
 
 from sentinel_alpha.agents.behavioral_profiler import BehavioralProfilerAgent
+from sentinel_alpha.agents.intent_aligner import IntentAlignerAgent
 from sentinel_alpha.agents.intelligence_agent import IntelligenceAgent
+from sentinel_alpha.agents.market_asset_monitor_agent import MarketAssetMonitorAgent
+from sentinel_alpha.agents.noise_agent import NoiseAgent
+from sentinel_alpha.agents.portfolio_manager import PortfolioManagerAgent
+from sentinel_alpha.agents.programmer_agent import ProgrammerAgent
+from sentinel_alpha.agents.risk_guardian import RiskGuardianAgent
+from sentinel_alpha.agents.scenario_director import ScenarioDirectorAgent
 from sentinel_alpha.agents.strategy_evolver import StrategyEvolverAgent
+from sentinel_alpha.agents.strategy_integrity_checker import StrategyIntegrityCheckerAgent
+from sentinel_alpha.agents.strategy_monitor_agent import StrategyMonitorAgent
+from sentinel_alpha.agents.strategy_stress_checker import StrategyStressCheckerAgent
+from sentinel_alpha.agents.user_monitor_agent import UserMonitorAgent
 from dataclasses import asdict
 
 from sentinel_alpha.config import get_settings
@@ -41,6 +53,10 @@ class WorkflowSession:
     scenario_packages: list[dict] = field(default_factory=list)
     intelligence_documents: list[dict] = field(default_factory=list)
     information_events: list[dict] = field(default_factory=list)
+    history_events: list[dict] = field(default_factory=list)
+    report_history: list[dict] = field(default_factory=list)
+    intelligence_runs: list[dict] = field(default_factory=list)
+    programmer_runs: list[dict] = field(default_factory=list)
 
 
 class WorkflowService:
@@ -48,15 +64,34 @@ class WorkflowService:
         self.sessions: dict[UUID, WorkflowSession] = {}
         self.settings = get_settings()
         self.generator = ScenarioGenerator(seed=11)
+        self.scenario_director = ScenarioDirectorAgent(self.generator)
+        self.noise_agent = NoiseAgent()
         self.profiler = BehavioralProfilerAgent()
+        self.intent_aligner = IntentAlignerAgent()
         self.intelligence = IntelligenceAgent()
+        self.portfolio_manager = PortfolioManagerAgent()
+        self.risk_guardian = RiskGuardianAgent()
+        self.user_monitor = UserMonitorAgent()
+        self.strategy_monitor = StrategyMonitorAgent()
+        self.market_asset_monitor = MarketAssetMonitorAgent()
+        self.strategy_integrity_checker = StrategyIntegrityCheckerAgent()
+        self.strategy_stress_checker = StrategyStressCheckerAgent()
+        self.programmer = ProgrammerAgent(self.settings)
         self.evolver = StrategyEvolverAgent()
         self.strategy_registry = StrategyRegistry()
         self.llm_runtime = LLMRuntime(self.settings)
+        self.agent_activity_log: list[dict] = []
 
     def create_session(self, user_name: str, starting_capital: float) -> WorkflowSession:
         session = WorkflowSession(session_id=uuid4(), user_name=user_name, starting_capital=starting_capital)
         self.sessions[session.session_id] = session
+        self._record_agent_activity("workflow_service", "ok", "create_session", "Created workflow session.", session.session_id)
+        self._append_history_event(
+            session,
+            "session_created",
+            "会话已创建。",
+            {"starting_capital": starting_capital, "user_name": user_name},
+        )
         return session
 
     def get_session(self, session_id: UUID) -> WorkflowSession:
@@ -64,14 +99,7 @@ class WorkflowService:
 
     def generate_scenarios(self, session_id: UUID) -> WorkflowSession:
         session = self.get_session(session_id)
-        packages = [
-            self.generator.generate("uptrend", cohort="pressure"),
-            self.generator.generate("gap", cohort="pressure"),
-            self.generator.generate("oscillation", cohort="pressure"),
-            self.generator.generate("drawdown", cohort="pressure"),
-            self.generator.generate("fake_reversal", cohort="pressure"),
-            self.generator.generate("downtrend", cohort="pressure"),
-        ]
+        packages = self.scenario_director.generate_default_campaign()
         session.scenario_packages = packages
         session.scenarios = [
             {
@@ -83,11 +111,29 @@ class WorkflowService:
             for package in packages
         ]
         session.phase = "simulation_in_progress"
+        self._record_agent_activity("scenario_director", "ok", "generate_scenarios", f"Generated {len(session.scenarios)} scenarios.", session.session_id)
+        self._append_history_event(
+            session,
+            "scenarios_generated",
+            "模拟测试场景已生成。",
+            {"scenario_count": len(session.scenarios)},
+        )
         return session
 
     def append_behavior_event(self, session_id: UUID, event: BehaviorEvent) -> WorkflowSession:
         session = self.get_session(session_id)
         session.behavior_events.append(event)
+        self._record_agent_activity("behavioral_profiler", "ok", "append_behavior_event", f"Recorded action={event.action} for {event.scenario_id}.", session.session_id)
+        self._append_history_event(
+            session,
+            "behavior_event_recorded",
+            "记录了一次模拟交易行为。",
+            {
+                "scenario_id": event.scenario_id,
+                "action": event.action,
+                "drawdown_pct": event.price_drawdown_pct,
+            },
+        )
         return session
 
     def complete_simulation(self, session_id: UUID, symbol: str) -> WorkflowSession:
@@ -101,6 +147,7 @@ class WorkflowService:
             confidence_level=0.5,
         )
         report = self.profiler.profile(session.behavior_events)
+        self._record_agent_activity("behavioral_profiler", "ok", "complete_simulation", "Generated behavioral report.", session.session_id)
         market = MarketSnapshot(symbol=symbol, expected_return_pct=16.0, realized_volatility_pct=35.0, trend_score=0.45, event_risk_score=0.35, liquidity_score=0.9)
         policy = self.evolver.derive_risk_policy(user, report)
         brief = self.evolver.synthesize(user, market, report, policy)
@@ -136,6 +183,19 @@ class WorkflowService:
             ],
         }
         session.phase = "profiler_ready"
+        self._archive_report(
+            session,
+            report_type="behavioral_profiler",
+            title="Behavioral Profiler Report",
+            body=session.behavioral_report or {},
+            related_refs=[symbol],
+        )
+        self._append_history_event(
+            session,
+            "simulation_completed",
+            "模拟测试完成并生成心理侧写报告。",
+            {"symbol": symbol},
+        )
         return session
 
     def set_trading_preferences(
@@ -146,28 +206,29 @@ class WorkflowService:
         rationale: str | None,
     ) -> WorkflowSession:
         session = self.get_session(session_id)
-        descriptions = {
-            "low": "低频交易意味着更少操作次数，更强调等待和耐心，不适合频繁追逐盘中波动。",
-            "medium": "中频交易强调节奏和过滤，允许阶段性出手，但仍需避免噪音驱动。",
-            "high": "高频交易意味着更高盯盘要求和更高执行密度，用户需要接受更频繁的信号与波动。",
-        }
-        timeframe_notes = {
-            "minute": "分钟线机会更多，但噪音和成本也更高，适合高频或盘中型用户。",
-            "daily": "日线更适合大多数个人交易者，能过滤大量盘中噪音。",
-            "weekly": "周线更强调趋势和耐心，适合低频和波段型用户。",
-        }
-        session.trading_preferences = {
-            "trading_frequency": trading_frequency,
-            "preferred_timeframe": preferred_timeframe,
-            "frequency_description": descriptions[trading_frequency],
-            "timeframe_description": timeframe_notes[preferred_timeframe],
-            "rationale": rationale or "",
-        }
-        conflict = self._detect_preference_conflict(session)
+        session.trading_preferences = self.intent_aligner.build_trading_preferences(
+            trading_frequency=trading_frequency,
+            preferred_timeframe=preferred_timeframe,
+            rationale=rationale,
+        )
+        conflict = self.intent_aligner.detect_preference_conflict(
+            session.behavioral_report,
+            session.trading_preferences,
+        )
         if conflict:
             session.trading_preferences["conflict_warning"] = conflict["warning"]
             session.trading_preferences["conflict_level"] = conflict["level"]
         session.phase = "preferences_ready"
+        self._record_agent_activity("intent_aligner", "ok", "set_trading_preferences", "Updated trading preferences and checked conflicts.", session.session_id)
+        self._append_history_event(
+            session,
+            "trading_preferences_updated",
+            "交易频次与周期偏好已更新。",
+            {
+                "trading_frequency": trading_frequency,
+                "preferred_timeframe": preferred_timeframe,
+            },
+        )
         return session
 
     def set_trade_universe(self, session_id: UUID, input_type: str, symbols: list[str], allow_overfit_override: bool) -> WorkflowSession:
@@ -189,6 +250,17 @@ class WorkflowService:
             "expansion_reason": expansion_reason,
         }
         session.phase = "universe_ready"
+        self._record_agent_activity("intelligence_agent", "ok", "set_trade_universe", f"Prepared universe size={len(expanded)}.", session.session_id)
+        self._append_history_event(
+            session,
+            "trade_universe_updated",
+            "交易标的池已更新。",
+            {
+                "input_type": input_type,
+                "requested_count": len(symbols),
+                "expanded_count": len(expanded),
+            },
+        )
         return session
 
     def iterate_strategy(
@@ -198,11 +270,14 @@ class WorkflowService:
         strategy_type: str = "rule_based_aligned",
         auto_iterations: int = 1,
         iteration_mode: str = "guided",
+        objective_metric: str = "return",
+        objective_targets: dict | None = None,
     ) -> WorkflowSession:
         session = self.get_session(session_id)
         if session.trade_universe is None or session.behavioral_report is None:
             raise ValueError("Trade universe and behavioral report must exist before strategy iteration.")
         expanded = session.trade_universe["expanded"]
+        targets = self._normalize_objective_targets(objective_metric, objective_targets or {})
         if feedback:
             self._apply_feedback_evolution(session, feedback, strategy_type)
         last_error: str | None = None
@@ -228,6 +303,18 @@ class WorkflowService:
                 )
                 behavior = self._effective_behavior_report(session)
                 policy = self.evolver.derive_risk_policy(user, behavior)
+                self._record_agent_activity("strategy_evolver", "ok", "derive_risk_policy", "Derived risk policy for iteration.", session.session_id)
+                baseline_candidate = self.evolver.build_strategy_candidate(
+                    user=user,
+                    market=market,
+                    report=behavior,
+                    policy=policy,
+                    selected_universe=expanded,
+                    feedback=None,
+                    strategy_type="rule_based_aligned",
+                )
+                baseline_payload = asdict(baseline_candidate)
+                baseline_payload["version"] = self._strategy_version_label(1, iteration_no, 0, "baseline_rule_based")
                 candidate = self.evolver.build_strategy_candidate(
                     user=user,
                     market=market,
@@ -237,34 +324,89 @@ class WorkflowService:
                     feedback=feedback,
                     strategy_type=strategy_type,
                 )
-                llm_strategy_artifact = self.llm_runtime.generate_strategy_code(
+                candidate_payload = asdict(candidate)
+                candidate_payload["version"] = self._strategy_version_label(1, iteration_no, 0, strategy_type)
+                self._record_agent_activity("strategy_evolver", "ok", "build_strategy_candidate", f"Built candidate {candidate_payload['version']}.", session.session_id)
+                previous_failure = self._previous_failure_summary(session)
+                analysis = self._analyze_strategy_iteration(
+                    session=session,
                     strategy_type=strategy_type,
-                    selected_universe=expanded,
-                    candidate_payload=asdict(candidate),
+                    objective_metric=objective_metric,
+                    objective_targets=targets,
+                    current_candidate=candidate_payload,
+                    previous_failure=previous_failure,
                     feedback=feedback,
                 )
+                plans = self._build_upgrade_plans(strategy_type, analysis, behavior, targets)
+                variants = []
+                for variant_index, plan in enumerate(plans, start=1):
+                    variant_candidate = self._build_variant_candidate(candidate, plan, variant_index)
+                    artifact = self.llm_runtime.generate_strategy_code(
+                        strategy_type=strategy_type,
+                        selected_universe=expanded,
+                        candidate_payload=asdict(variant_candidate),
+                        feedback=f"{feedback or ''} | plan={plan['plan_name']}".strip(),
+                    )
+                    evaluation = self._evaluate_strategy_candidate(asdict(variant_candidate), objective_metric, targets, variant_index)
+                    variants.append(
+                        {
+                            "variant_id": plan["variant_id"],
+                            "plan": plan,
+                            "candidate": asdict(variant_candidate),
+                            "generated_code": artifact["code"],
+                            "llm_profile": artifact["profile"],
+                            "llm_generation_summary": artifact["summary"],
+                            "evaluation": evaluation,
+                        }
+                    )
+                baseline_evaluation = self._evaluate_strategy_candidate(asdict(baseline_candidate), objective_metric, targets, 0)
+                winner = self._compare_variant_results(baseline_evaluation, variants)
                 session.strategy_package = {
                     "iteration_no": iteration_no,
+                    "version_label": self._strategy_version_label(1, iteration_no, 0, strategy_type),
                     "strategy_type": strategy_type,
                     "selected_universe": expanded,
                     "feedback": feedback,
                     "iteration_mode": iteration_mode,
                     "auto_iterations_requested": auto_iterations,
+                    "objective_metric": objective_metric,
+                    "objective_targets": targets,
                     "expected_return_range": [0.10, 0.22],
                     "max_potential_loss": -0.12,
                     "expected_drawdown": -0.08,
                     "position_limit": 0.18,
                     "behavioral_compatibility": compatibility,
-                    "candidate": asdict(candidate),
-                    "llm_profile": llm_strategy_artifact["profile"],
-                    "generated_strategy_code": llm_strategy_artifact["code"],
-                    "llm_generation_summary": llm_strategy_artifact["summary"],
+                    "candidate": candidate_payload,
+                    "baseline_candidate": baseline_payload,
+                    "baseline_evaluation": baseline_evaluation,
+                    "analysis": analysis,
+                    "previous_failure_summary": previous_failure,
+                    "upgrade_plans": plans,
+                    "candidate_variants": variants,
+                    "recommended_variant": winner,
+                    "llm_profile": variants[0]["llm_profile"] if variants else {},
+                    "generated_strategy_code": variants[0]["generated_code"] if variants else "",
+                    "llm_generation_summary": variants[0]["llm_generation_summary"] if variants else "",
                     "agent_model_map": self.llm_runtime.agent_matrix(),
                     "task_model_map": self.llm_runtime.describe().get("tasks", {}),
                     "trading_preferences": session.trading_preferences,
                 }
                 session.strategy_checks = self._run_strategy_checks(session)
                 failed_checks = [check for check in session.strategy_checks if check["status"] == "fail"]
+                self._record_agent_activity(
+                    "strategy_integrity_checker",
+                    "error" if any(check["check_type"] == "integrity" and check["status"] == "fail" for check in session.strategy_checks) else "ok",
+                    "run_integrity_check",
+                    "Completed strategy integrity validation.",
+                    session.session_id,
+                )
+                self._record_agent_activity(
+                    "strategy_stress_checker",
+                    "error" if any(check["check_type"] == "stress_overfit" and check["status"] == "fail" for check in session.strategy_checks) else "ok",
+                    "run_stress_check",
+                    "Completed stress and overfit validation.",
+                    session.session_id,
+                )
                 session.strategy_training_log.append(
                     {
                         "timestamp": self._now_iso(),
@@ -272,16 +414,41 @@ class WorkflowService:
                         "loop_index": loop_index + 1,
                         "strategy_type": strategy_type,
                         "iteration_mode": iteration_mode,
+                        "objective_metric": objective_metric,
+                        "objective_targets": targets,
                         "status": "rework_required" if failed_checks else "checked",
                         "feedback": feedback or "",
-                        "llm_summary": llm_strategy_artifact["summary"],
+                        "analysis_summary": analysis["summary"],
+                        "recommended_variant": winner["variant_id"],
                         "failed_checks": [check["check_type"] for check in failed_checks],
                     }
+                )
+                self._archive_report(
+                    session,
+                    report_type="strategy_iteration",
+                    title=f"Strategy Iteration {session.strategy_package['version_label']}",
+                    body={
+                        "strategy_package": session.strategy_package,
+                        "strategy_checks": session.strategy_checks,
+                        "training_log_entry": session.strategy_training_log[-1],
+                    },
+                    related_refs=expanded,
+                )
+                self._append_history_event(
+                    session,
+                    "strategy_iteration_completed",
+                    "策略训练完成一轮迭代。",
+                    {
+                        "iteration_no": iteration_no,
+                        "version_label": session.strategy_package["version_label"],
+                        "status": "rework_required" if failed_checks else "checked",
+                    },
                 )
                 if not failed_checks and iteration_mode != "free":
                     break
             except Exception as exc:
                 last_error = str(exc)
+                self._record_agent_activity("strategy_evolver", "error", "iterate_strategy", last_error, session.session_id)
                 session.strategy_training_log.append(
                     {
                         "timestamp": self._now_iso(),
@@ -295,6 +462,16 @@ class WorkflowService:
                     }
                 )
                 session.phase = "strategy_rework_required"
+                self._append_history_event(
+                    session,
+                    "strategy_iteration_failed",
+                    "策略训练迭代失败。",
+                    {
+                        "loop_index": loop_index + 1,
+                        "strategy_type": strategy_type,
+                        "error": last_error,
+                    },
+                )
                 raise ValueError(f"Strategy iteration failed: {last_error}") from exc
         if last_error:
             raise ValueError(last_error)
@@ -305,39 +482,354 @@ class WorkflowService:
         )
         return session
 
+    def _normalize_objective_targets(self, objective_metric: str, objective_targets: dict) -> dict[str, float]:
+        defaults = {
+            "target_return_pct": 18.0,
+            "target_win_rate_pct": 58.0,
+            "target_drawdown_pct": 12.0,
+            "target_max_loss_pct": 6.0,
+        }
+        normalized = {}
+        for key, default in defaults.items():
+            value = objective_targets.get(key)
+            normalized[key] = float(value) if value is not None else default
+        normalized["objective_metric"] = objective_metric
+        return normalized
+
+    def _strategy_version_label(self, major: int, minor: int, test_no: int, strategy_name: str) -> str:
+        normalized_name = str(strategy_name).replace(" ", "_").replace("/", "_")
+        return f"V{major}.{minor}-{test_no}-{normalized_name}"
+
+    def _previous_failure_summary(self, session: WorkflowSession) -> dict:
+        previous_failures = [
+            item for item in reversed(session.strategy_training_log)
+            if item.get("status") in {"rework_required", "error"}
+        ]
+        if not previous_failures:
+            return {"exists": False, "summary": "No previous failed iteration.", "failed_checks": [], "last_error": ""}
+        latest = previous_failures[0]
+        return {
+            "exists": True,
+            "summary": latest.get("analysis_summary") or latest.get("error") or "Previous strategy iteration failed review.",
+            "failed_checks": latest.get("failed_checks", []),
+            "last_error": latest.get("error", ""),
+        }
+
+    def _analyze_strategy_iteration(
+        self,
+        session: WorkflowSession,
+        strategy_type: str,
+        objective_metric: str,
+        objective_targets: dict[str, float],
+        current_candidate: dict,
+        previous_failure: dict,
+        feedback: str | None,
+    ) -> dict:
+        profile = (session.profile_evolution or {}).get("effective_profile") or session.behavioral_report or {}
+        issues: list[str] = []
+        if float(profile.get("noise_sensitivity", 0.0)) > 0.65:
+            issues.append("user is highly sensitive to narrative noise, so signal gating needs to be stricter")
+        if float(profile.get("overtrading_tendency", 0.0)) > 0.55:
+            issues.append("user tends to overtrade, so turnover and re-entry frequency should be reduced")
+        if strategy_type == "mean_reversion_aligned" and float(profile.get("bottom_fishing_tendency", 0.0)) > 0.4:
+            issues.append("mean reversion can amplify the user's bottom-fishing bias")
+        if previous_failure.get("exists"):
+            issues.append(f"previous failure reasons must be addressed: {', '.join(previous_failure.get('failed_checks', [])) or previous_failure.get('summary')}")
+        if not issues:
+            issues.append("current strategy needs stronger objective alignment and cleaner validation path")
+        return {
+            "summary": f"Optimize for {objective_metric} while respecting user behavior and previous failures.",
+            "objective_metric": objective_metric,
+            "objective_targets": objective_targets,
+            "current_strategy_problems": issues,
+            "previous_failure_reasons": previous_failure,
+            "feedback": feedback or "",
+            "current_strategy_snapshot": {
+                "strategy_type": strategy_type,
+                "signal_count": len(current_candidate.get('signals', [])),
+                "parameter_count": len(current_candidate.get('parameters', {})),
+            },
+        }
+
+    def _build_upgrade_plans(
+        self,
+        strategy_type: str,
+        analysis: dict,
+        behavior: BehavioralReport,
+        objective_targets: dict[str, float],
+    ) -> list[dict]:
+        return [
+            {
+                "variant_id": "structural_upgrade",
+                "plan_name": "结构化升级方案",
+                "focus": "Reduce false positives, tighten entry confirmation, and harden loss containment.",
+                "changes": [
+                    "raise signal confirmation threshold",
+                    "tighten hard stop and drawdown guard",
+                    "reduce re-entry frequency after failed setup",
+                ],
+                "reasoning": analysis["current_strategy_problems"],
+                "objective_targets": objective_targets,
+                "behavior_anchor": {
+                    "noise_sensitivity": behavior.noise_susceptibility,
+                    "overtrading_tendency": behavior.intervention_risk,
+                },
+            },
+            {
+                "variant_id": "strategy_improvement",
+                "plan_name": "策略改进方案",
+                "focus": "Improve edge capture around the chosen objective without ignoring behavior constraints.",
+                "changes": [
+                    "reweight signal conviction toward objective metric",
+                    "reshape position sizing around target metric",
+                    "align exits with current user drawdown tolerance",
+                ],
+                "reasoning": analysis["current_strategy_problems"],
+                "objective_targets": objective_targets,
+                "behavior_anchor": {
+                    "panic_sell_tendency": behavior.panic_sell_score,
+                    "hold_strength": behavior.discipline_score,
+                },
+            },
+        ]
+
+    def _build_variant_candidate(self, base_candidate, plan: dict, variant_index: int):
+        candidate = asdict(base_candidate)
+        candidate["version"] = self._strategy_version_label(1, 1, variant_index, plan["variant_id"])
+        candidate["metadata"] = dict(candidate.get("metadata", {}))
+        candidate["metadata"]["variant_id"] = plan["variant_id"]
+        candidate["metadata"]["plan_name"] = plan["plan_name"]
+        candidate["metadata"]["focus"] = plan["focus"]
+        candidate["parameters"] = dict(candidate.get("parameters", {}))
+        if plan["variant_id"] == "structural_upgrade":
+            for key in ("max_position_pct", "portfolio_drawdown_limit_pct", "hard_stop_loss_pct"):
+                if key in candidate["parameters"]:
+                    candidate["parameters"][key] = round(float(candidate["parameters"][key]) * 0.9, 4)
+        else:
+            for signal in candidate.get("signals", []):
+                signal["conviction"] = round(min(0.95, float(signal.get("conviction", 0.5)) + 0.06), 4)
+            candidate["parameters"]["objective_bias"] = "aggressive_edge_capture"
+        candidate["metadata"]["generated_plan_changes"] = " | ".join(plan["changes"])
+        from sentinel_alpha.strategies.base import StrategyCandidate, StrategySignal
+        return StrategyCandidate(
+            strategy_id=candidate["strategy_id"],
+            version=candidate["version"],
+            strategy_type=candidate["strategy_type"],
+            signals=[StrategySignal(**signal) for signal in candidate["signals"]],
+            parameters=candidate["parameters"],
+            metadata=candidate["metadata"],
+        )
+
+    def _evaluate_strategy_candidate(
+        self,
+        candidate: dict,
+        objective_metric: str,
+        targets: dict[str, float],
+        variant_index: int,
+    ) -> dict:
+        avg_conviction = sum(float(item.get("conviction", 0.0)) for item in candidate.get("signals", [])) / max(1, len(candidate.get("signals", [])))
+        max_position = float(candidate.get("parameters", {}).get("max_position_pct", 0.12) or 0.12)
+        hard_stop = float(candidate.get("parameters", {}).get("hard_stop_loss_pct", 0.06) or 0.06)
+        expected_return_pct = round(8 + avg_conviction * 18 + variant_index * 0.7, 2)
+        win_rate_pct = round(48 + avg_conviction * 22 - variant_index * 0.4, 2)
+        drawdown_pct = round(max(3.0, hard_stop * 100 * 1.6 + max_position * 12), 2)
+        max_loss_pct = round(max(2.0, hard_stop * 100), 2)
+        objective_value = {
+            "return": expected_return_pct,
+            "win_rate": win_rate_pct,
+            "drawdown": -drawdown_pct,
+            "max_loss": -max_loss_pct,
+        }[objective_metric]
+        score = self._objective_score(objective_metric, targets, expected_return_pct, win_rate_pct, drawdown_pct, max_loss_pct)
+        return {
+            "expected_return_pct": expected_return_pct,
+            "win_rate_pct": win_rate_pct,
+            "drawdown_pct": drawdown_pct,
+            "max_loss_pct": max_loss_pct,
+            "objective_metric": objective_metric,
+            "objective_value": objective_value,
+            "objective_score": score,
+        }
+
+    def _objective_score(
+        self,
+        objective_metric: str,
+        targets: dict[str, float],
+        expected_return_pct: float,
+        win_rate_pct: float,
+        drawdown_pct: float,
+        max_loss_pct: float,
+    ) -> float:
+        score = 0.0
+        score += expected_return_pct / max(1.0, targets["target_return_pct"]) * (0.5 if objective_metric == "return" else 0.2)
+        score += win_rate_pct / max(1.0, targets["target_win_rate_pct"]) * (0.5 if objective_metric == "win_rate" else 0.2)
+        score += max(0.0, 1 - drawdown_pct / max(1.0, targets["target_drawdown_pct"])) * (0.5 if objective_metric == "drawdown" else 0.3)
+        score += max(0.0, 1 - max_loss_pct / max(1.0, targets["target_max_loss_pct"])) * (0.5 if objective_metric == "max_loss" else 0.3)
+        return round(score, 4)
+
+    def _compare_variant_results(self, baseline_evaluation: dict, variants: list[dict]) -> dict:
+        best = {
+            "variant_id": "baseline",
+            "objective_score": baseline_evaluation["objective_score"],
+            "evaluation": baseline_evaluation,
+            "reason": "Baseline remains the strongest current reference.",
+        }
+        for variant in variants:
+            if variant["evaluation"]["objective_score"] > best["objective_score"]:
+                best = {
+                    "variant_id": variant["variant_id"],
+                    "objective_score": variant["evaluation"]["objective_score"],
+                    "evaluation": variant["evaluation"],
+                    "reason": f"{variant['plan']['plan_name']} beats baseline on the configured objective.",
+                }
+        return best
+
     def approve_strategy(self, session_id: UUID) -> WorkflowSession:
         session = self.get_session(session_id)
-        if not session.strategy_checks or any(check["status"] == "fail" for check in session.strategy_checks):
+        approved, message = self.risk_guardian.approve(session.strategy_checks)
+        if not session.strategy_checks or not approved:
             session.phase = "strategy_rework_required"
-            raise ValueError("Strategy checks failed. Re-iterate the strategy before approval.")
+            self._record_agent_activity("risk_guardian", "error", "approve_strategy", message, session.session_id)
+            raise ValueError(message)
         session.phase = "strategy_approved"
+        self._record_agent_activity("risk_guardian", "ok", "approve_strategy", message, session.session_id)
+        self._append_history_event(
+            session,
+            "strategy_approved",
+            "策略版本已批准。",
+            {"version_label": session.strategy_package.get("version_label") if session.strategy_package else None},
+        )
         return session
 
     def set_deployment(self, session_id: UUID, execution_mode: str) -> WorkflowSession:
         session = self.get_session(session_id)
-        session.execution_mode = execution_mode
-        session.phase = "autonomous_active" if execution_mode == "autonomous" else "advice_only_active"
+        deployment = self.portfolio_manager.set_execution_mode(execution_mode)
+        session.execution_mode = deployment["execution_mode"]
+        session.phase = deployment["phase"]
+        self._record_agent_activity("portfolio_manager", "ok", "set_deployment", f"Deployment mode set to {execution_mode}.", session.session_id)
+        self._append_history_event(
+            session,
+            "deployment_mode_updated",
+            "执行模式已更新。",
+            {"execution_mode": execution_mode},
+        )
         return session
 
     def append_market_snapshot(self, session_id: UUID, snapshot: MarketDataPoint) -> WorkflowSession:
         session = self.get_session(session_id)
         session.market_snapshots.append(asdict(snapshot))
+        self._record_agent_activity("market_asset_monitor", "ok", "append_market_snapshot", f"Recorded {snapshot.symbol} {snapshot.timeframe} snapshot.", session.session_id)
+        self._append_history_event(
+            session,
+            "market_snapshot_recorded",
+            "市场快照已记录。",
+            {"symbol": snapshot.symbol, "timeframe": snapshot.timeframe},
+        )
         return session
 
     def append_trade_record(self, session_id: UUID, trade: TradeExecutionRecord) -> WorkflowSession:
         session = self.get_session(session_id)
         session.trade_records.append(asdict(trade))
         self._apply_trade_evolution(session, trade)
+        self._record_agent_activity("user_monitor", "ok", "append_trade_record", f"Recorded {trade.side} trade for {trade.symbol}.", session.session_id)
+        self._append_history_event(
+            session,
+            "trade_recorded",
+            "交易记录已入档。",
+            {
+                "symbol": trade.symbol,
+                "side": trade.side,
+                "strategy_version": trade.strategy_version,
+                "realized_pnl_pct": trade.realized_pnl_pct,
+            },
+        )
         return session
 
     def search_intelligence(self, session_id: UUID, query: str, max_documents: int | None = None) -> WorkflowSession:
         session = self.get_session(session_id)
-        session.intelligence_documents = [asdict(item) for item in self.intelligence.search(query, max_documents)]
+        documents = [asdict(item) for item in self.intelligence.search(query, max_documents)]
+        report = self.llm_runtime.summarize_intelligence(query, documents)
+        self._record_agent_activity("intelligence_agent", "ok", "search_intelligence", f"Collected {len(documents)} documents for query={query}.", session.session_id)
+        session.intelligence_documents = documents
+        session.intelligence_runs.append(
+            {
+                "run_id": f"intel-{len(session.intelligence_runs) + 1}",
+                "query": query,
+                "generated_at": self._now_iso(),
+                "document_count": len(documents),
+                "documents": documents,
+                "report": report,
+            }
+        )
+        self._archive_report(
+            session,
+            report_type="intelligence_summary",
+            title=f"Intelligence Summary: {query}",
+            body=report,
+            related_refs=report.get("source_urls", []),
+        )
+        self._append_history_event(
+            session,
+            "intelligence_search_completed",
+            "情报搜索与摘要已完成。",
+            {"query": query, "document_count": len(documents)},
+        )
         return session
 
     def append_information_events(self, session_id: UUID, events: list[dict]) -> WorkflowSession:
         session = self.get_session(session_id)
-        session.information_events.extend(events)
+        normalized_events = self.noise_agent.normalize_events(events)
+        session.information_events.extend(normalized_events)
+        self._record_agent_activity("noise_agent", "ok", "append_information_events", f"Stored {len(normalized_events)} information events.", session.session_id)
+        self._append_history_event(
+            session,
+            "information_events_recorded",
+            "信息流事件已记录。",
+            {"count": len(normalized_events)},
+        )
+        return session
+
+    def execute_programmer_task(
+        self,
+        session_id: UUID,
+        instruction: str,
+        target_files: list[str],
+        context: str | None = None,
+        commit_changes: bool = True,
+    ) -> WorkflowSession:
+        session = self.get_session(session_id)
+        result = self.programmer.execute(
+            instruction=instruction,
+            target_files=target_files,
+            context=context,
+            commit_changes=commit_changes,
+        )
+        result["timestamp"] = self._now_iso()
+        session.programmer_runs.append(result)
+        self._archive_report(
+            session,
+            report_type="programmer_run",
+            title=f"Programmer Agent Run {len(session.programmer_runs)}",
+            body=result,
+            related_refs=result.get("target_files", []),
+        )
+        self._append_history_event(
+            session,
+            "programmer_task_completed" if result.get("status") == "ok" else "programmer_task_failed",
+            "Programmer Agent completed a coding task." if result.get("status") == "ok" else "Programmer Agent failed a coding task.",
+            {
+                "status": result.get("status"),
+                "commit_hash": result.get("commit_hash"),
+                "changed_files": result.get("changed_files", []),
+            },
+        )
+        self._record_agent_activity(
+            "programmer_agent",
+            "ok" if result.get("status") == "ok" else "error",
+            "execute_programmer_task",
+            result.get("error") or f"Changed files: {', '.join(result.get('changed_files', [])) or 'none'}",
+            session.session_id,
+        )
         return session
 
     def compose_market_template_campaign(
@@ -364,28 +856,15 @@ class WorkflowService:
 
     def monitor_signals(self, session_id: UUID) -> list[dict]:
         session = self.get_session(session_id)
-        behavior = session.behavioral_report or {}
-        strategy = session.strategy_package or {}
-        return [
-            {
-                "monitor_type": "user",
-                "severity": "warning" if behavior.get("noise_sensitivity", 0) > 0.6 else "info",
-                "title": "User Monitor",
-                "detail": "Noise sensitivity remains elevated." if behavior.get("noise_sensitivity", 0) > 0.6 else "User behavior is within the profiled baseline.",
-            },
-            {
-                "monitor_type": "strategy",
-                "severity": "warning" if strategy.get("behavioral_compatibility", 1) < 0.7 else "info",
-                "title": "Strategy Monitor",
-                "detail": "Behavioral compatibility is drifting down." if strategy.get("behavioral_compatibility", 1) < 0.7 else "Strategy remains aligned with the current profile.",
-            },
-            {
-                "monitor_type": "market",
-                "severity": "info",
-                "title": "Market and Asset Monitor",
-                "detail": f"Watching universe: {', '.join(strategy.get('selected_universe', session.trade_universe.get('expanded', []) if session.trade_universe else [])) or 'none'}.",
-            },
+        signals = [
+            self.user_monitor.generate_signal(session.behavioral_report),
+            self.strategy_monitor.generate_signal(session.strategy_package),
+            self.market_asset_monitor.generate_signal(session.strategy_package, session.trade_universe),
         ]
+        self._record_agent_activity("user_monitor", "ok", "monitor_signals", signals[0]["detail"], session.session_id)
+        self._record_agent_activity("strategy_monitor", "ok", "monitor_signals", signals[1]["detail"], session.session_id)
+        self._record_agent_activity("market_asset_monitor", "ok", "monitor_signals", signals[2]["detail"], session.session_id)
+        return signals
 
     def system_health(self) -> dict:
         static_dir = Path(__file__).resolve().parents[1] / "webapp" / "static"
@@ -412,6 +891,12 @@ class WorkflowService:
                 "Enable intelligence in config if external news retrieval should participate in workflow." if not self.settings.intelligence_enabled else "No action required.",
             ),
             self._module_status("strategy_evolver", "ok", "Strategy evolver is attached.", "No action required."),
+            self._module_status(
+                "programmer_agent",
+                "ok" if self.settings.programmer_agent_enabled else "warning",
+                "Programmer Agent is attached." if self.settings.programmer_agent_enabled else "Programmer Agent is present but disabled by config.",
+                "Enable programmer_agent.enabled and install aider to allow controlled code modification." if not self.settings.programmer_agent_enabled else "No action required.",
+            ),
             self._module_status("strategy_registry", "ok", f"Registered strategies: {', '.join(self.strategy_registry.list_types())}.", "Register new strategy implementations here before exposing them to workflow."),
             self._module_status("monitoring_agents", "ok", "User, strategy, and market monitors are enabled in workflow.", "No action required."),
             self._module_status("strategy_check_agents", "ok", "Integrity checker and stress/overfit checker are enforced before approval.", "No action required."),
@@ -428,6 +913,7 @@ class WorkflowService:
                 "Switch to persistent_app only when you need PostgreSQL, TimescaleDB, Redis, and Qdrant persistence.",
             ),
         ]
+        modules.extend(self.programmer.health_modules())
         modules.extend(self.llm_runtime.system_health_modules())
         overall = "ok"
         if any(item["status"] == "error" for item in modules):
@@ -439,10 +925,21 @@ class WorkflowService:
             "service_mode": self.settings.app_mode,
             "timestamp": self._now_iso(),
             "modules": modules,
+            "libraries": self._library_diagnostics(),
+            "agents": self._agent_diagnostics(),
+            "recent_agent_logs": self.agent_activity_log[-30:],
+            "recent_errors": [item for item in self.agent_activity_log if item["status"] == "error"][-10:],
+            "token_usage": self.llm_runtime.usage_snapshot(),
         }
 
     def llm_config(self) -> dict:
         return self.llm_runtime.describe()
+
+    def history(self, session_id: UUID) -> list[dict]:
+        return self.get_session(session_id).history_events
+
+    def reports(self, session_id: UUID) -> list[dict]:
+        return self.get_session(session_id).report_history
 
     def _run_strategy_checks(self, session: WorkflowSession) -> list[dict]:
         behavior = (session.profile_evolution or {}).get("effective_profile") or session.behavioral_report or {}
@@ -450,8 +947,8 @@ class WorkflowService:
         candidate = strategy.get("candidate") or {}
         compatibility = strategy.get("behavioral_compatibility", 0.0)
         return [
-            self._run_integrity_check(strategy, candidate),
-            self._run_stress_overfit_check(strategy, candidate, behavior, compatibility),
+            self.strategy_integrity_checker.evaluate(strategy, candidate),
+            self.strategy_stress_checker.evaluate(strategy, candidate, behavior, compatibility),
         ]
 
     def _effective_behavior_report(self, session: WorkflowSession) -> BehavioralReport:
@@ -469,7 +966,6 @@ class WorkflowService:
 
     def _module_status(self, name: str, status: str, detail: str, recommendation: str) -> dict:
         return {"name": name, "status": status, "detail": detail, "recommendation": recommendation}
-        return self.profiler.profile(session.behavior_events)
 
     def _apply_feedback_evolution(self, session: WorkflowSession, feedback: str, strategy_type: str) -> None:
         if not feedback:
@@ -575,6 +1071,183 @@ class WorkflowService:
     def _now_iso(self) -> str:
         return datetime.now(timezone.utc).isoformat()
 
+    def _append_history_event(self, session: WorkflowSession, event_type: str, summary: str, payload: dict | None = None) -> None:
+        session.history_events.append(
+            {
+                "event_id": f"hist-{len(session.history_events) + 1}",
+                "event_type": event_type,
+                "summary": summary,
+                "payload": payload or {},
+                "timestamp": self._now_iso(),
+                "phase": session.phase,
+            }
+        )
+
+    def _archive_report(
+        self,
+        session: WorkflowSession,
+        report_type: str,
+        title: str,
+        body: dict,
+        related_refs: list[str] | None = None,
+    ) -> None:
+        session.report_history.append(
+            {
+                "report_id": f"report-{len(session.report_history) + 1}",
+                "report_type": report_type,
+                "title": title,
+                "created_at": self._now_iso(),
+                "phase": session.phase,
+                "related_refs": related_refs or [],
+                "body": body,
+            }
+        )
+
+    def _record_agent_activity(
+        self,
+        agent: str,
+        status: str,
+        operation: str,
+        detail: str,
+        session_id: UUID | None = None,
+    ) -> None:
+        self.agent_activity_log.append(
+            {
+                "timestamp": self._now_iso(),
+                "agent": agent,
+                "status": status,
+                "operation": operation,
+                "detail": detail,
+                "session_id": str(session_id) if session_id else None,
+            }
+        )
+        self.agent_activity_log = self.agent_activity_log[-200:]
+
+    def _agent_diagnostics(self) -> list[dict]:
+        known_agents = [
+            "scenario_director",
+            "noise_agent",
+            "behavioral_profiler",
+            "intelligence_agent",
+            "strategy_evolver",
+            "portfolio_manager",
+            "intent_aligner",
+            "risk_guardian",
+            "user_monitor",
+            "strategy_monitor",
+            "market_asset_monitor",
+            "strategy_integrity_checker",
+            "strategy_stress_checker",
+            "programmer_agent",
+            "workflow_service",
+        ]
+        diagnostics: list[dict] = []
+        for agent in known_agents:
+            logs = [item for item in self.agent_activity_log if item["agent"] == agent]
+            error_logs = [item for item in logs if item["status"] == "error"]
+            last = logs[-1] if logs else None
+            status = "idle"
+            recommendation = "No action required."
+            if error_logs:
+                status = "error"
+                recommendation = "Inspect the latest error log and the upstream payload for this agent."
+            elif logs:
+                status = "ok"
+            diagnostics.append(
+                {
+                    "agent": agent,
+                    "status": status,
+                    "activity_count": len(logs),
+                    "error_count": len(error_logs),
+                    "last_seen": last["timestamp"] if last else None,
+                    "last_operation": last["operation"] if last else None,
+                    "last_detail": last["detail"] if last else "No activity recorded yet.",
+                    "recommendation": recommendation if logs else "No activity yet. Run the related workflow stage to validate this agent.",
+                }
+            )
+        return diagnostics
+
+    def _library_diagnostics(self) -> list[dict]:
+        libraries = [
+            {
+                "name": "fastapi",
+                "import_name": "fastapi",
+                "required": True,
+                "detail": "API framework.",
+            },
+            {
+                "name": "uvicorn",
+                "import_name": "uvicorn",
+                "required": True,
+                "detail": "ASGI runtime.",
+            },
+            {
+                "name": "psycopg",
+                "import_name": "psycopg",
+                "required": False,
+                "detail": "PostgreSQL and TimescaleDB adapter.",
+            },
+            {
+                "name": "redis",
+                "import_name": "redis",
+                "required": False,
+                "detail": "Redis client for runtime bus and cache.",
+            },
+            {
+                "name": "qdrant_client",
+                "import_name": "qdrant_client",
+                "required": False,
+                "detail": "Vector store client.",
+            },
+            {
+                "name": "langchain",
+                "import_name": "langchain",
+                "required": False,
+                "detail": "Workflow orchestration and chain abstraction.",
+            },
+            {
+                "name": "prometheus_fastapi_instrumentator",
+                "import_name": "prometheus_fastapi_instrumentator",
+                "required": self.settings.prometheus_enabled,
+                "detail": "Prometheus metrics instrumentation.",
+            },
+            {
+                "name": "sentry_sdk",
+                "import_name": "sentry_sdk",
+                "required": self.settings.sentry_enabled,
+                "detail": "Error monitoring SDK.",
+            },
+            {
+                "name": "langfuse",
+                "import_name": "langfuse",
+                "required": self.settings.langfuse_enabled,
+                "detail": "LLM tracing and analytics SDK.",
+            },
+        ]
+        diagnostics: list[dict] = []
+        for item in libraries:
+            present = importlib.util.find_spec(item["import_name"]) is not None
+            required = bool(item["required"])
+            if present:
+                status = "ok"
+                recommendation = "No action required."
+            elif required:
+                status = "error"
+                recommendation = f"Install or enable {item['name']} before using the related feature."
+            else:
+                status = "warning"
+                recommendation = f"{item['name']} is optional in the current mode."
+            diagnostics.append(
+                {
+                    "name": item["name"],
+                    "status": status,
+                    "detail": f"{item['detail']} {'Installed.' if present else 'Not installed.'}",
+                    "required": required,
+                    "recommendation": recommendation,
+                }
+            )
+        return diagnostics
+
     def _target_holding_days(self, preferences: dict | None) -> int:
         if not preferences:
             return 10
@@ -627,121 +1300,13 @@ class WorkflowService:
         }
 
     def _detect_preference_conflict(self, session: WorkflowSession) -> dict[str, str] | None:
-        if not session.behavioral_report or not session.trading_preferences:
-            return None
-        recommended_frequency = session.behavioral_report.get("recommended_trading_frequency")
-        recommended_timeframe = session.behavioral_report.get("recommended_timeframe")
-        selected_frequency = session.trading_preferences.get("trading_frequency")
-        selected_timeframe = session.trading_preferences.get("preferred_timeframe")
-        if selected_frequency == recommended_frequency and selected_timeframe == recommended_timeframe:
-            return None
-
-        severe = (
-            recommended_frequency == "low" and selected_frequency == "high"
-        ) or (
-            recommended_timeframe == "weekly" and selected_timeframe == "minute"
+        return self.intent_aligner.detect_preference_conflict(
+            session.behavioral_report,
+            session.trading_preferences,
         )
-        warning = (
-            f"你的测试结果更推荐 {recommended_frequency} 频次和 {recommended_timeframe} 周期，"
-            f"但你当前选择了 {selected_frequency} 频次和 {selected_timeframe} 周期。"
-            " 这意味着你未来更可能在噪音、盯盘强度或执行纪律上出现偏离。"
-        )
-        return {"level": "high" if severe else "warning", "warning": warning}
 
     def _run_integrity_check(self, strategy: dict, candidate: dict) -> dict:
-        flags: list[str] = []
-        required_fix_actions: list[str] = []
-        metrics: dict[str, float | int | str] = {}
-
-        parameters = candidate.get("parameters") or {}
-        metadata = candidate.get("metadata") or {}
-        signals = candidate.get("signals") or []
-        rationale_tokens = " ".join(
-            " ".join(signal.get("rationale") or [])
-            for signal in signals
-            if isinstance(signal, dict)
-        ).lower()
-        suspicious_terms = [
-            "future",
-            "tomorrow",
-            "next candle",
-            "post-close result",
-            "guaranteed",
-            "known earnings result",
-            "after the event",
-        ]
-        detected_terms = [term for term in suspicious_terms if term in rationale_tokens]
-        if detected_terms:
-            flags.append(f"future_leakage_terms={','.join(detected_terms)}")
-            required_fix_actions.append("Remove any rationale or feature that references unavailable future information.")
-
-        parameter_keys = {str(key).lower() for key in parameters}
-        metadata_keys = {str(key).lower() for key in metadata}
-        suspicious_keys = [
-            key
-            for key in parameter_keys | metadata_keys
-            if any(token in key for token in ("future", "leak", "cheat", "oracle", "perfect", "winrate"))
-        ]
-        if suspicious_keys:
-            flags.append(f"suspicious_keys={','.join(sorted(suspicious_keys))}")
-            required_fix_actions.append("Rename or remove parameters that imply future leakage or engineered win logic.")
-
-        max_conviction = max(
-            (float(signal.get("conviction", 0.0)) for signal in signals if isinstance(signal, dict)),
-            default=0.0,
-        )
-        metrics["max_signal_conviction"] = round(max_conviction, 4)
-        if max_conviction >= 0.97:
-            flags.append("win_coding_conviction_spike")
-            required_fix_actions.append("Reduce impossible conviction levels and justify confidence with observable features only.")
-
-        iteration_no = int(strategy.get("iteration_no", 1))
-        metrics["iteration_no"] = iteration_no
-        metrics["strategy_type"] = str(candidate.get("strategy_type", strategy.get("strategy_type", "unknown")))
-        if iteration_no > 5:
-            flags.append("excessive_manual_iteration_count")
-            required_fix_actions.append("Review the optimization loop for silent curve fitting across too many manual revisions.")
-
-        universe_size = int((metadata.get("selected_universe_size") or len(strategy.get("selected_universe") or [])) or 0)
-        metrics["selected_universe_size"] = universe_size
-        if universe_size <= 1:
-            flags.append("single_asset_candidate")
-            required_fix_actions.append("Expand the universe or attach a benchmark basket before approving the strategy.")
-
-        score = 1.0
-        score -= 0.45 if detected_terms else 0.0
-        score -= 0.25 if suspicious_keys else 0.0
-        score -= 0.25 if max_conviction >= 0.97 else 0.0
-        score -= 0.10 if iteration_no > 5 else 0.0
-        score -= 0.10 if universe_size <= 1 else 0.0
-        score = max(0.0, round(score, 2))
-
-        status = "pass"
-        if detected_terms or suspicious_keys or max_conviction >= 0.97:
-            status = "fail"
-        elif flags:
-            status = "warning"
-
-        summary = "No obvious future leakage or engineered win logic was found."
-        detail = "Integrity checks passed on rationale, parameter naming, conviction profile, and iteration path."
-        if status == "warning":
-            summary = "Integrity review found weak spots that need manual attention before release."
-            detail = "The candidate is not outright invalid, but its optimization path or concentration setup increases audit risk."
-        if status == "fail":
-            summary = "Integrity review rejected this strategy version."
-            detail = "The candidate exposes future-information leakage, cheating-like markers, or impossible confidence assumptions."
-
-        return {
-            "check_type": "integrity",
-            "status": status,
-            "title": "Strategy Integrity Checker",
-            "score": score,
-            "summary": summary,
-            "detail": detail,
-            "flags": flags,
-            "required_fix_actions": required_fix_actions,
-            "metrics": metrics,
-        }
+        return self.strategy_integrity_checker.evaluate(strategy, candidate)
 
     def _run_stress_overfit_check(
         self,
@@ -750,95 +1315,4 @@ class WorkflowService:
         behavior: dict,
         compatibility: float,
     ) -> dict:
-        flags: list[str] = []
-        required_fix_actions: list[str] = []
-        metrics: dict[str, float | int | str] = {
-            "behavioral_compatibility": round(compatibility, 4),
-        }
-
-        parameters = candidate.get("parameters") or {}
-        metadata = candidate.get("metadata") or {}
-        strategy_type = candidate.get("strategy_type") or strategy.get("strategy_type", "unknown")
-        universe_size = int((metadata.get("selected_universe_size") or len(strategy.get("selected_universe") or [])) or 0)
-        parameter_count = len(parameters)
-        max_position_pct = float(
-            parameters.get("max_position_pct", strategy.get("position_limit", 0.0)) or 0.0
-        )
-        noise_sensitivity = float(behavior.get("noise_sensitivity", 0.0) or 0.0)
-        overtrading_tendency = float(behavior.get("overtrading_tendency", 0.0) or 0.0)
-        bottom_fishing_tendency = float(behavior.get("bottom_fishing_tendency", 0.0) or 0.0)
-
-        metrics["selected_universe_size"] = universe_size
-        metrics["parameter_count"] = parameter_count
-        metrics["max_position_pct"] = round(max_position_pct, 4)
-        metrics["noise_sensitivity"] = round(noise_sensitivity, 4)
-        metrics["overtrading_tendency"] = round(overtrading_tendency, 4)
-        metrics["bottom_fishing_tendency"] = round(bottom_fishing_tendency, 4)
-        metrics["strategy_type"] = strategy_type
-
-        if universe_size < 5:
-            flags.append("too_small_trade_universe")
-            required_fix_actions.append("Expand the trade universe to at least 5 instruments or explicitly justify the narrow scope.")
-        if compatibility < 0.55:
-            flags.append("low_behavioral_compatibility")
-            required_fix_actions.append("Re-iterate with stricter behavior alignment so the user is less likely to override execution.")
-        if parameter_count > max(3, universe_size):
-            flags.append("parameter_density_too_high")
-            required_fix_actions.append("Reduce free parameters or broaden the train universe before the next iteration.")
-        if noise_sensitivity > 0.75 and max_position_pct > 0.18:
-            flags.append("position_limit_too_high_for_user_profile")
-            required_fix_actions.append("Lower position limits for this user profile before re-running stress validation.")
-        if overtrading_tendency > 0.85:
-            flags.append("manual_intervention_risk_high")
-            required_fix_actions.append("Increase confirmation thresholds or cooldown periods to reduce intervention churn.")
-        if strategy_type == "mean_reversion_aligned" and bottom_fishing_tendency > 0.45:
-            flags.append("mean_reversion_conflicts_with_bottom_fishing_profile")
-            required_fix_actions.append("Switch strategy family or add multi-timeframe confirmation against premature bottom fishing.")
-        if strategy_type == "trend_following_aligned" and compatibility < 0.65:
-            flags.append("trend_following_not_stable_under_current_profile")
-            required_fix_actions.append("Tighten the trend filter or select a less behavior-sensitive strategy family.")
-
-        score = 1.0
-        score -= 0.30 if universe_size < 5 else 0.0
-        score -= 0.35 if compatibility < 0.55 else 0.10 if compatibility < 0.70 else 0.0
-        score -= 0.15 if parameter_count > max(3, universe_size) else 0.0
-        score -= 0.15 if noise_sensitivity > 0.75 and max_position_pct > 0.18 else 0.0
-        score -= 0.10 if overtrading_tendency > 0.85 else 0.0
-        score -= 0.20 if strategy_type == "mean_reversion_aligned" and bottom_fishing_tendency > 0.45 else 0.0
-        score -= 0.10 if strategy_type == "trend_following_aligned" and compatibility < 0.65 else 0.0
-        score = max(0.0, round(score, 2))
-
-        status = "pass"
-        if any(
-            flag in flags
-            for flag in (
-                "too_small_trade_universe",
-                "low_behavioral_compatibility",
-                "parameter_density_too_high",
-                "mean_reversion_conflicts_with_bottom_fishing_profile",
-            )
-        ):
-            status = "fail"
-        elif flags:
-            status = "warning"
-
-        summary = "Stress and overfit review is within tolerance."
-        detail = "The candidate remains reasonably stable across behavior alignment, universe breadth, and parameter density checks."
-        if status == "warning":
-            summary = "Stress review found fragility that should be addressed before approval."
-            detail = "The candidate is usable for research, but user behavior or concentration risk could break it in live trading."
-        if status == "fail":
-            summary = "Stress and overfit review rejected this strategy version."
-            detail = "The candidate is too fragile under current user behavior, universe breadth, or parameter concentration assumptions."
-
-        return {
-            "check_type": "stress_overfit",
-            "status": status,
-            "title": "Strategy Stress and Overfit Checker",
-            "score": score,
-            "summary": summary,
-            "detail": detail,
-            "flags": flags,
-            "required_fix_actions": required_fix_actions,
-            "metrics": metrics,
-        }
+        return self.strategy_stress_checker.evaluate(strategy, candidate, behavior, compatibility)

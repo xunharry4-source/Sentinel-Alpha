@@ -144,3 +144,32 @@ provider = "google"
 model = "gemini-2.5-pro"
 temperature = 0.0
 max_tokens = 1800
+
+[programmer_agent]
+enabled = false
+command = "aider"
+args = ["--yes-always"]
+repo_path = "/Users/harry/Documents/git/Sentinel-Alpha"
+allowed_paths = ["src/sentinel_alpha/strategies", "tests", "scripts"]
+auto_commit = true
+timeout_seconds = 180
+
+[observability.prometheus]
+enabled = true
+metrics_path = "/metrics"
+
+[observability.sentry]
+enabled = false
+dsn = ""
+environment = "development"
+traces_sample_rate = 0.1
+profiles_sample_rate = 0.0
+
+[observability.langfuse]
+enabled = false
+host = "http://localhost:3000"
+public_key = ""
+secret_key = ""
+
+[observability.grafana]
+url = "http://localhost:3001"

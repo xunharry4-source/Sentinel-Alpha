@@ -43,6 +43,13 @@ class PersistentWorkflowService(WorkflowService):
             status=payload["status"],
         )
         self.sessions[session.session_id] = session
+        self._append_history_event(
+            session,
+            "session_created",
+            "会话已创建。",
+            {"starting_capital": starting_capital, "user_name": user_name},
+        )
+        self.workflow_store.save_history_event(session.session_id, session.history_events[-1])
         self.runtime_bus.publish_agent_event("workflow.session.created", {"session_id": str(session.session_id), "user_name": user_name})
         return session
 
@@ -67,12 +74,14 @@ class PersistentWorkflowService(WorkflowService):
                     )
                 )
         self.event_writer.write_market_data_points(str(session_id), market_points)
+        self.workflow_store.save_history_event(session_id, session.history_events[-1])
         self.runtime_bus.publish_agent_event("workflow.scenarios.generated", {"session_id": str(session_id), "count": len(session.scenarios)})
         return session
 
     def append_behavior_event(self, session_id: UUID, event: BehaviorEvent) -> WorkflowSession:
         session = super().append_behavior_event(session_id, event)
         self.event_writer.write_behavior_events(str(session_id), [event])
+        self.workflow_store.save_history_event(session_id, session.history_events[-1])
         self.runtime_bus.publish_agent_event("workflow.simulation.event", {"session_id": str(session_id), "scenario_id": event.scenario_id, "action": event.action})
         return session
 
@@ -102,12 +111,15 @@ class PersistentWorkflowService(WorkflowService):
         self.behavior_repo.save_behavioral_run(user, session.behavior_events, report, brief)
         self.memory_store.add_behavior_memory(user, report, brief)
         self.workflow_store.save_profile_evolution(session_id, session.profile_evolution or {})
+        self.workflow_store.save_report_snapshot(session_id, session.report_history[-1])
+        self.workflow_store.save_history_event(session_id, session.history_events[-1])
         self.runtime_bus.publish_agent_event("workflow.profiler.ready", {"session_id": str(session_id), "symbol": symbol})
         return session
 
     def set_trade_universe(self, session_id: UUID, input_type: str, symbols: list[str], allow_overfit_override: bool) -> WorkflowSession:
         session = super().set_trade_universe(session_id, input_type, symbols, allow_overfit_override)
         self.workflow_store.save_phase_payload(session_id, session.phase, "trade_universe", session.trade_universe)
+        self.workflow_store.save_history_event(session_id, session.history_events[-1])
         self.runtime_bus.publish_agent_event("workflow.universe.ready", {"session_id": str(session_id), "expanded": session.trade_universe["expanded"]})
         return session
 
@@ -128,6 +140,7 @@ class PersistentWorkflowService(WorkflowService):
                 "preferred_timeframe": preferred_timeframe,
             },
         )
+        self.workflow_store.save_history_event(session_id, session.history_events[-1])
         return session
 
     def iterate_strategy(
@@ -137,10 +150,22 @@ class PersistentWorkflowService(WorkflowService):
         strategy_type: str = "rule_based_aligned",
         auto_iterations: int = 1,
         iteration_mode: str = "guided",
+        objective_metric: str = "return",
+        objective_targets: dict | None = None,
     ) -> WorkflowSession:
-        session = super().iterate_strategy(session_id, feedback, strategy_type, auto_iterations, iteration_mode)
+        session = super().iterate_strategy(
+            session_id,
+            feedback,
+            strategy_type,
+            auto_iterations,
+            iteration_mode,
+            objective_metric,
+            objective_targets,
+        )
         self.workflow_store.save_phase_payload(session_id, session.phase, "strategy_package", session.strategy_package)
         self.workflow_store.save_phase_payload(session_id, session.phase, "strategy_training_log", session.strategy_training_log)
+        self.workflow_store.save_report_snapshot(session_id, session.report_history[-1])
+        self.workflow_store.save_history_event(session_id, session.history_events[-1])
         if feedback:
             self.workflow_store.save_profile_evolution(session_id, session.profile_evolution or {})
             self.memory_store.add_profile_evolution_memory(
@@ -164,12 +189,14 @@ class PersistentWorkflowService(WorkflowService):
     def approve_strategy(self, session_id: UUID) -> WorkflowSession:
         session = super().approve_strategy(session_id)
         self.workflow_store.approve_strategy(session_id)
+        self.workflow_store.save_history_event(session_id, session.history_events[-1])
         self.runtime_bus.publish_agent_event("workflow.strategy.approved", {"session_id": str(session_id)})
         return session
 
     def set_deployment(self, session_id: UUID, execution_mode: str) -> WorkflowSession:
         session = super().set_deployment(session_id, execution_mode)
         self.workflow_store.set_deployment(session_id, execution_mode)
+        self.workflow_store.save_history_event(session_id, session.history_events[-1])
         self.runtime_bus.publish_agent_event("workflow.deployment.updated", {"session_id": str(session_id), "execution_mode": execution_mode})
         return session
 
@@ -183,6 +210,7 @@ class PersistentWorkflowService(WorkflowService):
         session = super().append_market_snapshot(session_id, snapshot)
         self.event_writer.write_market_data_points(str(session_id), [snapshot])
         self.workflow_store.save_market_snapshot(session_id, asdict(snapshot))
+        self.workflow_store.save_history_event(session_id, session.history_events[-1])
         self.runtime_bus.publish_agent_event(
             "workflow.market.snapshot",
             {"session_id": str(session_id), "symbol": snapshot.symbol, "timeframe": snapshot.timeframe},
@@ -193,6 +221,7 @@ class PersistentWorkflowService(WorkflowService):
         session = super().append_trade_record(session_id, trade)
         self.workflow_store.save_trade_record(session_id, asdict(trade))
         self.workflow_store.save_profile_evolution(session_id, session.profile_evolution or {})
+        self.workflow_store.save_history_event(session_id, session.history_events[-1])
         self.memory_store.add_profile_evolution_memory(
             user_id=str(session_id),
             source_type="trade_record",
@@ -208,6 +237,8 @@ class PersistentWorkflowService(WorkflowService):
     def search_intelligence(self, session_id: UUID, query: str, max_documents: int | None = None) -> WorkflowSession:
         session = super().search_intelligence(session_id, query, max_documents)
         self.workflow_store.save_intelligence_documents(session_id, query, session.intelligence_documents)
+        self.workflow_store.save_report_snapshot(session_id, session.report_history[-1])
+        self.workflow_store.save_history_event(session_id, session.history_events[-1])
         for document in session.intelligence_documents:
             self.memory_store.add_market_intelligence_memory(
                 query=query,
@@ -224,9 +255,31 @@ class PersistentWorkflowService(WorkflowService):
     def append_information_events(self, session_id: UUID, events: list[dict]) -> WorkflowSession:
         session = super().append_information_events(session_id, events)
         self.workflow_store.save_information_events(session_id, events)
+        self.workflow_store.save_history_event(session_id, session.history_events[-1])
         self.runtime_bus.publish_agent_event(
             "workflow.information_events.recorded",
             {"session_id": str(session_id), "count": len(events)},
+        )
+        return session
+
+    def execute_programmer_task(
+        self,
+        session_id: UUID,
+        instruction: str,
+        target_files: list[str],
+        context: str | None = None,
+        commit_changes: bool = True,
+    ) -> WorkflowSession:
+        session = super().execute_programmer_task(session_id, instruction, target_files, context, commit_changes)
+        self.workflow_store.save_report_snapshot(session_id, session.report_history[-1])
+        self.workflow_store.save_history_event(session_id, session.history_events[-1])
+        self.runtime_bus.publish_agent_event(
+            "workflow.programmer.run",
+            {
+                "session_id": str(session_id),
+                "status": session.programmer_runs[-1].get("status"),
+                "commit_hash": session.programmer_runs[-1].get("commit_hash"),
+            },
         )
         return session
 

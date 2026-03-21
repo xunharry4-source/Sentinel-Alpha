@@ -57,6 +57,33 @@
         </div>
         <div class="trade-config">
           <label class="config-field">
+            <span>优化目标</span>
+            <select id="objective-metric-input">
+              <option value="return">收益</option>
+              <option value="win_rate">胜率</option>
+              <option value="drawdown">回撤</option>
+              <option value="max_loss">最大亏损</option>
+            </select>
+          </label>
+          <label class="config-field">
+            <span>目标收益 %</span>
+            <input id="target-return-input" type="number" step="0.1" value="18" />
+          </label>
+          <label class="config-field">
+            <span>目标胜率 %</span>
+            <input id="target-winrate-input" type="number" step="0.1" value="58" />
+          </label>
+          <label class="config-field">
+            <span>目标回撤 %</span>
+            <input id="target-drawdown-input" type="number" step="0.1" value="12" />
+          </label>
+          <label class="config-field">
+            <span>目标最大亏损 %</span>
+            <input id="target-maxloss-input" type="number" step="0.1" value="6" />
+          </label>
+        </div>
+        <div class="trade-config">
+          <label class="config-field">
             <span>迭代模式</span>
             <select id="iteration-mode-input">
               <option value="guided">自动迭代直到通过</option>
@@ -86,6 +113,59 @@
         </ul>
       </article>
       <article class="panel">
+        <p class="eyebrow">Current Status</p>
+        <h3>当前训练状态</h3>
+        <ul id="strategy-status-list" class="result-list">
+          <li>当前还没有训练状态。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Analysis</p>
+        <h3>问题分析</h3>
+        <ul id="strategy-analysis-list" class="result-list">
+          <li>还没有分析结果。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Compare</p>
+        <h3>基准与双方案对比</h3>
+        <div id="strategy-variant-grid" class="check-grid">
+          <article class="check-card"><strong>还没有方案对比。</strong><p>完成一轮策略训练后，这里会显示 baseline 与两个方案的结果。</p></article>
+        </div>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Code</p>
+        <h3>推荐代码</h3>
+        <pre id="strategy-code-panel" class="json-panel">还没有策略代码。</pre>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Programmer Agent</p>
+        <h3>Aider 受控编程</h3>
+        <div class="trade-config">
+          <label class="config-field">
+            <span>目标文件</span>
+            <input id="programmer-target-files" type="text" value="src/sentinel_alpha/strategies/rule_based.py" />
+          </label>
+          <label class="config-field">
+            <span>修改指令</span>
+            <input id="programmer-instruction" type="text" value="调整策略参数，并保留现有风控结构。" />
+          </label>
+        </div>
+        <div class="trade-config">
+          <label class="config-field">
+            <span>附加上下文</span>
+            <input id="programmer-context" type="text" value="优先处理最新失败原因，并保持版本命名与检查流程不变。" />
+          </label>
+        </div>
+        <div class="action-buttons secondary">
+          <button id="run-programmer-agent">执行 Programmer Agent</button>
+        </div>
+        <ul id="programmer-run-list" class="result-list">
+          <li>还没有 Programmer Agent 记录。</li>
+        </ul>
+        <pre id="programmer-diff-panel" class="json-panel">还没有代码差异。</pre>
+      </article>
+      <article class="panel">
         <p class="eyebrow">Checks</p>
         <h3>检查结果</h3>
         <ul id="strategy-check-list" class="result-list">
@@ -104,6 +184,70 @@
         <h3>训练日志</h3>
         <ul id="training-log-list" class="result-list">
           <li>还没有训练日志。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Iteration History</p>
+        <h3>策略迭代历史</h3>
+        <ul id="strategy-history-list" class="result-list">
+          <li>还没有策略迭代历史。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Report Archive</p>
+        <h3>策略报告归档</h3>
+        <ul id="strategy-report-archive-list" class="result-list">
+          <li>还没有策略报告归档。</li>
+        </ul>
+        <div class="trade-config">
+          <label class="config-field">
+            <span>恢复版本</span>
+            <select id="restore-version-select"></select>
+          </label>
+        </div>
+        <div class="action-buttons secondary compact-actions">
+          <button id="restore-version-button">恢复为当前实验版本</button>
+        </div>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Version Compare</p>
+        <h3>版本对比</h3>
+        <div class="trade-config">
+          <label class="config-field">
+            <span>版本 A</span>
+            <select id="compare-version-a"></select>
+          </label>
+          <label class="config-field">
+            <span>版本 B</span>
+            <select id="compare-version-b"></select>
+          </label>
+        </div>
+        <div class="action-buttons secondary compact-actions">
+          <button id="run-version-compare">对比版本</button>
+        </div>
+        <ul id="strategy-compare-list" class="result-list">
+          <li>还没有版本对比结果。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Version Code</p>
+        <h3>历史版本代码</h3>
+        <div class="trade-config">
+          <label class="config-field">
+            <span>查看版本</span>
+            <select id="history-version-select"></select>
+          </label>
+        </div>
+        <pre id="history-code-panel" class="json-panel">还没有历史版本代码。</pre>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Failure Evolution</p>
+        <h3>失败原因演化</h3>
+        <div id="failure-evolution-timeline" class="timeline-grid">
+          <article class="timeline-card"><strong>当前还没有失败原因演化记录。</strong></article>
+        </div>
+        <ul id="failure-evolution-list" class="result-list">
+          <li>当前还没有失败原因演化记录。</li>
         </ul>
       </article>
     </section>

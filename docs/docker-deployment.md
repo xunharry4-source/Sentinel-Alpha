@@ -53,6 +53,30 @@ Exposed services:
 - Redis: `127.0.0.1:6379`
 - Qdrant: [http://127.0.0.1:6333](http://127.0.0.1:6333)
 
+### Observability mode
+
+Use this when you want Prometheus, Grafana, and LangFuse alongside the application stack.
+
+```bash
+cd /Users/harry/Documents/git/Sentinel-Alpha
+docker compose --profile observability up --build
+```
+
+This profile adds:
+
+- `prometheus`
+- `grafana`
+- `langfuse-web`
+- `langfuse-postgres`
+- `langfuse-redis`
+- `langfuse-clickhouse`
+
+Exposed services:
+
+- Prometheus: [http://127.0.0.1:9090](http://127.0.0.1:9090)
+- Grafana: [http://127.0.0.1:3001](http://127.0.0.1:3001)
+- LangFuse: [http://127.0.0.1:3000](http://127.0.0.1:3000)
+
 ## What Gets Initialized
 
 The persistent profile mounts schema SQL into `docker-entrypoint-initdb.d` and initializes:
@@ -84,6 +108,15 @@ Docker overrides only the deployment-sensitive values through environment variab
 - `SENTINEL_TIMESCALE_DSN`
 - `SENTINEL_REDIS_URL`
 - `SENTINEL_QDRANT_URL`
+- `SENTINEL_PROMETHEUS_ENABLED`
+- `SENTINEL_PROMETHEUS_METRICS_PATH`
+- `SENTINEL_SENTRY_ENABLED`
+- `SENTINEL_SENTRY_DSN`
+- `SENTINEL_LANGFUSE_ENABLED`
+- `SENTINEL_LANGFUSE_HOST`
+- `SENTINEL_LANGFUSE_PUBLIC_KEY`
+- `SENTINEL_LANGFUSE_SECRET_KEY`
+- `SENTINEL_GRAFANA_URL`
 
 ## Dependency Baseline
 
@@ -97,6 +130,9 @@ The project dependency floor has been updated to the latest stable versions veri
 - `langchain>=1.2.13`
 - `langchain-core>=1.2.18`
 - `langchain-qdrant>=1.1.0`
+- `prometheus-fastapi-instrumentator>=7.1.0`
+- `sentry-sdk[fastapi]>=2.39.1`
+- `langfuse>=3.4.2`
 
 These package constraints live in [pyproject.toml](/Users/harry/Documents/git/Sentinel-Alpha/pyproject.toml).
 
