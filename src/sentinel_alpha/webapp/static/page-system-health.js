@@ -1,10 +1,11 @@
 const SYSTEM_HEALTH_POLL_MS = 10000;
 const STRATEGY_FOCUS_KEY = "sentinel-alpha:strategy-focus-target";
+const TERMINAL_FOCUS_KEY = "sentinel-alpha:terminal-focus-target";
 let systemHealthTimerId = null;
 
-function jumpFromHealth(targetPage, focusTarget = "") {
+function jumpFromHealth(targetPage, focusTarget = "", focusKey = STRATEGY_FOCUS_KEY) {
   if (focusTarget) {
-    window.localStorage.setItem(STRATEGY_FOCUS_KEY, focusTarget);
+    window.localStorage.setItem(focusKey, focusTarget);
   }
   window.location.href = targetPage;
 }
@@ -98,19 +99,93 @@ function renderTerminalIntegrationHealth() {
   }
   const latest = runs[runs.length - 1] || {};
   const test = latest.terminal_test || {};
+  const runtime = latest.terminal_runtime_summary || {};
   const checks = test.checks || [];
   const passed = checks.filter((item) => item.status === "pass").length;
+  const recentRuns = runs.slice(-5);
+  const recentStates = recentRuns.map((run) => run.terminal_test?.status || "not_tested");
+  const recentRatios = recentRuns.map((run) => {
+    const testChecks = run.terminal_test?.checks || [];
+    const testPassed = testChecks.filter((item) => item.status === "pass").length;
+    return `${run.run_id || "unknown"}:${testPassed}/${testChecks.length || 0}`;
+  });
+  const recentRoutes = recentRuns
+    .map((run) => run.terminal_test?.repair_summary?.primary_route)
+    .filter(Boolean);
+  const trendStatus =
+    recentStates.length >= 2 &&
+    recentStates[recentStates.length - 1] === "ok" &&
+    recentStates.some((item) => item !== "ok")
+      ? "improving"
+      : recentStates.length >= 2 &&
+          recentStates[recentStates.length - 1] !== "ok" &&
+          recentStates[recentStates.length - 2] === recentStates[recentStates.length - 1]
+        ? "stalled"
+        : recentStates.length >= 2 &&
+            recentStates[recentStates.length - 1] === "warning" &&
+            recentStates[recentStates.length - 2] === "ok"
+          ? "degrading"
+          : "flat";
   renderList(
     "terminal-integration-health-list",
     [
       `latest_run / ${latest.run_id || "unknown"} / ${latest.terminal_name || "unknown"} / ${latest.terminal_type || "unknown"}`,
+      `runtime / ${runtime.status || "unknown"} / ${runtime.note || "无"}`,
+      `readiness / ${latest.integration_readiness_summary?.status || "unknown"} / endpoints=${latest.integration_readiness_summary?.endpoint_count || 0}/${latest.integration_readiness_summary?.required_endpoint_count || 0}`,
       `docs / ${latest.docs_context?.docs_fetch_ok ? "ok" : "fail"} / ready=${latest.validation?.ready_for_programmer_agent ? "yes" : "no"}`,
       `test / ${test.status || "not_tested"} / passed=${passed}/${checks.length || 0}`,
+      `trend / ${trendStatus} / recent_statuses=${recentStates.join(" -> ") || "none"}`,
+      `recent_checks / ${recentRatios.join(" / ") || "none"}`,
+      `recent_repairs / ${recentRoutes.join(" -> ") || "none"}`,
       `summary / ${test.summary || "终端方案已生成，但还没有执行 smoke test。"}`,
+      `repair / ${test.repair_summary?.primary_route || "none"} / ${test.repair_summary?.priority || "none"}`,
       `module / ${latest.target_module || "unknown"}`,
-      `next / ${test.status === "ok" ? "可继续交给 Programmer Agent 或进入更强联通测试。" : "建议先到终端接入页检查 endpoint 和 smoke test 失败项。"}`,
+      `next / ${runtime.next_action || (test.status === "ok" ? "可继续交给 Programmer Agent 或进入更强联通测试。" : (test.repair_summary?.actions?.[0] || "建议先到终端接入页检查 endpoint 和 smoke test 失败项。"))}`,
     ],
     "当前还没有终端接入健康摘要。"
+  );
+}
+
+function renderDataHealth(payload) {
+  const dataHealth = payload?.data_health || {};
+  renderList(
+    "data-health-list",
+    [
+      `status / ${dataHealth.status || "unknown"} / ${dataHealth.note || "无"}`,
+      `sessions_with_data / ${dataHealth.sessions_with_data ?? 0}`,
+      `latest_market / ${dataHealth.latest_market_timestamp || "none"} / ${dataHealth.latest_market_symbol || "none"}`,
+      `latest_intelligence / ${dataHealth.latest_intelligence_timestamp || "none"} / ${dataHealth.latest_intelligence_query || "none"}`,
+      `latest_financials / ${dataHealth.latest_financials_timestamp || "none"} / ${dataHealth.latest_financials_provider || "none"}`,
+      `latest_dark_pool / ${dataHealth.latest_dark_pool_timestamp || "none"} / ${dataHealth.latest_dark_pool_provider || "none"}`,
+      `latest_options / ${dataHealth.latest_options_timestamp || "none"} / ${dataHealth.latest_options_provider || "none"}`,
+      `recent_failures / ${dataHealth.recent_failure_count ?? 0}`,
+      `failure_ops / ${(dataHealth.recent_failure_operations || []).join(" -> ") || "none"}`,
+      `failure_counts / ${Object.entries(dataHealth.recent_failure_counts || {}).map(([name, count]) => `${name}=${count}`).join(" / ") || "none"}`,
+    ],
+    "当前还没有数据健康摘要。"
+  );
+}
+
+function renderRuntimeHealth(payload) {
+  const runtime = payload?.runtime_health || {};
+  const research = runtime.research || {};
+  const repair = runtime.repair || {};
+  const terminal = runtime.terminal || {};
+  const data = runtime.data || {};
+  const llm = runtime.llm || {};
+  renderList(
+    "runtime-health-list",
+    [
+      `overall / ${runtime.status || "unknown"} / ${runtime.note || "无"}`,
+      `research / ${research.status || "unknown"} / ${research.note || "无"} / ${research.timestamp || "none"}`,
+      `repair / ${repair.status || "unknown"} / ${repair.note || "无"} / ${repair.timestamp || "none"}`,
+      `terminal / ${terminal.status || "unknown"} / ${terminal.note || "无"} / ${terminal.timestamp || "none"}`,
+      `terminal_next / ${terminal.next_action || "none"} / route=${terminal.primary_route || "none"}`,
+      `data / ${data.status || "unknown"} / ${data.note || "无"}`,
+      `llm / ${llm.status || "unknown"} / ${llm.note || "无"} / live=${llm.live_task_count ?? 0} / fallback=${llm.fallback_task_count ?? 0}`,
+      `llm_fallback_tasks / ${(llm.fallback_tasks || []).join(", ") || "none"}`,
+    ],
+    "当前还没有长期运行健康结论。"
   );
 }
 
@@ -143,6 +218,8 @@ async function refreshSystemHealth() {
     renderPerformance(payload.performance || {});
     renderErrors(payload.recent_errors || []);
     renderTerminalIntegrationHealth();
+    renderDataHealth(payload);
+    renderRuntimeHealth(payload);
     renderAgentLogs(payload.recent_agent_logs || []);
     renderTokenUsage(payload.token_usage || {});
   } catch (error) {
@@ -155,6 +232,8 @@ async function refreshSystemHealth() {
     renderPerformance({});
     renderErrors([]);
     renderTerminalIntegrationHealth();
+    renderDataHealth({});
+    renderRuntimeHealth({});
     renderAgentLogs([]);
     renderTokenUsage({});
   } finally {
@@ -165,6 +244,7 @@ async function refreshSystemHealth() {
 document.querySelector("#refresh-system-health")?.addEventListener("click", refreshSystemHealth);
 document.querySelector("#jump-health-to-config")?.addEventListener("click", () => jumpFromHealth("./configuration.html"));
 document.querySelector("#jump-health-to-strategy")?.addEventListener("click", () => jumpFromHealth("./strategy.html", "#strategy-repair-route-list"));
+document.querySelector("#jump-health-to-terminal")?.addEventListener("click", () => jumpFromHealth("./trading-terminal-integration.html", "#terminal-repair-summary", TERMINAL_FOCUS_KEY));
 
 (async function bootstrapSystemHealthPage() {
   renderShell("system-health");

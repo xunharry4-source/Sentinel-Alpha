@@ -91,6 +91,7 @@ Production observability rule:
   - token and model usage
 - monitoring work is incomplete if the user still cannot tell which layer failed and why
 - production observability should include dashboards, alerting, tracing, and operator diagnosis paths
+- runtime-health summaries should also include LLM execution health so users can tell whether key tasks are running on live providers or fallback paths
 
 ## Web Module Rule
 
@@ -176,6 +177,13 @@ Required rule:
   - test code
   - config candidate
   - documentation context
+- before smoke tests run, terminal integration should expose a structured readiness summary that includes:
+  - readiness status
+  - base-url validity
+  - auth-style readiness
+  - endpoint completeness
+  - docs availability
+  - next actions
 - terminal integration should support a smoke-test layer before live use
 - smoke tests should at minimum cover:
   - ping
@@ -184,6 +192,12 @@ Required rule:
   - order placement contract
   - order-status contract
   - cancel contract
+- terminal smoke tests should also validate basic response shapes for:
+  - positions
+  - balances
+  - order status
+- endpoint path checks alone are insufficient when the returned payload shape is unusable
+- terminal integration should support a configurable response-field mapping layer so provider-specific payload layouts do not require hardcoded code edits
 - smoke-test output must be archived into:
   - terminal integration runs
   - report history
@@ -192,6 +206,53 @@ Required rule:
   - terminal integration page
   - system health page
   - configuration page
+- terminal smoke-test failures must compress into a structured repair summary that includes:
+  - primary repair route
+  - repair priority
+  - repair note
+  - repair actions
+- terminal integration should also expose a runtime summary that includes:
+  - terminal health status
+  - next action
+  - primary repair route
+- terminal repair summaries should be visible on:
+  - terminal integration page
+  - system health page
+  - configuration page
+- terminal runtime summaries should feed the overall runtime-health conclusion instead of duplicating separate frontend-only heuristics
+- terminal diagnostics are incomplete if the user cannot jump directly from:
+  - system health
+  - configuration
+  back into the terminal repair surface
+- the terminal page should support backfilling the current repair summary into user-editable notes so the next iteration has explicit repair context
+
+## Programmer Agent Acceptance Rule
+
+Programmer Agent output is not complete when it only reports a diff and a raw failure.
+
+Required rule:
+
+- each bounded repair run should produce:
+  - `failure_summary`
+  - `repair_plan`
+  - `acceptance_summary`
+  - `rollback_summary`
+  - `promotion_summary`
+  - `stability_summary`
+- `acceptance_summary` should state whether the latest patch is:
+  - accepted
+  - under review
+  - rejected
+- `rollback_summary` should state whether rollback is:
+  - preferred
+  - optional
+  - unnecessary because the current validated patch is the baseline
+- `promotion_summary` should state whether the latest patch is fit to become the next stable candidate
+- `stability_summary` should state whether the repair chain is:
+  - stable
+  - caution
+  - fragile
+- strategy-page diagnostics should expose these summaries directly, not only raw stderr or diff output
 
 ## LLM Routing Rule
 

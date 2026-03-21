@@ -93,6 +93,20 @@
         <span>用户补充信息</span>
         <textarea id="terminal-user-notes" class="config-editor compact-editor" spellcheck="false">我主要需要限价单、撤单、持仓同步和订单状态查询。</textarea>
       </label>
+      <label class="config-field">
+        <span>返回字段映射(JSON)</span>
+        <textarea id="terminal-response-field-map" class="config-editor compact-editor" spellcheck="false">{
+  "positions_root": "positions",
+  "position_symbol": "symbol",
+  "position_quantity": "quantity",
+  "balances_root": "balances",
+  "balance_cash": "cash",
+  "balance_buying_power": "buying_power",
+  "order_status_root": "order",
+  "order_status_id": "order_id",
+  "order_status_state": "status"
+}</textarea>
+      </label>
       <div class="button-row">
         <button id="generate-terminal">生成终端接入方案</button>
         <button id="test-terminal">测试终端接入方案</button>
@@ -111,6 +125,15 @@
           <li>等待生成终端接入方案。</li>
         </ul>
       </section>
+      <section class="panel">
+        <p class="eyebrow">Integration Readiness</p>
+        <ul id="terminal-readiness-summary" class="result-list">
+          <li>等待终端联通前置检查。</li>
+        </ul>
+      </section>
+    </section>
+
+    <section class="two-column-grid">
       <section class="panel">
         <p class="eyebrow">Docs Context</p>
         <ul id="terminal-docs-context" class="result-list">
@@ -152,6 +175,16 @@
         <p class="eyebrow">Diff / Commit</p>
         <pre id="terminal-diff" class="code-block">等待 Programmer Agent 运行结果。</pre>
       </section>
+    </section>
+
+    <section class="panel">
+      <p class="eyebrow">Terminal Repair Route</p>
+      <ul id="terminal-repair-summary" class="result-list">
+        <li>等待终端 smoke test 修复建议。</li>
+      </ul>
+      <div class="button-row">
+        <button id="terminal-fill-repair-notes">回填修复说明到用户补充信息</button>
+      </div>
     </section>
 
     <section class="panel">

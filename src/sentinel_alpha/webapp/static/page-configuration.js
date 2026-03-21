@@ -1,4 +1,5 @@
 const STRATEGY_FOCUS_KEY = "sentinel-alpha:strategy-focus-target";
+const TERMINAL_FOCUS_KEY = "sentinel-alpha:terminal-focus-target";
 
 function setValue(id, value) {
   const target = document.querySelector(`#${id}`);
@@ -66,19 +67,46 @@ function renderTerminalHealth(snapshot) {
   }
   const latest = runs[runs.length - 1] || {};
   const test = latest.terminal_test || {};
+  const runtime = latest.terminal_runtime_summary || {};
   const checks = test.checks || [];
   const passed = checks.filter((item) => item.status === "pass").length;
   renderList(
     "config-terminal-health-list",
     [
       `latest_run / ${latest.run_id || "unknown"} / ${latest.terminal_name || "unknown"} / ${latest.terminal_type || "unknown"}`,
+      `runtime / ${runtime.status || "unknown"} / ${runtime.note || "无"}`,
+      `readiness / ${latest.integration_readiness_summary?.status || "unknown"} / endpoints=${latest.integration_readiness_summary?.endpoint_count || 0}/${latest.integration_readiness_summary?.required_endpoint_count || 0}`,
       `docs / ${latest.docs_context?.docs_fetch_ok ? "ok" : "fail"} / ready=${latest.validation?.ready_for_programmer_agent ? "yes" : "no"}`,
       `test / ${test.status || "not_tested"} / passed=${passed}/${checks.length || 0}`,
       `summary / ${test.summary || "终端方案已生成，但还没有执行 smoke test。"}`,
+      `repair / ${test.repair_summary?.primary_route || "none"} / ${test.repair_summary?.priority || "none"}`,
       `module / ${latest.target_module || "unknown"}`,
-      `config_hint / ${test.status === "ok" ? "当前终端方案基础契约正常，可继续挂入配置或写入真实文件。" : "先检查 order/cancel/status/positions/balances endpoint 再落配置。"}`,
+      `config_hint / ${runtime.next_action || (test.status === "ok" ? "当前终端方案基础契约正常，可继续挂入配置或写入真实文件。" : (test.repair_summary?.actions?.[0] || "先检查 order/cancel/status/positions/balances endpoint 再落配置。"))}`,
     ],
     "当前还没有终端接入健康摘要。"
+  );
+}
+
+function renderDataHealth(snapshot) {
+  const intelligenceRuns = snapshot?.intelligence_runs || [];
+  const financialsRuns = snapshot?.financials_runs || [];
+  const darkPoolRuns = snapshot?.dark_pool_runs || [];
+  const optionsRuns = snapshot?.options_runs || [];
+  const latestIntelligence = intelligenceRuns[intelligenceRuns.length - 1];
+  const latestFinancials = financialsRuns[financialsRuns.length - 1];
+  const latestDarkPool = darkPoolRuns[darkPoolRuns.length - 1];
+  const latestOptions = optionsRuns[optionsRuns.length - 1];
+  renderList(
+    "config-data-health-list",
+    [
+      `intelligence / ${latestIntelligence?.timestamp || "none"} / ${latestIntelligence?.query || "none"}`,
+      `financials / ${latestFinancials?.timestamp || "none"} / ${latestFinancials?.symbol || "none"} / ${latestFinancials?.provider || "none"}`,
+      `dark_pool / ${latestDarkPool?.timestamp || "none"} / ${latestDarkPool?.symbol || "none"} / ${latestDarkPool?.provider || "none"}`,
+      `options / ${latestOptions?.timestamp || "none"} / ${latestOptions?.symbol || "none"} / ${latestOptions?.provider || "none"}`,
+      `run_counts / intelligence=${intelligenceRuns.length} / financials=${financialsRuns.length} / dark_pool=${darkPoolRuns.length} / options=${optionsRuns.length}`,
+      `health / ${intelligenceRuns.length || financialsRuns.length || darkPoolRuns.length || optionsRuns.length ? "active" : "fragile"} / 数据查询层建议优先检查最近 provider、时间戳和本地路径是否还有效。`,
+    ],
+    "当前还没有数据更新健康摘要。"
   );
 }
 
@@ -109,6 +137,7 @@ function renderTerminalCandidates(snapshot) {
           <div class="button-row">
             <button type="button" data-terminal-action="merge" data-run-id="${item.run_id}">挂入终端配置</button>
             <button type="button" data-terminal-action="merge-default" data-run-id="${item.run_id}">挂入并设为默认终端</button>
+            <button type="button" data-terminal-action="merge-default-test" data-run-id="${item.run_id}">设为默认并立即测试</button>
           </div>
           <pre class="code-block">${JSON.stringify(item.config_candidate, null, 2)}</pre>
         </article>
@@ -223,6 +252,7 @@ async function loadConfigPage() {
     renderValidation(payload.validation);
     renderGeneratedCandidates(snapshot);
     renderTerminalHealth(snapshot);
+    renderDataHealth(snapshot);
     renderTerminalCandidates(snapshot);
     setText("config-note", "当前配置已加载。保存后会自动执行有效性检测。");
   } catch (error) {
@@ -287,9 +317,9 @@ function renderFixRouting(validation) {
   renderList("config-fix-routing-list", lines, "等待配置测试结果。");
 }
 
-function jumpFromConfig(targetPage, focusTarget = "") {
+function jumpFromConfig(targetPage, focusTarget = "", focusKey = STRATEGY_FOCUS_KEY) {
   if (focusTarget) {
-    window.localStorage.setItem(STRATEGY_FOCUS_KEY, focusTarget);
+    window.localStorage.setItem(focusKey, focusTarget);
   }
   window.location.href = targetPage;
 }
@@ -374,7 +404,7 @@ function applyGeneratedCandidate(runId, setDefaultProvider) {
   }
 }
 
-function applyTerminalCandidate(runId, setDefaultTerminal) {
+async function applyTerminalCandidate(runId, setDefaultTerminal, testNow = false) {
   try {
     const snapshot = loadStoredSnapshot();
     const run = (snapshot?.terminal_integration_runs || []).find((item) => item.run_id === runId);
@@ -384,6 +414,25 @@ function applyTerminalCandidate(runId, setDefaultTerminal) {
     const nextPayload = applyTerminalCandidatePayload(currentEditorPayload(), run.config_candidate, setDefaultTerminal);
     document.querySelector("#config-editor").value = JSON.stringify(nextPayload, null, 2);
     populateConfigForm(nextPayload);
+    if (testNow) {
+      const saved = await apiRequest("/api/config", {
+        method: "POST",
+        body: JSON.stringify({ payload: nextPayload }),
+      });
+      renderValidation(saved.validation);
+      if (!snapshot?.session_id) {
+        throw new Error("当前没有活动会话，无法执行终端测试。");
+      }
+      const tested = await apiRequest(`/api/sessions/${snapshot.session_id}/terminal/test`, {
+        method: "POST",
+        body: JSON.stringify({ run_id: runId }),
+      });
+      storeSnapshot(tested);
+      renderTerminalHealth(tested);
+      renderTerminalCandidates(tested);
+      setText("config-note", `已挂入 ${run.terminal_name}、设为默认终端，并完成 smoke test：${tested.terminal_integration_runs?.slice(-1)[0]?.terminal_test?.status || "unknown"}`);
+      return;
+    }
     setText(
       "config-note",
       setDefaultTerminal
@@ -404,6 +453,7 @@ document.querySelector("#test-yahoo-options-provider")?.addEventListener("click"
 document.querySelector("#jump-config-to-providers")?.addEventListener("click", () => jumpFromConfig("./configuration.html"));
 document.querySelector("#jump-config-to-strategy")?.addEventListener("click", () => jumpFromConfig("./strategy.html", "#strategy-repair-route-list"));
 document.querySelector("#jump-config-to-health")?.addEventListener("click", () => jumpFromConfig("./system-health.html"));
+document.querySelector("#jump-config-to-terminal")?.addEventListener("click", () => jumpFromConfig("./trading-terminal-integration.html", "#terminal-repair-summary", TERMINAL_FOCUS_KEY));
 document.addEventListener("click", (event) => {
   const target = event.target;
   if (!(target instanceof HTMLElement)) return;
@@ -416,7 +466,11 @@ document.addEventListener("click", (event) => {
   const terminalAction = target.dataset.terminalAction;
   const terminalRunId = target.dataset.runId;
   if (!terminalAction || !terminalRunId) return;
-  applyTerminalCandidate(terminalRunId, terminalAction === "merge-default");
+  applyTerminalCandidate(
+    terminalRunId,
+    terminalAction === "merge-default" || terminalAction === "merge-default-test",
+    terminalAction === "merge-default-test"
+  );
 });
 
 loadConfigPage();

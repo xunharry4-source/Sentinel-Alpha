@@ -29,6 +29,7 @@ Observability now includes:
 - Grafana dashboard entry configuration
 - Sentry error reporting integration
 - LangFuse tracing hooks for intelligence and strategy LLM tasks
+- runtime LLM health summary with live-vs-fallback task visibility
 
 The code mutation layer now includes a controlled `Programmer Agent` backed by `Aider`-style local editing flow:
 
@@ -37,6 +38,7 @@ The code mutation layer now includes a controlled `Programmer Agent` backed by `
 - git diff capture
 - commit hash capture
 - rollback anchor capture
+- acceptance, rollback, promotion, and stability summaries for each repair chain
 - strategy-code experiment history
 
 Free market-data integration now includes:
@@ -79,9 +81,54 @@ Additional free datasets now include:
 - system health diagnostics with module status, agent logs, recent errors, and token usage
 - library and SDK diagnostics inside system health
 - controlled Programmer Agent for local strategy-code mutation and self-repair
+- Programmer Agent acceptance gate, rollback guidance, promotion gate, and repair-chain stability summary
 - trading-terminal integration generation, smoke testing, and health summary
+- terminal smoke-test repair summaries and terminal-repair jump flow
+- terminal integration readiness summary before smoke testing
+- terminal response-shape checks for positions, balances, and order-status
+- configurable terminal `response_field_map` for provider-specific payload layouts
+- terminal runtime summary with status, next action, and primary repair route
 - PostgreSQL / TimescaleDB / Qdrant / Redis persistence adapters
 - dedicated frontend web module
+
+## Project Status
+
+### Completed
+
+The project already has several closed loops that are usable rather than merely illustrative:
+
+- strategy research loop
+  - structured inputs, data bundles, research summaries, winner selection, rejection reasons, release-gate reasoning, archive replay
+- autoresearch loop
+  - iteration hypotheses, per-variant hypotheses, cycle summaries, next hypotheses, memory, convergence tracking
+- Programmer Agent loop
+  - bounded retries, compile/contract/pytest gates, failure summaries, repair plans, acceptance, rollback, promotion, stability
+- terminal integration loop
+  - docs-driven adapter generation, readiness checks, smoke tests, response-shape validation, configurable field maps, repair summaries, runtime summaries
+- runtime visibility loop
+  - research, repair, terminal, data, and LLM health summaries across strategy, report, configuration, terminal, and system-health pages
+
+In practice, the platform is already beyond a UI mock or one-shot demo. It behaves like a real single-user research workbench with replayable state and explicit diagnostics.
+
+### In Progress
+
+The main areas still being hardened are:
+
+- deeper real backtest coupling
+  - the workflow shape is stable, but the research engine still needs deeper real-market execution strength
+- live LLM hardening
+  - routing and fallback visibility are present, but production-grade live-provider behavior is still being tightened
+- long-running single-user operation
+  - runtime health summaries now exist, but long-duration recovery and resilience are still being strengthened
+
+### Remaining
+
+The largest remaining hard problems are:
+
+- finalizing the real backtest engine into a deeper research execution layer
+- making Programmer Agent more autonomous and harder to destabilize
+- pushing terminal integration from strong smoke-level integration toward stronger real-endpoint confidence
+- strengthening long-running platform recovery and sustained-operation behavior
 
 ## Main Docs
 
@@ -245,6 +292,10 @@ The current platform already supports a usable research feedback loop:
   - system-health page
   - configuration page
   back into strategy or configuration repair surfaces
+- terminal repair flow from:
+  - system-health page
+  - configuration page
+  back into terminal integration repair surfaces
 
 ## Production Gaps
 

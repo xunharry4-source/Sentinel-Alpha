@@ -135,7 +135,8 @@ class ProgrammerAgent:
     ) -> dict:
         attempts: list[dict] = []
         retry_context = context or ""
-        for attempt in range(1, max(1, self.settings.programmer_agent_retry_attempts) + 1):
+        max_attempts = max(1, self.settings.programmer_agent_retry_attempts)
+        for attempt in range(1, max_attempts + 1):
             result = self.execute(
                 instruction=instruction,
                 target_files=target_files,
@@ -164,6 +165,33 @@ class ProgrammerAgent:
                 final["status"] = "ok"
                 final["failure_summary"] = self._build_failure_summary(attempts)
                 final["repair_plan"] = self._build_repair_plan(attempts, final["failure_summary"])
+                final["progress_status"] = final["failure_summary"].get("progress_status")
+                final["progress_note"] = final["failure_summary"].get("progress_note")
+                final["stop_reason"] = "success"
+                final["retry_exhausted"] = False
+                final["no_progress_detected"] = False
+                final["stable_success_required"] = True
+                final["acceptance_summary"] = self._build_acceptance_summary(final)
+                final["rollback_summary"] = self._build_rollback_summary(final)
+                final["promotion_summary"] = self._build_promotion_summary(final)
+                final["stability_summary"] = self._build_stability_summary(final)
+                return final
+            if self._detect_no_progress(attempts):
+                final = dict(result)
+                final["attempts"] = attempts
+                final["status"] = "error"
+                final["failure_summary"] = self._build_failure_summary(attempts)
+                final["repair_plan"] = self._build_repair_plan(attempts, final["failure_summary"])
+                final["progress_status"] = final["failure_summary"].get("progress_status")
+                final["progress_note"] = final["failure_summary"].get("progress_note")
+                final["stop_reason"] = "no_progress_detected"
+                final["retry_exhausted"] = False
+                final["no_progress_detected"] = True
+                final["stable_success_required"] = True
+                final["acceptance_summary"] = self._build_acceptance_summary(final)
+                final["rollback_summary"] = self._build_rollback_summary(final)
+                final["promotion_summary"] = self._build_promotion_summary(final)
+                final["stability_summary"] = self._build_stability_summary(final)
                 return final
             current_summary = self._build_failure_summary(attempts)
             current_plan = self._build_repair_plan(attempts, current_summary)
@@ -180,6 +208,16 @@ class ProgrammerAgent:
         final["status"] = "error"
         final["failure_summary"] = self._build_failure_summary(attempts)
         final["repair_plan"] = self._build_repair_plan(attempts, final["failure_summary"])
+        final["progress_status"] = final["failure_summary"].get("progress_status")
+        final["progress_note"] = final["failure_summary"].get("progress_note")
+        final["stop_reason"] = "retry_exhausted"
+        final["retry_exhausted"] = True
+        final["no_progress_detected"] = self._detect_no_progress(attempts)
+        final["stable_success_required"] = True
+        final["acceptance_summary"] = self._build_acceptance_summary(final)
+        final["rollback_summary"] = self._build_rollback_summary(final)
+        final["promotion_summary"] = self._build_promotion_summary(final)
+        final["stability_summary"] = self._build_stability_summary(final)
         return final
 
     def _validate_targets(self, target_files: list[str]) -> list[str]:
@@ -306,6 +344,7 @@ class ProgrammerAgent:
             ordered_types.append(failure_type)
         latest = attempts[-1] if attempts else {}
         dominant_failure_type = max(counts.items(), key=lambda pair: pair[1])[0] if counts else "unknown"
+        progress = self._assess_progress(attempts)
         return {
             "attempt_count": len(attempts),
             "ordered_failure_types": ordered_types,
@@ -314,6 +353,9 @@ class ProgrammerAgent:
             "latest_failure_type": latest.get("failure_type") or ("success" if latest.get("status") == "ok" else "unknown"),
             "latest_validation_detail": latest.get("validation_detail") or latest.get("error") or latest.get("stderr") or "",
             "stable_success": bool(attempts and attempts[-1].get("status") == "ok"),
+            "no_progress_detected": self._detect_no_progress(attempts),
+            "progress_status": progress["status"],
+            "progress_note": progress["note"],
         }
 
     def _build_repair_plan(self, attempts: list[dict], failure_summary: dict) -> dict:
@@ -373,4 +415,225 @@ class ProgrammerAgent:
             "dominant_failure_type": dominant,
             "priority": priorities[0] if priorities else "P1",
             "actions": actions,
+        }
+
+    def _detect_no_progress(self, attempts: list[dict]) -> bool:
+        if len(attempts) < 2:
+            return False
+        recent = attempts[-2:]
+        failure_types = [
+            str(item.get("failure_type") or ("success" if item.get("status") == "ok" else "unknown"))
+            for item in recent
+        ]
+        details = [str(item.get("validation_detail") or item.get("error") or "").strip() for item in recent]
+        if "success" in failure_types:
+            return False
+        return len(set(failure_types)) == 1 and len(set(details)) == 1
+
+    def _assess_progress(self, attempts: list[dict]) -> dict:
+        if not attempts:
+            return {"status": "unknown", "note": "No attempts were recorded."}
+        if len(attempts) == 1:
+            latest_type = str(attempts[-1].get("failure_type") or ("success" if attempts[-1].get("status") == "ok" else "unknown"))
+            if latest_type == "success":
+                return {"status": "improving", "note": "The first attempt already succeeded."}
+            return {"status": "unknown", "note": "Only one attempt is available, so progress cannot be judged yet."}
+        previous = attempts[-2]
+        latest = attempts[-1]
+        previous_type = str(previous.get("failure_type") or ("success" if previous.get("status") == "ok" else "unknown"))
+        latest_type = str(latest.get("failure_type") or ("success" if latest.get("status") == "ok" else "unknown"))
+        previous_detail = str(previous.get("validation_detail") or previous.get("error") or "").strip()
+        latest_detail = str(latest.get("validation_detail") or latest.get("error") or "").strip()
+        severity = {
+            "success": 0,
+            "validation_failure": 1,
+            "commit_failure": 1,
+            "execution_failure": 2,
+            "test_failure": 2,
+            "compile_failure": 3,
+            "unknown": 2,
+        }
+        if latest_type == "success":
+            return {"status": "improving", "note": "The latest attempt passed validation."}
+        if self._detect_no_progress(attempts):
+            return {"status": "stalled", "note": "Recent attempts are failing in the same way with no visible change."}
+        latest_severity = severity.get(latest_type, 2)
+        previous_severity = severity.get(previous_type, 2)
+        if latest_severity < previous_severity:
+            return {"status": "improving", "note": "The latest failure is weaker than the previous one."}
+        if latest_severity > previous_severity:
+            return {"status": "regressing", "note": "The latest failure is more severe than the previous one."}
+        if latest_type == previous_type and latest_detail != previous_detail:
+            return {"status": "improving", "note": "The failure type is unchanged, but the validator detail moved, suggesting partial progress."}
+        return {"status": "stalled", "note": "Progress is limited and the latest failure is not clearly better than the previous one."}
+
+    def _build_acceptance_summary(self, result: dict) -> dict:
+        attempts = result.get("attempts") or []
+        failure_summary = result.get("failure_summary") or self._build_failure_summary(attempts)
+        progress_status = str(result.get("progress_status") or failure_summary.get("progress_status") or "unknown")
+        stop_reason = str(result.get("stop_reason") or "unknown")
+        latest_attempt = attempts[-1] if attempts else result
+        rollback_target = result.get("rollback_commit") or latest_attempt.get("rollback_commit")
+        commit_hash = result.get("commit_hash") or latest_attempt.get("commit_hash")
+        validation_ok = bool(result.get("status") == "ok" and latest_attempt.get("validation_ok", True))
+        changed_files = latest_attempt.get("changed_files") or result.get("changed_files") or []
+        if validation_ok and stop_reason == "success":
+            return {
+                "acceptance_status": "accepted",
+                "acceptance_gate": "promote",
+                "note": "Latest patch passed the active validation gate and can be used as the current repair baseline.",
+                "rollback_recommended": False,
+                "rollback_target": rollback_target,
+                "requires_human_review": False,
+                "should_promote": True,
+                "changed_file_count": len(changed_files),
+                "commit_hash": commit_hash,
+            }
+        if stop_reason == "no_progress_detected":
+            return {
+                "acceptance_status": "rejected",
+                "acceptance_gate": "rollback_or_rethink",
+                "note": "Recent attempts are stalled. Prefer rollback or a materially different repair route before continuing.",
+                "rollback_recommended": bool(rollback_target),
+                "rollback_target": rollback_target,
+                "requires_human_review": True,
+                "should_promote": False,
+                "changed_file_count": len(changed_files),
+                "commit_hash": commit_hash,
+            }
+        if stop_reason == "retry_exhausted":
+            return {
+                "acceptance_status": "rejected",
+                "acceptance_gate": "do_not_promote",
+                "note": "Retry budget was exhausted before a stable validated fix was found.",
+                "rollback_recommended": bool(rollback_target and changed_files),
+                "rollback_target": rollback_target,
+                "requires_human_review": True,
+                "should_promote": False,
+                "changed_file_count": len(changed_files),
+                "commit_hash": commit_hash,
+            }
+        return {
+            "acceptance_status": "review",
+            "acceptance_gate": "manual_review",
+            "note": f"Progress is {progress_status}; keep the result under review before promoting it.",
+            "rollback_recommended": False,
+            "rollback_target": rollback_target,
+            "requires_human_review": True,
+            "should_promote": False,
+            "changed_file_count": len(changed_files),
+            "commit_hash": commit_hash,
+        }
+
+    def _build_rollback_summary(self, result: dict) -> dict:
+        acceptance = result.get("acceptance_summary") or {}
+        attempts = result.get("attempts") or []
+        latest_attempt = attempts[-1] if attempts else result
+        rollback_target = acceptance.get("rollback_target") or result.get("rollback_commit") or latest_attempt.get("rollback_commit")
+        changed_files = latest_attempt.get("changed_files") or result.get("changed_files") or []
+        commit_hash = result.get("commit_hash") or latest_attempt.get("commit_hash")
+        recommended = bool(acceptance.get("rollback_recommended"))
+        if result.get("stop_reason") == "success":
+            return {
+                "rollback_status": "hold_current_baseline",
+                "rollback_ready": bool(rollback_target),
+                "rollback_target": rollback_target,
+                "current_commit_hash": commit_hash,
+                "changed_file_count": len(changed_files),
+                "action": "Keep the latest validated patch as the active baseline. No rollback is recommended.",
+            }
+        if recommended:
+            return {
+                "rollback_status": "rollback_preferred",
+                "rollback_ready": bool(rollback_target),
+                "rollback_target": rollback_target,
+                "current_commit_hash": commit_hash,
+                "changed_file_count": len(changed_files),
+                "action": "Rollback to the pre-run baseline before attempting a materially different repair route.",
+            }
+        return {
+            "rollback_status": "rollback_optional",
+            "rollback_ready": bool(rollback_target),
+            "rollback_target": rollback_target,
+            "current_commit_hash": commit_hash,
+            "changed_file_count": len(changed_files),
+            "action": "Rollback is available but not currently the preferred path. Review the latest patch first.",
+        }
+
+    def _build_promotion_summary(self, result: dict) -> dict:
+        acceptance = result.get("acceptance_summary") or {}
+        failure_summary = result.get("failure_summary") or {}
+        rollback = result.get("rollback_summary") or {}
+        stop_reason = str(result.get("stop_reason") or "unknown")
+        progress_status = str(result.get("progress_status") or failure_summary.get("progress_status") or "unknown")
+        commit_hash = acceptance.get("commit_hash") or result.get("commit_hash")
+        if acceptance.get("acceptance_status") == "accepted" and stop_reason == "success":
+            return {
+                "promotion_status": "promote_candidate",
+                "promotion_gate": "stable_validated_fix",
+                "note": "This patch passed the active validation gate and can be treated as the next stable repair candidate.",
+                "should_promote": True,
+                "requires_review": False,
+                "commit_hash": commit_hash,
+            }
+        if acceptance.get("acceptance_status") == "review" or progress_status == "improving":
+            return {
+                "promotion_status": "hold_for_review",
+                "promotion_gate": "needs_review",
+                "note": "The patch shows some promise, but it should stay under review before becoming a stable baseline.",
+                "should_promote": False,
+                "requires_review": True,
+                "commit_hash": commit_hash,
+            }
+        if rollback.get("rollback_status") == "rollback_preferred":
+            return {
+                "promotion_status": "reject_candidate",
+                "promotion_gate": "rollback_first",
+                "note": "Do not promote this patch. Roll back to the previous stable baseline before continuing.",
+                "should_promote": False,
+                "requires_review": True,
+                "commit_hash": commit_hash,
+            }
+        return {
+            "promotion_status": "reject_candidate",
+            "promotion_gate": "unstable_result",
+            "note": "The latest patch is not stable enough to promote into the working baseline.",
+            "should_promote": False,
+            "requires_review": True,
+            "commit_hash": commit_hash,
+        }
+
+    def _build_stability_summary(self, result: dict) -> dict:
+        attempts = result.get("attempts") or []
+        attempt_count = len(attempts)
+        progress_status = str(result.get("progress_status") or "unknown")
+        acceptance = result.get("acceptance_summary") or {}
+        stop_reason = str(result.get("stop_reason") or "unknown")
+        latest_success = bool(result.get("status") == "ok")
+        if latest_success and attempt_count <= 2 and progress_status == "improving":
+            return {
+                "stability_status": "stable",
+                "retry_depth": attempt_count,
+                "stop_reason": stop_reason,
+                "note": "The repair chain converged quickly and produced a validated patch.",
+            }
+        if acceptance.get("acceptance_status") == "accepted":
+            return {
+                "stability_status": "caution",
+                "retry_depth": attempt_count,
+                "stop_reason": stop_reason,
+                "note": "The latest patch passed, but the chain required multiple iterations before stabilizing.",
+            }
+        if stop_reason == "no_progress_detected" or progress_status in {"stalled", "regressing"}:
+            return {
+                "stability_status": "fragile",
+                "retry_depth": attempt_count,
+                "stop_reason": stop_reason,
+                "note": "The repair chain is unstable and should not be treated as a reliable baseline yet.",
+            }
+        return {
+            "stability_status": "caution",
+            "retry_depth": attempt_count,
+            "stop_reason": stop_reason,
+            "note": "The repair chain is still evolving and should stay under observation.",
         }

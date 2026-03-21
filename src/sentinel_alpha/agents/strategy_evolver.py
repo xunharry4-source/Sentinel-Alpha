@@ -134,3 +134,45 @@ class StrategyEvolverAgent:
             features=features or {},
         )
         return self.optimizer.build_candidate(strategy_type, context)
+
+    def propose_iteration_hypothesis(
+        self,
+        strategy_type: str,
+        objective_metric: str,
+        analysis: dict,
+        previous_failure: dict,
+        feedback: str | None = None,
+    ) -> dict:
+        problem = (analysis.get("current_strategy_problems") or ["improve out-of-sample behavior"])[0]
+        statement = (
+            f"If the {strategy_type} candidate directly addresses '{problem}', "
+            f"it should improve {objective_metric} while preserving validation and walk-forward stability."
+        )
+        return {
+            "hypothesis_id": f"hyp-{strategy_type}-{objective_metric}",
+            "statement": statement,
+            "focus_problem": problem,
+            "objective_metric": objective_metric,
+            "feedback_anchor": feedback or "",
+            "success_criteria": [
+                "higher out-of-sample test score than baseline",
+                "validation score remains acceptable",
+                "walk-forward stability does not collapse",
+            ],
+            "failure_context": previous_failure,
+        }
+
+    def derive_variant_hypotheses(self, base_hypothesis: dict, plans: list[dict]) -> list[dict]:
+        return [
+            {
+                "variant_id": plan["variant_id"],
+                "hypothesis_id": f"{base_hypothesis.get('hypothesis_id', 'hyp')}-{plan['variant_id']}",
+                "statement": (
+                    f"{plan['plan_name']} tests whether {plan['focus'].lower()} can validate the base hypothesis "
+                    f"without breaking stability."
+                ),
+                "success_criteria": list(base_hypothesis.get("success_criteria") or []),
+                "changes": list(plan.get("changes") or []),
+            }
+            for plan in plans
+        ]

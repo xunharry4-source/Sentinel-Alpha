@@ -74,3 +74,8 @@ def test_workflow_uses_local_history_backtest_when_available(tmp_path: Path) -> 
 
     assert evaluation["evaluation_source"] == "local_history_backtest"
     assert "dataset_evaluation" in evaluation
+    assert evaluation["coverage_summary"]["symbol_count"] == 1
+    assert evaluation["coverage_summary"]["total_bar_count"] > 0
+    assert evaluation["coverage_summary"]["walk_forward_window_count"] == 1
+    assert "gross_exposure_pct" in evaluation["dataset_evaluation"]["test"]
+    assert "avg_daily_turnover_proxy_pct" in evaluation["dataset_evaluation"]["test"]

@@ -295,6 +295,7 @@ function renderResearchSummary(snapshot) {
   const rankings = summary.candidate_rankings || [];
   const evaluationSnapshot = summary.evaluation_snapshot || {};
   const evaluationHighlights = summary.evaluation_highlights || [];
+  const backtestBinding = summary.backtest_binding_summary || {};
   renderList(
     "strategy-research-summary-list",
     [
@@ -306,8 +307,10 @@ function renderResearchSummary(snapshot) {
       `送检目标: ${checkTarget.variant_id || "unknown"} / source=${checkTarget.source || "unknown"} / eval_source=${checkTarget.evaluation_source || "unknown"} / test=${checkTarget.test_objective_score ?? "unknown"} / stability=${checkTarget.stability_score ?? "unknown"}`,
       `送检理由: ${checkTarget.reason || "无"}`,
       `稳健性结论: grade=${robustness.grade || "unknown"} / stability=${robustness.stability_score ?? "unknown"} / gap=${robustness.train_test_gap ?? "unknown"} / ${robustness.note || "无"}`,
+      `回测绑定: grade=${backtestBinding.grade || "unknown"} / source=${backtestBinding.evaluation_source || evaluationSnapshot.evaluation_source || "unknown"} / coverage=${backtestBinding.coverage_grade || evaluationSnapshot.coverage_summary?.coverage_grade || "unknown"} / ${backtestBinding.note || "无"}`,
       `评估快照: source=${evaluationSnapshot.evaluation_source || "unknown"} / wf_windows=${evaluationSnapshot.walk_forward_windows ?? 0} / wf_score=${evaluationSnapshot.walk_forward_score ?? "unknown"} / gap=${evaluationSnapshot.train_test_gap ?? "unknown"}`,
       `Train/Validation/Test: ${evaluationSnapshot.train?.objective_score ?? "unknown"} / ${evaluationSnapshot.validation?.objective_score ?? "unknown"} / ${evaluationSnapshot.test?.objective_score ?? "unknown"}`,
+      `测试细节: gross=${evaluationSnapshot.test?.gross_exposure_pct ?? "unknown"} / net=${evaluationSnapshot.test?.net_exposure_pct ?? "unknown"} / turnover=${evaluationSnapshot.test?.avg_daily_turnover_proxy_pct ?? "unknown"} / obs=${evaluationSnapshot.test?.observation_count ?? "unknown"}`,
       `发布门: status=${releaseGate.gate_status || "unknown"} / release_ready=${releaseGate.release_ready === true ? "yes" : releaseGate.release_ready === false ? "no" : "unknown"} / failed=${releaseGate.failed_check_count ?? 0} / passed=${releaseGate.passed_check_count ?? 0}`,
       `门控结论: ${releaseGate.reason || "无"}`,
       ...evaluationHighlights.map((item) => `评估结论: ${item}`),
@@ -1086,6 +1089,7 @@ function renderResearchArchiveDetail(snapshot) {
   const gate = exportManifest.gate_status || research.final_release_gate_summary?.gate_status || "unknown";
   const robustness = exportManifest.robustness_grade || research.robustness_summary?.grade || "unknown";
   const evaluation = research.evaluation_snapshot || {};
+  const coverage = evaluation.coverage_summary || exportManifest.coverage_summary || {};
   const repairRoutes = exportManifest.repair_route_summary || research.repair_route_summary || [];
   const primaryRepairRoute = exportManifest.primary_repair_route || repairRoutes[0] || null;
   renderList(
@@ -1101,6 +1105,11 @@ function renderResearchArchiveDetail(snapshot) {
       `check_target / ${exportManifest.check_target_variant_id || research.check_target_summary?.variant_id || "unknown"} / source=${exportManifest.evaluation_source || research.check_target_summary?.evaluation_source || "unknown"}`,
       `train/validation/test / ${evaluation.train?.objective_score ?? "unknown"} / ${evaluation.validation?.objective_score ?? "unknown"} / ${evaluation.test?.objective_score ?? "unknown"}`,
       `walk_forward / ${evaluation.walk_forward_score ?? "unknown"} / windows=${evaluation.walk_forward_windows ?? 0}`,
+      `test_detail / gross=${evaluation.test?.gross_exposure_pct ?? "unknown"} / net=${evaluation.test?.net_exposure_pct ?? "unknown"} / turnover=${evaluation.test?.avg_daily_turnover_proxy_pct ?? "unknown"} / obs=${evaluation.test?.observation_count ?? "unknown"}`,
+      `coverage / symbols=${coverage.symbol_count ?? "unknown"} / bars=${coverage.total_bar_count ?? "unknown"} / wf_windows=${coverage.walk_forward_window_count ?? 0}`,
+      `coverage_health / ${coverage.coverage_grade || "unknown"} / ${coverage.coverage_health_note || "无"}`,
+      `coverage_warnings / ${(coverage.coverage_warnings || []).join("，") || "无"}`,
+      `coverage_range / ${coverage.date_range?.start || "unknown"} -> ${coverage.date_range?.end || "unknown"}`,
       `gap / ${evaluation.train_test_gap ?? "unknown"}`,
       `next_focus / ${(exportManifest.next_iteration_focus || research.next_iteration_focus || []).join("；") || "无"}`,
       `failed_checks / ${(exportManifest.failed_checks || []).join(", ") || "无"}`,
@@ -1139,14 +1148,47 @@ function renderProgrammerRuns(snapshot) {
       .flatMap((item) => {
         const summary = item.failure_summary || {};
         const plan = item.repair_plan || {};
+        const acceptance = item.acceptance_summary || {};
+        const rollback = item.rollback_summary || {};
+        const promotion = item.promotion_summary || {};
+        const stability = item.stability_summary || {};
         const lines = [
           `${item.timestamp || "unknown"} / ${item.status || "unknown"} / failure=${item.failure_type || "none"} / commit=${item.commit_hash || "none"} / rollback=${item.rollback_commit || "none"} / files=${(item.changed_files || []).join(", ") || "none"}`,
         ];
         if (summary.attempt_count) {
           lines.push(`failure_summary / attempts=${summary.attempt_count} / dominant=${summary.dominant_failure_type || "unknown"} / latest=${summary.latest_failure_type || "unknown"}`);
+          lines.push(`progress / ${item.progress_status || summary.progress_status || "unknown"} / ${item.progress_note || summary.progress_note || "无"}`);
+          lines.push(`stop / reason=${item.stop_reason || "unknown"} / retry_exhausted=${item.retry_exhausted ? "yes" : "no"} / no_progress=${item.no_progress_detected ? "yes" : "no"} / stable_success_required=${item.stable_success_required ? "yes" : "no"}`);
         }
         if (plan.priority || (plan.actions || []).length) {
           lines.push(`repair_plan / ${plan.priority || "P1"} / ${(plan.actions || []).join("；") || "无"}`);
+        }
+        if (acceptance.acceptance_status) {
+          lines.push(`acceptance / ${acceptance.acceptance_status} / gate=${acceptance.acceptance_gate || "manual_review"} / rollback=${acceptance.rollback_recommended ? "yes" : "no"} / promote=${acceptance.should_promote ? "yes" : "no"}`);
+          if (acceptance.note) {
+            lines.push(`acceptance_note / ${acceptance.note}`);
+          }
+        }
+        if (rollback.rollback_status) {
+          lines.push(`rollback_summary / ${rollback.rollback_status} / ready=${rollback.rollback_ready ? "yes" : "no"} / target=${rollback.rollback_target || "none"}`);
+          if (rollback.action) {
+            lines.push(`rollback_action / ${rollback.action}`);
+          }
+        }
+        if (promotion.promotion_status) {
+          lines.push(`promotion / ${promotion.promotion_status} / gate=${promotion.promotion_gate || "unknown"} / promote=${promotion.should_promote ? "yes" : "no"} / review=${promotion.requires_review ? "yes" : "no"}`);
+          if (promotion.note) {
+            lines.push(`promotion_note / ${promotion.note}`);
+          }
+        }
+        if (stability.stability_status) {
+          lines.push(`stability / ${stability.stability_status} / retry_depth=${stability.retry_depth ?? "unknown"} / stop=${stability.stop_reason || "unknown"}`);
+          if (stability.note) {
+            lines.push(`stability_note / ${stability.note}`);
+          }
+        }
+        if (item.validation_detail) {
+          lines.push(`validation_gate / ${item.validation_detail}`);
         }
         return lines;
       }),
@@ -1167,7 +1209,31 @@ function renderProgrammerRuns(snapshot) {
       const repairPlan = latest.repair_plan
         ? JSON.stringify(latest.repair_plan, null, 2)
         : "";
-      panel.textContent = [attemptSummary, failureSummary, repairPlan, latest.diff || "", latest.stderr || ""].filter(Boolean).join("\n\n");
+      const acceptanceSummary = latest.acceptance_summary
+        ? JSON.stringify(latest.acceptance_summary, null, 2)
+        : "";
+      const rollbackSummary = latest.rollback_summary
+        ? JSON.stringify(latest.rollback_summary, null, 2)
+        : "";
+      const promotionSummary = latest.promotion_summary
+        ? JSON.stringify(latest.promotion_summary, null, 2)
+        : "";
+      const stabilitySummary = latest.stability_summary
+        ? JSON.stringify(latest.stability_summary, null, 2)
+        : "";
+      const stopSummary = JSON.stringify(
+        {
+          progress_status: latest.progress_status,
+          progress_note: latest.progress_note,
+          stop_reason: latest.stop_reason,
+          retry_exhausted: latest.retry_exhausted,
+          no_progress_detected: latest.no_progress_detected,
+          stable_success_required: latest.stable_success_required,
+        },
+        null,
+        2
+      );
+      panel.textContent = [attemptSummary, failureSummary, repairPlan, acceptanceSummary, rollbackSummary, promotionSummary, stabilitySummary, stopSummary, latest.diff || "", latest.stderr || ""].filter(Boolean).join("\n\n");
     }
   }
 }
@@ -1501,6 +1567,7 @@ function renderBacktestSummary(snapshot) {
   const pkg = snapshot?.strategy_package || {};
   const evaluation = pkg.recommended_variant?.evaluation || pkg.baseline_evaluation || null;
   const dataset = evaluation?.dataset_evaluation || {};
+  const coverage = evaluation?.coverage_summary || pkg.research_summary?.evaluation_snapshot?.coverage_summary || {};
   if (!evaluation || !dataset.train || !dataset.validation || !dataset.test) {
     const grid = document.querySelector("#strategy-walkforward-grid");
     if (grid) {
@@ -1514,6 +1581,10 @@ function renderBacktestSummary(snapshot) {
     "strategy-backtest-list",
     [
       `评估来源: ${evaluation.evaluation_source || "unknown"}`,
+      `覆盖摘要: 标的 ${coverage.symbol_count ?? "unknown"} / bars ${coverage.total_bar_count ?? "unknown"} / wf_windows ${coverage.walk_forward_window_count ?? 0}`,
+      `覆盖健康: ${coverage.coverage_grade || "unknown"} / ${coverage.coverage_health_note || "无"}`,
+      `覆盖警告: ${(coverage.coverage_warnings || []).join("，") || "无"}`,
+      `覆盖区间: ${coverage.date_range?.start || "unknown"} -> ${coverage.date_range?.end || "unknown"}`,
       `Train: 收益 ${dataset.train.expected_return_pct}% / 胜率 ${dataset.train.win_rate_pct}% / 回撤 ${dataset.train.drawdown_pct}% / 最大亏损 ${dataset.train.max_loss_pct}% / 分数 ${dataset.train.objective_score}`,
       `Validation: 收益 ${dataset.validation.expected_return_pct}% / 胜率 ${dataset.validation.win_rate_pct}% / 回撤 ${dataset.validation.drawdown_pct}% / 最大亏损 ${dataset.validation.max_loss_pct}% / 分数 ${dataset.validation.objective_score}`,
       `Test: 收益 ${dataset.test.expected_return_pct}% / 胜率 ${dataset.test.win_rate_pct}% / 回撤 ${dataset.test.drawdown_pct}% / 最大亏损 ${dataset.test.max_loss_pct}% / 分数 ${dataset.test.objective_score}`,

@@ -94,6 +94,16 @@ def test_programmer_agent_retries_until_validator_passes(monkeypatch) -> None:
     assert result["failure_summary"]["attempt_count"] == 2
     assert result["failure_summary"]["dominant_failure_type"] in {"validation_failure", "success"}
     assert result["repair_plan"]["priority"] in {"P0", "P1", "P2"}
+    assert result["stop_reason"] == "success"
+    assert result["retry_exhausted"] is False
+    assert result["progress_status"] == "improving"
+    assert result["acceptance_summary"]["acceptance_status"] == "accepted"
+    assert result["acceptance_summary"]["should_promote"] is True
+    assert result["rollback_summary"]["rollback_status"] == "hold_current_baseline"
+    assert result["rollback_summary"]["rollback_ready"] is True
+    assert result["promotion_summary"]["promotion_status"] == "promote_candidate"
+    assert result["promotion_summary"]["should_promote"] is True
+    assert result["stability_summary"]["stability_status"] == "stable"
 
 
 def test_programmer_agent_classifies_compile_failure(monkeypatch) -> None:
@@ -131,6 +141,15 @@ def test_programmer_agent_classifies_compile_failure(monkeypatch) -> None:
     assert result["failure_summary"]["dominant_failure_type"] == "compile_failure"
     assert result["repair_plan"]["dominant_failure_type"] == "compile_failure"
     assert result["repair_plan"]["priority"] == "P0"
+    assert result["stop_reason"] == "retry_exhausted"
+    assert result["retry_exhausted"] is True
+    assert result["progress_status"] in {"unknown", "stalled"}
+    assert result["acceptance_summary"]["acceptance_status"] == "rejected"
+    assert result["acceptance_summary"]["rollback_recommended"] is True
+    assert result["rollback_summary"]["rollback_status"] == "rollback_preferred"
+    assert result["promotion_summary"]["promotion_status"] == "reject_candidate"
+    assert result["promotion_summary"]["promotion_gate"] == "rollback_first"
+    assert result["stability_summary"]["stability_status"] in {"caution", "fragile"}
 
 
 def test_programmer_agent_retry_context_includes_repair_plan(monkeypatch) -> None:
@@ -173,6 +192,88 @@ def test_programmer_agent_retry_context_includes_repair_plan(monkeypatch) -> Non
     assert "Repair action:" in (seen_contexts[1] or "")
 
 
+def test_programmer_agent_stops_when_no_progress_detected(monkeypatch) -> None:
+    settings = get_settings()
+    patched = settings.__class__(**{**settings.__dict__, "programmer_agent_retry_attempts": 3})
+    agent = ProgrammerAgent(patched)
+
+    def fake_execute(*, instruction, target_files, context=None, commit_changes=None):
+        return {
+            "status": "ok",
+            "instruction": instruction,
+            "target_files": target_files,
+            "stdout": "",
+            "stderr": "",
+            "returncode": 0,
+            "diff": "",
+            "changed_files": target_files,
+            "commit_hash": None,
+            "commit_error": None,
+            "rollback_commit": "abc",
+            "head_after_run": "def",
+            "failure_type": None,
+        }
+
+    monkeypatch.setattr(agent, "execute", fake_execute)
+
+    result = agent.execute_with_retries(
+        instruction="fix code",
+        target_files=["tests/example.py"],
+        validator=lambda files: (False, "pytest failed: same failure"),
+    )
+
+    assert result["status"] == "error"
+    assert result["stop_reason"] == "no_progress_detected"
+    assert result["no_progress_detected"] is True
+    assert result["retry_exhausted"] is False
+    assert len(result["attempts"]) == 2
+    assert result["progress_status"] == "stalled"
+    assert result["acceptance_summary"]["acceptance_status"] == "rejected"
+    assert result["acceptance_summary"]["acceptance_gate"] == "rollback_or_rethink"
+    assert result["rollback_summary"]["rollback_status"] == "rollback_preferred"
+    assert result["promotion_summary"]["promotion_status"] == "reject_candidate"
+    assert result["stability_summary"]["stability_status"] == "fragile"
+
+
+def test_programmer_agent_marks_regressing_when_failure_severity_worsens(monkeypatch) -> None:
+    settings = get_settings()
+    patched = settings.__class__(**{**settings.__dict__, "programmer_agent_retry_attempts": 2})
+    agent = ProgrammerAgent(patched)
+    attempts = {"count": 0}
+
+    def fake_execute(*, instruction, target_files, context=None, commit_changes=None):
+        attempts["count"] += 1
+        return {
+            "status": "ok",
+            "instruction": instruction,
+            "target_files": target_files,
+            "stdout": "",
+            "stderr": "",
+            "returncode": 0,
+            "diff": "",
+            "changed_files": target_files,
+            "commit_hash": None,
+            "commit_error": None,
+            "rollback_commit": "abc",
+            "head_after_run": "def",
+            "failure_type": None,
+        }
+
+    monkeypatch.setattr(agent, "execute", fake_execute)
+
+    def validator(_files):
+        return (False, "validator mismatch" if attempts["count"] == 1 else "py_compile failed: SyntaxError")
+
+    result = agent.execute_with_retries(
+        instruction="fix code",
+        target_files=["tests/example.py"],
+        validator=validator,
+    )
+
+    assert result["status"] == "error"
+    assert result["progress_status"] == "regressing"
+
+
 def test_programmer_validator_maps_pytest_targets(monkeypatch) -> None:
     from sentinel_alpha.api.workflow_service import WorkflowService
 
@@ -195,3 +296,20 @@ def test_programmer_validator_maps_pytest_targets(monkeypatch) -> None:
     assert any(cmd[:3] == ["python", "-m", "py_compile"] for cmd in calls)
     assert any(cmd[:3] == ["python", "-m", "pytest"] for cmd in calls)
     assert "pytest passed" in detail
+
+
+def test_programmer_contract_check_rejects_empty_python_target(tmp_path: Path) -> None:
+    from sentinel_alpha.api.workflow_service import WorkflowService
+
+    repo = tmp_path / "repo"
+    target = repo / "src" / "sentinel_alpha" / "infra" / "generated_sources" / "empty_module.py"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("", encoding="utf-8")
+
+    service = WorkflowService()
+    service.settings = service.settings.__class__(**{**service.settings.__dict__, "programmer_agent_repo_path": str(repo)})
+
+    ok, detail = service._validate_programmer_python_contracts(["src/sentinel_alpha/infra/generated_sources/empty_module.py"])
+
+    assert ok is False
+    assert "empty python target" in detail

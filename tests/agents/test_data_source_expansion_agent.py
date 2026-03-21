@@ -15,6 +15,7 @@ def test_data_source_expansion_agent_generates_valid_code_and_test() -> None:
             base_url="https://api.example.com",
             api_key_env="EXAMPLE_API_KEY",
             docs_summary="JSON API that accepts symbol and interval parameters.",
+            docs_url="https://docs.example.com/market-data",
             sample_endpoint="quote",
             auth_style="query",
             response_format="json",
@@ -25,7 +26,27 @@ def test_data_source_expansion_agent_generates_valid_code_and_test() -> None:
     assert result["validation"]["module_syntax_ok"] is True
     assert result["validation"]["test_syntax_ok"] is True
     assert "EXAMPLE_API_KEY" in result["config_fragment"]
+    assert 'docs_url = "https://docs.example.com/market-data"' in result["config_fragment"]
     assert "class ExampleDataSource" in result["generated_module_code"]
+    assert "https://docs.example.com/market-data" in result["generated_module_code"]
+
+
+def test_data_source_expansion_agent_accepts_docs_url_without_summary() -> None:
+    agent = DataSourceExpansionAgent()
+    result = agent.build_integration_package(
+        DataSourceExpansionRequest(
+            provider_name="Docs Only Feed",
+            category="market_data",
+            base_url="https://api.docs-only.example",
+            api_key_env=None,
+            docs_summary=None,
+            docs_url="https://docs.docs-only.example/reference",
+        )
+    )
+
+    assert result["validation"]["ready_for_programmer_agent"] is True
+    assert result["config_candidate"]["docs_url"] == "https://docs.docs-only.example/reference"
+    assert "See provider docs at https://docs.docs-only.example/reference" in result["generated_module_code"]
 
 
 def test_data_source_expansion_agent_generates_category_specific_methods() -> None:

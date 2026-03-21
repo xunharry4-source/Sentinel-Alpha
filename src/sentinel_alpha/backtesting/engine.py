@@ -18,6 +18,7 @@ class SimpleBacktestEngine:
         if not normalized:
             return None
 
+        coverage = self._build_coverage_summary(normalized, split_plan)
         result: dict[str, dict | list] = {}
         for split_name in ("train", "validation", "test"):
             window = split_plan.get(split_name, {})
@@ -44,6 +45,7 @@ class SimpleBacktestEngine:
                 }
             )
         result["walk_forward"] = walk_forward
+        result["coverage"] = coverage
         return result
 
     def _normalize_input(self, bars: list[dict] | dict[str, list[dict]]) -> dict[str, list[dict]]:
@@ -103,6 +105,12 @@ class SimpleBacktestEngine:
         max_drawdown = 0.0
         max_loss = 0.0
         wins = 0
+        target_exposure_map = {symbol: float(exposure_map.get(symbol, 0.0)) for symbol in bars}
+        active_weights = {symbol: weight for symbol, weight in target_exposure_map.items() if abs(weight) > 0}
+        gross_target = sum(abs(weight) for weight in active_weights.values())
+        net_target = sum(active_weights.values())
+        turnover_series: list[float] = []
+        avg_volume_series: list[float] = []
 
         min_length = min(len(symbol_bars) for symbol_bars in bars.values())
         if min_length < 2:
@@ -111,6 +119,8 @@ class SimpleBacktestEngine:
         for index in range(1, min_length):
             strategy_return = 0.0
             active_symbols = 0
+            asset_returns: dict[str, float] = {}
+            volume_points: list[float] = []
             for symbol, symbol_bars in bars.items():
                 previous_close = symbol_bars[index - 1]["close"]
                 close_price = symbol_bars[index]["close"]
@@ -118,8 +128,10 @@ class SimpleBacktestEngine:
                     continue
                 active_symbols += 1
                 asset_return = (close_price / previous_close) - 1.0
+                asset_returns[symbol] = asset_return
                 symbol_exposure = float(exposure_map.get(symbol, 0.0))
                 strategy_return += asset_return * symbol_exposure
+                volume_points.append(float(symbol_bars[index].get("volume") or 0.0))
             if active_symbols == 0:
                 continue
             transaction_cost = (fee_bps + slippage_bps) / 10000.0
@@ -132,6 +144,22 @@ class SimpleBacktestEngine:
             drawdown = 1.0 - (equity / peak)
             max_drawdown = max(max_drawdown, drawdown)
             max_loss = max(max_loss, max(0.0, -strategy_return))
+            if volume_points:
+                avg_volume_series.append(sum(volume_points) / len(volume_points))
+            if len(active_weights) > 1 and gross_target > 0:
+                drift_values = {
+                    symbol: weight * (1.0 + asset_returns.get(symbol, 0.0))
+                    for symbol, weight in active_weights.items()
+                }
+                gross_after = sum(abs(value) for value in drift_values.values())
+                if gross_after > 0:
+                    drift_weights = {symbol: value / gross_after for symbol, value in drift_values.items()}
+                    target_weights = {symbol: weight / gross_target for symbol, weight in active_weights.items()}
+                    turnover_pct = 50.0 * sum(
+                        abs(target_weights.get(symbol, 0.0) - drift_weights.get(symbol, 0.0))
+                        for symbol in active_weights
+                    )
+                    turnover_series.append(round(turnover_pct, 4))
 
         if not returns:
             return None
@@ -140,4 +168,37 @@ class SimpleBacktestEngine:
             "win_rate_pct": round((wins / len(returns)) * 100.0, 2),
             "drawdown_pct": round(max_drawdown * 100.0, 2),
             "max_loss_pct": round(max_loss * 100.0, 2),
+            "observation_count": len(returns),
+            "active_symbol_count": len(active_weights),
+            "gross_exposure_pct": round(gross_target * 100.0, 2),
+            "net_exposure_pct": round(net_target * 100.0, 2),
+            "avg_daily_turnover_proxy_pct": round(sum(turnover_series) / len(turnover_series), 4) if turnover_series else 0.0,
+            "avg_volume": round(sum(avg_volume_series) / len(avg_volume_series), 2) if avg_volume_series else 0.0,
+        }
+
+    def _build_coverage_summary(self, bars: dict[str, list[dict]], split_plan: dict) -> dict:
+        symbols = sorted(bars.keys())
+        total_bar_count = sum(len(symbol_bars) for symbol_bars in bars.values())
+        symbol_bar_counts = {symbol: len(symbol_bars) for symbol, symbol_bars in bars.items()}
+        min_date = min((symbol_bars[0]["date"] for symbol_bars in bars.values() if symbol_bars), default=None)
+        max_date = max((symbol_bars[-1]["date"] for symbol_bars in bars.values() if symbol_bars), default=None)
+        split_bar_counts = {}
+        for split_name in ("train", "validation", "test"):
+            window = split_plan.get(split_name, {})
+            window_bars = self._slice_bars(bars, window.get("start"), window.get("end"))
+            split_bar_counts[split_name] = {
+                "symbol_count": len(window_bars),
+                "bar_count": sum(len(symbol_bars) for symbol_bars in window_bars.values()),
+            }
+        return {
+            "symbol_count": len(symbols),
+            "symbols": symbols,
+            "total_bar_count": total_bar_count,
+            "symbol_bar_counts": symbol_bar_counts,
+            "date_range": {
+                "start": min_date.isoformat() if min_date else None,
+                "end": max_date.isoformat() if max_date else None,
+            },
+            "walk_forward_window_count": len(split_plan.get("walk_forward_windows", [])),
+            "split_bar_counts": split_bar_counts,
         }

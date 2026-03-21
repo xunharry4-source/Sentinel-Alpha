@@ -118,7 +118,8 @@ class DataSourceExpansionRequestIn(BaseModel):
     category: Literal["market_data", "fundamentals", "dark_pool", "options"]
     base_url: str
     api_key_env: str | None = None
-    docs_summary: str
+    docs_summary: str | None = None
+    docs_url: str | None = None
     sample_endpoint: str | None = None
     auth_style: Literal["header", "query", "bearer"] = "header"
     response_format: Literal["json", "csv", "xml"] = "json"
@@ -144,6 +145,7 @@ class TradingTerminalIntegrationRequestIn(BaseModel):
     balances_endpoint: str
     docs_summary: str
     user_notes: str | None = None
+    response_field_map: dict[str, str] | None = None
 
 
 class TradingTerminalApplyRequest(BaseModel):

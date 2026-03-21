@@ -326,7 +326,8 @@ class PersistentWorkflowService(WorkflowService):
         category: str,
         base_url: str,
         api_key_env: str | None,
-        docs_summary: str,
+        docs_summary: str | None,
+        docs_url: str | None = None,
         sample_endpoint: str | None = None,
         auth_style: str = "header",
         response_format: str = "json",
@@ -338,6 +339,7 @@ class PersistentWorkflowService(WorkflowService):
             base_url=base_url,
             api_key_env=api_key_env,
             docs_summary=docs_summary,
+            docs_url=docs_url,
             sample_endpoint=sample_endpoint,
             auth_style=auth_style,
             response_format=response_format,
@@ -387,9 +389,12 @@ class PersistentWorkflowService(WorkflowService):
         auth_style: str,
         order_endpoint: str,
         cancel_endpoint: str,
+        order_status_endpoint: str,
         positions_endpoint: str,
+        balances_endpoint: str,
         docs_summary: str,
         user_notes: str | None = None,
+        response_field_map: dict[str, str] | None = None,
     ) -> WorkflowSession:
         session = super().expand_trading_terminal(
             session_id=session_id,
@@ -402,9 +407,12 @@ class PersistentWorkflowService(WorkflowService):
             auth_style=auth_style,
             order_endpoint=order_endpoint,
             cancel_endpoint=cancel_endpoint,
+            order_status_endpoint=order_status_endpoint,
             positions_endpoint=positions_endpoint,
+            balances_endpoint=balances_endpoint,
             docs_summary=docs_summary,
             user_notes=user_notes,
+            response_field_map=response_field_map,
         )
         self.workflow_store.save_report_snapshot(session_id, session.report_history[-1])
         self.workflow_store.save_history_event(session_id, session.history_events[-1])

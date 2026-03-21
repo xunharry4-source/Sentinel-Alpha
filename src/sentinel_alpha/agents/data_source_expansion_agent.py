@@ -11,7 +11,8 @@ class DataSourceExpansionRequest:
     category: str
     base_url: str
     api_key_env: str | None
-    docs_summary: str
+    docs_summary: str | None = None
+    docs_url: str | None = None
     sample_endpoint: str | None = None
     auth_style: str = "header"
     response_format: str = "json"
@@ -56,7 +57,8 @@ class DataSourceExpansionAgent:
     def _build_module_code(self, request: DataSourceExpansionRequest, slug: str, class_name: str) -> str:
         quote_method = self._category_method(request.category, "quote")
         history_method = self._category_method(request.category, "history")
-        request_notes = request.docs_summary.strip().replace('"""', "'''")
+        request_notes = self._request_notes(request).replace('"""', "'''")
+        docs_url_line = f"    Docs URL: {request.docs_url}\\n" if request.docs_url else ""
         api_key_line = (
             f'        self.api_key = os.getenv("{request.api_key_env}", "")\n'
             if request.api_key_env
@@ -72,6 +74,7 @@ class DataSourceExpansionAgent:
             f"class {class_name}:\n"
             f'    """Generated adapter for {request.provider_name}.\\n\\n'
             f"    Docs summary: {request_notes}\\n"
+            f"{docs_url_line}"
             '    """\n\n'
             "    def __init__(self, base_url: str | None = None, timeout_seconds: int = 10) -> None:\n"
             f'        self.base_url = (base_url or "{request.base_url}").rstrip("/")\n'
@@ -119,11 +122,13 @@ class DataSourceExpansionAgent:
 
     def _build_config_fragment(self, request: DataSourceExpansionRequest, slug: str) -> str:
         api_key_line = f'api_key_env = "{request.api_key_env}"\n' if request.api_key_env else 'api_key_env = ""\n'
+        docs_url_line = f'docs_url = "{request.docs_url}"\n' if request.docs_url else ""
         return (
             f"[generated_sources.providers.{slug}]\n"
             "enabled = true\n"
             f"{api_key_line}"
             f'base_url = "{request.base_url}"\n'
+            f"{docs_url_line}"
             f'category = "{request.category}"\n'
             f'auth_style = "{request.auth_style}"\n'
             f'response_format = "{request.response_format}"\n'
@@ -140,6 +145,7 @@ class DataSourceExpansionAgent:
             "enabled": True,
             "api_key_env": request.api_key_env or "",
             "base_url": request.base_url,
+            "docs_url": request.docs_url or "",
             "auth_style": request.auth_style,
             "response_format": request.response_format,
         }
@@ -147,6 +153,8 @@ class DataSourceExpansionAgent:
             "category": request.category,
             "provider_name": slug,
             "display_name": request.provider_name,
+            "docs_summary": self._request_notes(request),
+            "docs_url": request.docs_url,
             "provider_config": provider_config,
             "target_module": target_module,
             "target_test": target_test,
@@ -198,3 +206,11 @@ class DataSourceExpansionAgent:
         return (
             "        # Replace with provider-specific auth/header handling if the docs require it.\n"
         )
+
+    def _request_notes(self, request: DataSourceExpansionRequest) -> str:
+        summary = (request.docs_summary or "").strip()
+        if summary:
+            return summary
+        if request.docs_url:
+            return f"See provider docs at {request.docs_url}"
+        return "No docs summary provided."

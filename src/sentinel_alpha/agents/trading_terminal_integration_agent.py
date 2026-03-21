@@ -24,6 +24,7 @@ class TradingTerminalIntegrationRequest:
     balances_endpoint: str
     docs_summary: str
     user_notes: str | None = None
+    response_field_map: dict[str, str] | None = None
 
 
 class TradingTerminalIntegrationAgent:
@@ -38,6 +39,7 @@ class TradingTerminalIntegrationAgent:
         module_code = self._build_module_code(request, slug, class_name, docs_context)
         test_code = self._build_test_code(request, slug, class_name)
         config_candidate = self._build_config_candidate(request, slug, target_module, target_test)
+        readiness = self._build_integration_readiness_summary(request, docs_context)
         module_validation = self._validate_python(module_code)
         test_validation = self._validate_python(test_code)
         return {
@@ -53,6 +55,7 @@ class TradingTerminalIntegrationAgent:
             "generated_module_code": module_code,
             "generated_test_code": test_code,
             "config_candidate": config_candidate,
+            "integration_readiness_summary": readiness,
             "validation": {
                 "module_syntax_ok": module_validation["ok"],
                 "test_syntax_ok": test_validation["ok"],
@@ -93,7 +96,35 @@ class TradingTerminalIntegrationAgent:
                     "payload": dict(payload or {}),
                 }
             )
-            return {"ok": True, "method": method, "path": path, "payload": dict(payload or {})}
+            response = {
+                "ok": True,
+                "method": method,
+                "path": path,
+                "params": dict(params or {}),
+                "payload": dict(payload or {}),
+            }
+            field_map = self._merged_response_field_map(
+                package.get("config_candidate", {}).get("provider_config", {}).get("response_field_map")
+            )
+            if path == package.get("config_candidate", {}).get("provider_config", {}).get("positions_endpoint"):
+                response[field_map["positions_root"]] = [
+                    {
+                        field_map["position_symbol"]: "AAPL",
+                        field_map["position_quantity"]: 100,
+                        "avg_price": 195.5,
+                    }
+                ]
+            elif path == package.get("config_candidate", {}).get("provider_config", {}).get("balances_endpoint"):
+                response[field_map["balances_root"]] = {
+                    field_map["balance_cash"]: 100000.0,
+                    field_map["balance_buying_power"]: 180000.0,
+                }
+            elif path == package.get("config_candidate", {}).get("provider_config", {}).get("order_status_endpoint"):
+                response[field_map["order_status_root"]] = {
+                    field_map["order_status_id"]: dict(params or {}).get("order_id"),
+                    field_map["order_status_state"]: "accepted",
+                }
+            return response
 
         adapter._request_json = MethodType(fake_request_json, adapter)  # type: ignore[attr-defined]
 
@@ -105,6 +136,16 @@ class TradingTerminalIntegrationAgent:
         cancel_result = adapter.cancel_order("ORD-1")
 
         provider = package.get("config_candidate", {}).get("provider_config", {})
+        field_map = self._merged_response_field_map(provider.get("response_field_map"))
+        positions_root = field_map["positions_root"]
+        balances_root = field_map["balances_root"]
+        order_status_root = field_map["order_status_root"]
+        position_symbol = field_map["position_symbol"]
+        position_quantity = field_map["position_quantity"]
+        balance_cash = field_map["balance_cash"]
+        balance_buying_power = field_map["balance_buying_power"]
+        order_status_id = field_map["order_status_id"]
+        order_status_state = field_map["order_status_state"]
         checks = [
             {
                 "name": "ping",
@@ -117,9 +158,19 @@ class TradingTerminalIntegrationAgent:
                 "detail": f"GET {positions_result.get('path')}",
             },
             {
+                "name": "positions_shape",
+                "status": "pass" if self._is_valid_positions_shape(positions_result.get(positions_root), position_symbol, position_quantity) else "fail",
+                "detail": f"{positions_root}={type(positions_result.get(positions_root)).__name__} / symbol_key={position_symbol} / quantity_key={position_quantity}",
+            },
+            {
                 "name": "balances_contract",
                 "status": "pass" if balances_result.get("path") == provider.get("balances_endpoint") else "fail",
                 "detail": f"GET {balances_result.get('path')}",
+            },
+            {
+                "name": "balances_shape",
+                "status": "pass" if self._is_valid_balances_shape(balances_result.get(balances_root), balance_cash, balance_buying_power) else "fail",
+                "detail": f"{balances_root}_keys={','.join(sorted((balances_result.get(balances_root) or {}).keys())) or 'none'}",
             },
             {
                 "name": "order_contract",
@@ -130,6 +181,11 @@ class TradingTerminalIntegrationAgent:
                 "name": "order_status_contract",
                 "status": "pass" if status_result.get("path") == provider.get("order_status_endpoint") and status_result.get("params", {}).get("order_id") == "ORD-1" else "fail",
                 "detail": f"GET {status_result.get('path')} order_id={status_result.get('params', {}).get('order_id')}",
+            },
+            {
+                "name": "order_status_shape",
+                "status": "pass" if self._is_valid_order_status_shape(status_result.get(order_status_root), order_status_id, order_status_state, "ORD-1") else "fail",
+                "detail": f"order_status={status_result.get(order_status_root, {}).get(order_status_state)}",
             },
             {
                 "name": "cancel_contract",
@@ -143,7 +199,32 @@ class TradingTerminalIntegrationAgent:
             "summary": "Terminal adapter smoke test passed." if not failed else "Terminal adapter smoke test has contract mismatches.",
             "checks": checks,
             "calls": calls,
+            "repair_summary": self._build_repair_summary(failed),
         }
+
+    def _is_valid_positions_shape(self, payload: object, symbol_key: str, quantity_key: str) -> bool:
+        if not isinstance(payload, list) or not payload:
+            return False
+        first = payload[0]
+        if not isinstance(first, dict):
+            return False
+        symbol = first.get(symbol_key)
+        quantity = first.get(quantity_key)
+        return isinstance(symbol, str) and bool(symbol.strip()) and isinstance(quantity, (int, float))
+
+    def _is_valid_balances_shape(self, payload: object, cash_key: str, buying_power_key: str) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        cash = payload.get(cash_key)
+        buying_power = payload.get(buying_power_key)
+        return isinstance(cash, (int, float)) and (buying_power is None or isinstance(buying_power, (int, float)))
+
+    def _is_valid_order_status_shape(self, payload: object, order_id_key: str, status_key: str, expected_order_id: str) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        order_id = payload.get(order_id_key)
+        status = payload.get(status_key)
+        return order_id == expected_order_id and isinstance(status, str) and bool(status.strip())
 
     def _fetch_documentation_context(self, request: TradingTerminalIntegrationRequest) -> dict:
         docs = self._fetch_text(request.official_docs_url)
@@ -284,6 +365,7 @@ class TradingTerminalIntegrationAgent:
             "order_status_endpoint": request.order_status_endpoint,
             "positions_endpoint": request.positions_endpoint,
             "balances_endpoint": request.balances_endpoint,
+            "response_field_map": self._merged_response_field_map(request.response_field_map),
         }
         return {
             "terminal_name": slug,
@@ -330,3 +412,118 @@ class TradingTerminalIntegrationAgent:
             "        if self.api_key:\n"
             "            headers[\"X-API-Key\"] = self.api_key\n"
         )
+
+    def _default_response_field_map(self) -> dict[str, str]:
+        return {
+            "positions_root": "positions",
+            "position_symbol": "symbol",
+            "position_quantity": "quantity",
+            "balances_root": "balances",
+            "balance_cash": "cash",
+            "balance_buying_power": "buying_power",
+            "order_status_root": "order",
+            "order_status_id": "order_id",
+            "order_status_state": "status",
+        }
+
+    def _merged_response_field_map(self, overrides: dict[str, str] | None) -> dict[str, str]:
+        merged = dict(self._default_response_field_map())
+        for key, value in (overrides or {}).items():
+            if value:
+                merged[key] = value
+        return merged
+
+    def _build_repair_summary(self, failed_checks: list[dict]) -> dict:
+        if not failed_checks:
+            return {
+                "status": "clear",
+                "primary_route": "none",
+                "priority": "none",
+                "note": "Terminal smoke test passed. No repair action required.",
+                "routes": [],
+                "actions": [],
+            }
+
+        route_map = {
+            "ping": ("connectivity_repair", "P0", "Verify terminal base URL, auth bootstrap, and connectivity handshake."),
+            "positions_contract": ("contract_repair", "P0", "Check positions endpoint path and response contract."),
+            "positions_shape": ("data_shape_repair", "P0", "Ensure positions responses return a non-empty positions list with symbol and quantity fields."),
+            "balances_contract": ("contract_repair", "P0", "Check balances/account endpoint path and response contract."),
+            "balances_shape": ("data_shape_repair", "P0", "Ensure balances responses return a balances object with cash-like fields."),
+            "order_contract": ("order_flow_repair", "P0", "Check place-order endpoint, payload keys, and limit-order schema."),
+            "order_status_contract": ("order_flow_repair", "P0", "Check order-status endpoint and order_id query contract."),
+            "order_status_shape": ("data_shape_repair", "P0", "Ensure order-status responses return an order object with order_id and status."),
+            "cancel_contract": ("order_flow_repair", "P0", "Check cancel endpoint and cancel payload contract."),
+        }
+        routes: list[dict] = []
+        actions: list[str] = []
+        for item in failed_checks:
+            route, priority, action = route_map.get(
+                item.get("name", ""),
+                ("terminal_contract_repair", "P1", "Inspect terminal endpoint mapping and provider contract."),
+            )
+            routes.append(
+                {
+                    "check": item.get("name", "unknown"),
+                    "route": route,
+                    "priority": priority,
+                    "detail": item.get("detail") or "No detail.",
+                    "action": action,
+                }
+            )
+            if action not in actions:
+                actions.append(action)
+        primary_route = routes[0]["route"]
+        priority = routes[0]["priority"]
+        return {
+            "status": "needs_repair",
+            "primary_route": primary_route,
+            "priority": priority,
+            "note": f"Primary route {primary_route} with {len(failed_checks)} failed smoke-test checks.",
+            "routes": routes,
+            "actions": actions,
+        }
+
+    def _build_integration_readiness_summary(
+        self,
+        request: TradingTerminalIntegrationRequest,
+        docs_context: dict,
+    ) -> dict:
+        endpoint_checks = [
+            ("order_endpoint", request.order_endpoint),
+            ("cancel_endpoint", request.cancel_endpoint),
+            ("order_status_endpoint", request.order_status_endpoint),
+            ("positions_endpoint", request.positions_endpoint),
+            ("balances_endpoint", request.balances_endpoint),
+        ]
+        missing_endpoints = [name for name, value in endpoint_checks if not str(value or "").strip()]
+        normalized_base = str(request.api_base_url or "").strip()
+        base_url_ok = normalized_base.startswith("http://") or normalized_base.startswith("https://")
+        docs_ok = bool(docs_context.get("docs_fetch_ok"))
+        auth_ok = request.auth_style in {"header", "query", "bearer"}
+        endpoint_count = len(endpoint_checks) - len(missing_endpoints)
+        status = "ready"
+        if missing_endpoints or not base_url_ok or not auth_ok:
+            status = "blocked"
+        elif not docs_ok:
+            status = "caution"
+        actions: list[str] = []
+        if not base_url_ok:
+            actions.append("Provide a valid API base URL starting with http:// or https://.")
+        if missing_endpoints:
+            actions.append(f"Complete missing endpoint mappings: {', '.join(missing_endpoints)}.")
+        if not docs_ok:
+            actions.append("Verify the official docs URL or provide a reachable documentation page before deeper integration tests.")
+        if not actions:
+            actions.append("Terminal package is structurally ready for smoke tests and further integration work.")
+        return {
+            "status": status,
+            "base_url_ok": base_url_ok,
+            "docs_fetch_ok": docs_ok,
+            "auth_style": request.auth_style,
+            "auth_ready": auth_ok,
+            "endpoint_count": endpoint_count,
+            "required_endpoint_count": len(endpoint_checks),
+            "missing_endpoints": missing_endpoints,
+            "actions": actions,
+        }

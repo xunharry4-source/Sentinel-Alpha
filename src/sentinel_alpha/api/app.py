@@ -492,6 +492,7 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
                 base_url=payload.base_url,
                 api_key_env=payload.api_key_env,
                 docs_summary=payload.docs_summary,
+                docs_url=payload.docs_url,
                 sample_endpoint=payload.sample_endpoint,
                 auth_style=payload.auth_style,
                 response_format=payload.response_format,
@@ -535,6 +536,7 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
                 balances_endpoint=payload.balances_endpoint,
                 docs_summary=payload.docs_summary,
                 user_notes=payload.user_notes,
+                response_field_map=payload.response_field_map,
             )
             return snapshot(session_id)
         except KeyError as exc:

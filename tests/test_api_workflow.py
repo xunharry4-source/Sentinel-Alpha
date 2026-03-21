@@ -30,6 +30,24 @@ def test_system_health_endpoint_exposes_module_statuses() -> None:
     assert isinstance(payload["agents"], list)
     assert "recent_errors" in payload
     assert "token_usage" in payload
+    assert "data_health" in payload
+    assert payload["data_health"]["status"] in {"healthy", "warning", "fragile"}
+    assert "note" in payload["data_health"]
+    assert "sessions_with_data" in payload["data_health"]
+    assert "recent_failure_count" in payload["data_health"]
+    assert "recent_failure_counts" in payload["data_health"]
+    assert "runtime_health" in payload
+    assert payload["runtime_health"]["status"] in {"healthy", "warning", "fragile"}
+    assert "research" in payload["runtime_health"]
+    assert "repair" in payload["runtime_health"]
+    assert "terminal" in payload["runtime_health"]
+    assert "data" in payload["runtime_health"]
+    assert "llm" in payload["runtime_health"]
+    assert "next_action" in payload["runtime_health"]["terminal"]
+    assert "primary_route" in payload["runtime_health"]["terminal"]
+    assert payload["runtime_health"]["llm"]["status"] in {"healthy", "warning", "fragile"}
+    assert "live_task_count" in payload["runtime_health"]["llm"]
+    assert "fallback_task_count" in payload["runtime_health"]["llm"]
     assert any(item["name"] == "behavioral_profiler" for item in payload["modules"])
     assert any(item["name"] == "strategy_registry" for item in payload["modules"])
     assert any(item["name"] == "llm_runtime" for item in payload["modules"])
@@ -257,16 +275,29 @@ def test_full_workflow_api() -> None:
     assert strategy.json()["strategy_package"]["input_manifest"]["data_quality"]["quality_grade"] in {"healthy", "warning", "degraded"}
     assert strategy.json()["strategy_package"]["input_manifest"]["data_quality"]["training_readiness"]["status"] in {"ready", "caution", "blocked"}
     assert strategy.json()["strategy_package"]["research_summary"]["winner_selection_summary"]["winner_variant_id"]
+    assert strategy.json()["strategy_package"]["research_summary"]["winner_selection_summary"]["winner_adjusted_research_score"] is not None
     assert strategy.json()["strategy_package"]["research_summary"]["check_target_summary"]["variant_id"] == strategy.json()["strategy_package"]["selected_check_target"]["variant_id"]
     assert strategy.json()["strategy_package"]["research_summary"]["robustness_summary"]["grade"] in {"strong", "acceptable", "fragile"}
+    assert strategy.json()["strategy_package"]["research_summary"]["backtest_binding_summary"]["grade"] in {"strong", "partial", "weak"}
     assert strategy.json()["strategy_package"]["research_summary"]["final_release_gate_summary"]["gate_status"] in {"passed", "blocked"}
     assert strategy.json()["strategy_package"]["research_summary"]["evaluation_snapshot"]["evaluation_source"]
     assert strategy.json()["strategy_package"]["research_summary"]["evaluation_snapshot"]["walk_forward_windows"] >= 0
+    assert "coverage_summary" in strategy.json()["strategy_package"]["research_summary"]["evaluation_snapshot"]
+    assert strategy.json()["strategy_package"]["research_summary"]["evaluation_snapshot"]["coverage_summary"]["walk_forward_window_count"] >= 0
+    assert strategy.json()["strategy_package"]["research_summary"]["evaluation_snapshot"]["coverage_summary"]["coverage_grade"] in {"healthy", "warning", "degraded"}
+    assert isinstance(strategy.json()["strategy_package"]["research_summary"]["evaluation_snapshot"]["coverage_summary"]["coverage_warnings"], list)
     assert isinstance(strategy.json()["strategy_package"]["research_summary"]["evaluation_highlights"], list)
     assert isinstance(strategy.json()["strategy_package"]["research_summary"]["check_failure_summary"], list)
     assert isinstance(strategy.json()["strategy_package"]["research_summary"]["next_iteration_focus"], list)
     assert isinstance(strategy.json()["strategy_package"]["research_summary"]["repair_route_summary"], list)
     assert strategy.json()["strategy_package"]["research_summary"]["repair_route_summary"]
+    assert strategy.json()["strategy_package"]["autoresearch_state"]["iteration_hypothesis"]["statement"]
+    assert len(strategy.json()["strategy_package"]["autoresearch_state"]["variant_hypotheses"]) >= 2
+    assert strategy.json()["strategy_package"]["candidate_variants"][0]["hypothesis"]["statement"]
+    assert strategy.json()["strategy_package"]["research_summary"]["autoresearch_cycle_summary"]["next_hypothesis"]
+    assert strategy.json()["strategy_package"]["research_summary"]["autoresearch_memory_summary"]["hypothesis_quality"] in {"strong", "partial", "weak"}
+    assert strategy.json()["strategy_package"]["research_summary"]["autoresearch_memory_summary"]["convergence_status"] in {"converging", "learning", "diverging"}
+    assert strategy.json()["strategy_package"]["autoresearch_state"]["memory"]["recent_hypotheses"]
     assert isinstance(strategy.json()["strategy_package"]["research_summary"]["rejection_summary"], list)
     assert len(strategy.json()["strategy_package"]["research_summary"]["candidate_rankings"]) >= 1
     assert len(strategy.json()["data_bundles"]) >= 1
@@ -284,8 +315,12 @@ def test_full_workflow_api() -> None:
     assert strategy.json()["strategy_training_log"][-1]["input_manifest"]["data_bundle_id"]
     assert strategy.json()["strategy_training_log"][-1]["research_summary"]["winner_selection_summary"]["winner_variant_id"]
     assert strategy.json()["strategy_training_log"][-1]["research_summary"]["robustness_summary"]["grade"] in {"strong", "acceptable", "fragile"}
+    assert strategy.json()["strategy_training_log"][-1]["research_summary"]["backtest_binding_summary"]["grade"] in {"strong", "partial", "weak"}
     assert strategy.json()["strategy_training_log"][-1]["research_summary"]["final_release_gate_summary"]["gate_status"] in {"passed", "blocked"}
     assert strategy.json()["strategy_training_log"][-1]["repair_route_summary"]
+    assert strategy.json()["strategy_training_log"][-1]["iteration_hypothesis"]["statement"]
+    assert strategy.json()["strategy_training_log"][-1]["autoresearch_cycle_summary"]["next_hypothesis"]
+    assert strategy.json()["strategy_training_log"][-1]["autoresearch_memory"]["hypothesis_quality"] in {"strong", "partial", "weak"}
     assert len(strategy.json()["report_history"]) >= 2
     assert any(
         item["report_type"] == "strategy_iteration"
@@ -294,8 +329,13 @@ def test_full_workflow_api() -> None:
         and item["body"]["research_export"]["data_bundle_id"] == strategy.json()["strategy_package"]["data_bundle_id"]
         and item["body"]["research_export"]["winner_variant_id"]
         and item["body"]["research_export"]["gate_status"] in {"passed", "blocked"}
+        and "coverage_summary" in item["body"]["research_export"]
+        and item["body"]["research_export"]["backtest_binding_summary"]["grade"] in {"strong", "partial", "weak"}
+        and item["body"]["research_export"]["coverage_summary"]["coverage_grade"] in {"healthy", "warning", "degraded"}
         and item["body"]["research_export"]["repair_route_summary"]
         and item["body"]["research_export"]["primary_repair_route"]["lane"]
+        and item["body"]["training_log_entry"]["autoresearch_cycle_summary"]["next_hypothesis"]
+        and item["body"]["training_log_entry"]["autoresearch_memory"]["convergence_status"] in {"converging", "learning", "diverging"}
         for item in strategy.json()["report_history"]
     )
     assert any(
@@ -309,11 +349,17 @@ def test_full_workflow_api() -> None:
         and item["payload"].get("robustness_grade") in {"strong", "acceptable", "fragile"}
         and item["payload"].get("repair_route_lane")
         and item["payload"].get("repair_route_priority") in {"P0", "P1", "P2"}
+        and item["payload"].get("hypothesis_id")
+        and item["payload"].get("next_hypothesis")
+        and item["payload"].get("hypothesis_quality") in {"strong", "partial", "weak"}
+        and item["payload"].get("hypothesis_convergence") in {"converging", "learning", "diverging"}
         and item["payload"].get("train_objective_score") is not None
         and item["payload"].get("validation_objective_score") is not None
         and item["payload"].get("test_objective_score") is not None
         and item["payload"].get("walk_forward_score") is not None
         and item["payload"].get("train_test_gap") is not None
+        and item["payload"].get("coverage_walk_forward_window_count") is not None
+        and item["payload"].get("coverage_grade") in {"healthy", "warning", "degraded"}
         for item in strategy.json()["history_events"]
     )
     assert any(
@@ -529,6 +575,7 @@ def test_data_source_expansion_agent_run_is_recorded() -> None:
             "base_url": "https://api.example.com",
             "api_key_env": "EXAMPLE_API_KEY",
             "docs_summary": "REST JSON API with symbol-based quote and history endpoints.",
+            "docs_url": "https://docs.example.com/source",
             "sample_endpoint": "quote",
             "auth_style": "query",
             "response_format": "json",
@@ -542,6 +589,7 @@ def test_data_source_expansion_agent_run_is_recorded() -> None:
     assert run["provider_slug"] == "examplesource"
     assert run["validation"]["module_syntax_ok"] is True
     assert run["validation"]["test_syntax_ok"] is True
+    assert run["config_candidate"]["docs_url"] == "https://docs.example.com/source"
     assert run["target_module"].startswith("src/sentinel_alpha/infra/generated_sources/")
     assert run["target_test"].startswith("tests/generated/")
     assert len(body["report_history"]) >= 1
@@ -561,6 +609,7 @@ def test_data_source_expansion_output_is_handoff_ready_for_programmer_agent() ->
             "base_url": "https://api.provider-bridge.example",
             "api_key_env": "BRIDGE_KEY",
             "docs_summary": "Financial data endpoint with JSON responses.",
+            "docs_url": "https://provider-bridge.example/docs",
             "sample_endpoint": "fundamentals",
             "auth_style": "query",
             "response_format": "json",
@@ -587,6 +636,7 @@ def test_data_source_expansion_can_be_applied_by_programmer_agent() -> None:
             "base_url": "https://api.bridge-apply.example",
             "api_key_env": "BRIDGE_APPLY_KEY",
             "docs_summary": "Options chain API with JSON payloads.",
+            "docs_url": "https://bridge-apply.example/docs/options",
             "sample_endpoint": "options",
             "auth_style": "header",
             "response_format": "json",
@@ -639,6 +689,11 @@ def test_trading_terminal_integration_agent_run_is_recorded() -> None:
             "balances_endpoint": "account/balances",
             "docs_summary": "REST trading API.",
             "user_notes": "Need order and cancel support.",
+            "response_field_map": {
+                "positions_root": "positions",
+                "balances_root": "balances",
+                "order_status_root": "order"
+            },
         },
     )
 
@@ -650,6 +705,8 @@ def test_trading_terminal_integration_agent_run_is_recorded() -> None:
     assert run["validation"]["module_syntax_ok"] is True
     assert run["validation"]["test_syntax_ok"] is True
     assert run["validation"]["docs_fetch_ok"] is True
+    assert run["integration_readiness_summary"]["status"] in {"ready", "caution", "blocked"}
+    assert run["config_candidate"]["provider_config"]["response_field_map"]["positions_root"] == "positions"
     assert any(item["event_type"] == "trading_terminal_integration_generated" for item in body["history_events"])
 
 
@@ -736,7 +793,18 @@ def test_trading_terminal_integration_can_be_smoke_tested() -> None:
     body = tested.json()
     run = body["terminal_integration_runs"][-1]
     assert run["terminal_test"]["status"] in {"ok", "warning"}
-    assert len(run["terminal_test"]["checks"]) == 6
+    assert len(run["terminal_test"]["checks"]) == 9
     assert len(run["terminal_test"]["calls"]) == 5
-    assert any(item["event_type"] == "trading_terminal_test_completed" for item in body["history_events"])
+    assert run["terminal_runtime_summary"]["status"] in {"healthy", "warning", "fragile"}
+    assert run["terminal_runtime_summary"]["readiness_status"] in {"ready", "caution", "blocked", "unknown"}
+    assert run["terminal_runtime_summary"]["test_status"] in {"ok", "warning", "error", "not_tested"}
+    assert run["terminal_runtime_summary"]["next_action"]
+    terminal_events = [item for item in body["history_events"] if item["event_type"] == "trading_terminal_test_completed"]
+    assert terminal_events
+    latest_event = terminal_events[-1]
+    assert latest_event["payload"]["terminal_name"] == "Smoke Broker"
+    assert latest_event["payload"]["terminal_type"] == "broker_api"
+    assert latest_event["payload"]["readiness_status"] in {"ready", "caution", "blocked"}
+    assert latest_event["payload"]["passed_check_count"] >= 0
+    assert latest_event["payload"]["total_check_count"] == 9
     assert any(item["report_type"] == "trading_terminal_test" for item in body["report_history"])

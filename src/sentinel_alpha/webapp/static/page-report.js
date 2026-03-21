@@ -187,6 +187,7 @@ function renderResearchArchiveDetail(snapshot) {
   const gate = exportManifest.gate_status || research.final_release_gate_summary?.gate_status || "unknown";
   const robustness = exportManifest.robustness_grade || research.robustness_summary?.grade || "unknown";
   const evaluation = research.evaluation_snapshot || {};
+  const coverage = evaluation.coverage_summary || exportManifest.coverage_summary || {};
   const repairRoutes = exportManifest.repair_route_summary || research.repair_route_summary || [];
   const primaryRepairRoute = exportManifest.primary_repair_route || repairRoutes[0] || null;
   renderList(
@@ -202,6 +203,11 @@ function renderResearchArchiveDetail(snapshot) {
       `check_target / ${exportManifest.check_target_variant_id || "unknown"} / source=${exportManifest.evaluation_source || "unknown"}`,
       `train/validation/test / ${evaluation.train?.objective_score ?? "unknown"} / ${evaluation.validation?.objective_score ?? "unknown"} / ${evaluation.test?.objective_score ?? "unknown"}`,
       `walk_forward / ${evaluation.walk_forward_score ?? "unknown"} / windows=${evaluation.walk_forward_windows ?? 0}`,
+      `test_detail / gross=${evaluation.test?.gross_exposure_pct ?? "unknown"} / net=${evaluation.test?.net_exposure_pct ?? "unknown"} / turnover=${evaluation.test?.avg_daily_turnover_proxy_pct ?? "unknown"} / obs=${evaluation.test?.observation_count ?? "unknown"}`,
+      `coverage / symbols=${coverage.symbol_count ?? "unknown"} / bars=${coverage.total_bar_count ?? "unknown"} / wf_windows=${coverage.walk_forward_window_count ?? 0}`,
+      `coverage_health / ${coverage.coverage_grade || "unknown"} / ${coverage.coverage_health_note || "无"}`,
+      `coverage_warnings / ${(coverage.coverage_warnings || []).join("，") || "无"}`,
+      `coverage_range / ${coverage.date_range?.start || "unknown"} -> ${coverage.date_range?.end || "unknown"}`,
       `gap / ${evaluation.train_test_gap ?? "unknown"}`,
       `next_focus / ${(exportManifest.next_iteration_focus || []).join("；") || "无"}`,
       `failed_checks / ${(exportManifest.failed_checks || []).join(", ") || "无"}`,
@@ -283,13 +289,20 @@ function renderHistoryTimeline(snapshot) {
         const robustness = item.payload?.robustness_grade ? ` / robustness=${item.payload.robustness_grade}` : "";
         const repairRoute = item.payload?.repair_route_lane ? ` / repair=${item.payload.repair_route_lane}` : "";
         const repairPriority = item.payload?.repair_route_priority ? ` / repair_priority=${item.payload.repair_route_priority}` : "";
+        const terminalName = item.payload?.terminal_name ? ` / terminal=${item.payload.terminal_name}` : "";
+        const terminalType = item.payload?.terminal_type ? ` / type=${item.payload.terminal_type}` : "";
+        const readiness = item.payload?.readiness_status ? ` / readiness=${item.payload.readiness_status}` : "";
+        const testCounts =
+          typeof item.payload?.passed_check_count !== "undefined"
+            ? ` / terminal_checks=${item.payload.passed_check_count}/${item.payload?.total_check_count ?? 0}`
+            : "";
         const splitScores =
           typeof item.payload?.test_objective_score !== "undefined"
             ? ` / T/Va/Te=${item.payload?.train_objective_score ?? "unknown"}/${item.payload?.validation_objective_score ?? "unknown"}/${item.payload?.test_objective_score ?? "unknown"}`
             : "";
         const walkForward = typeof item.payload?.walk_forward_score !== "undefined" ? ` / wf=${item.payload.walk_forward_score}` : "";
         const gap = typeof item.payload?.train_test_gap !== "undefined" ? ` / gap=${item.payload.train_test_gap}` : "";
-        return `${item.timestamp} / ${item.event_type} / ${item.summary}${strategyType}${feedback}${item.payload?.data_bundle_id ? ` / bundle=${item.payload.data_bundle_id}` : ""}${item.payload?.quality_grade ? ` / grade=${item.payload.quality_grade}` : ""}${item.payload?.training_readiness ? ` / training=${item.payload.training_readiness}` : ""}${winner}${gate}${source}${robustness}${repairRoute}${repairPriority}${splitScores}${walkForward}${gap}`;
+        return `${item.timestamp} / ${item.event_type} / ${item.summary}${strategyType}${feedback}${item.payload?.data_bundle_id ? ` / bundle=${item.payload.data_bundle_id}` : ""}${item.payload?.quality_grade ? ` / grade=${item.payload.quality_grade}` : ""}${item.payload?.training_readiness ? ` / training=${item.payload.training_readiness}` : ""}${winner}${gate}${source}${robustness}${terminalName}${terminalType}${readiness}${testCounts}${repairRoute}${repairPriority}${splitScores}${walkForward}${gap}`;
       }),
     "当前还没有历史记录。"
   );
@@ -341,6 +354,8 @@ function renderLatestResearch(snapshot) {
   const gate = research.final_release_gate_summary || {};
   const robustness = research.robustness_summary || {};
   const evaluation = research.evaluation_snapshot || {};
+  const coverage = evaluation.coverage_summary || {};
+  const backtestBinding = research.backtest_binding_summary || {};
   const checks = research.check_failure_summary || [];
   const lines = [];
   if (pkg.version_label) {
@@ -352,9 +367,17 @@ function renderLatestResearch(snapshot) {
   if (robustness.grade) {
     lines.push(`robustness / grade=${robustness.grade} / stability=${robustness.stability_score ?? "unknown"} / gap=${robustness.train_test_gap ?? "unknown"}`);
   }
+  if (backtestBinding.grade || evaluation.evaluation_source) {
+    lines.push(`backtest_binding / grade=${backtestBinding.grade || "unknown"} / source=${backtestBinding.evaluation_source || evaluation.evaluation_source || "unknown"} / coverage=${backtestBinding.coverage_grade || coverage.coverage_grade || "unknown"}`);
+    lines.push(`backtest_binding / ${backtestBinding.note || "无"}`);
+  }
   if (evaluation.evaluation_source || evaluation.test || evaluation.validation) {
     lines.push(`evaluation / source=${evaluation.evaluation_source || "unknown"} / train=${evaluation.train?.objective_score ?? "unknown"} / validation=${evaluation.validation?.objective_score ?? "unknown"} / test=${evaluation.test?.objective_score ?? "unknown"}`);
     lines.push(`evaluation / walk_forward=${evaluation.walk_forward_score ?? "unknown"} / windows=${evaluation.walk_forward_windows ?? 0} / gap=${evaluation.train_test_gap ?? "unknown"}`);
+    lines.push(`evaluation / gross=${evaluation.test?.gross_exposure_pct ?? "unknown"} / net=${evaluation.test?.net_exposure_pct ?? "unknown"} / turnover=${evaluation.test?.avg_daily_turnover_proxy_pct ?? "unknown"} / obs=${evaluation.test?.observation_count ?? "unknown"}`);
+    lines.push(`coverage / symbols=${coverage.symbol_count ?? "unknown"} / bars=${coverage.total_bar_count ?? "unknown"} / wf_windows=${coverage.walk_forward_window_count ?? 0}`);
+    lines.push(`coverage_health / ${coverage.coverage_grade || "unknown"} / ${coverage.coverage_health_note || "无"}`);
+    lines.push(`coverage_warnings / ${(coverage.coverage_warnings || []).join("，") || "无"}`);
   }
   if (gate.reason) {
     lines.push(`release_gate / ${gate.reason}`);

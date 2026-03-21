@@ -53,6 +53,11 @@ Current implementation progress snapshot:
   - completed:
     - trading terminal adapter generation from user-supplied docs and endpoint metadata
     - Programmer Agent handoff for generated terminal adapters
+    - pre-smoke integration readiness summary with:
+      - readiness status
+      - endpoint completeness
+      - auth/base-url checks
+      - docs availability checks
     - terminal smoke tests for:
       - ping
       - positions
@@ -60,11 +65,207 @@ Current implementation progress snapshot:
       - order placement contract
       - order-status contract
       - cancel contract
+      - positions response shape
+      - balances response shape
+      - order-status response shape
+    - configurable terminal response-field mapping for provider-specific payload layouts
     - terminal integration health summary on terminal, system-health, and configuration pages
+    - terminal smoke-test repair summaries with:
+      - primary repair route
+      - repair priority
+      - repair actions
+    - terminal runtime summary with:
+      - terminal health status
+      - next action
+      - primary repair route
+    - cross-page repair jumps from system-health and configuration pages back into terminal integration
+    - terminal-page repair-note backfill into user notes
   - remaining:
     - deeper terminal connectivity tests against real user endpoints
     - account and order-state synchronization beyond smoke tests
     - stronger terminal-specific repair and config flows
+    - runtime LLM summary with:
+      - live task count
+      - fallback task count
+      - fallback task visibility in system health
+
+## Deep Status Review
+
+### Completed Work
+
+The following areas are no longer just prototypes. They already form usable product loops with persistence, replay, and visible diagnostics.
+
+#### 1. Strategy research loop
+
+Completed:
+
+- canonical `train / validation / test / walk_forward` protocol shape
+- feature snapshots, input manifests, data bundles, lineage, and quality grading
+- baseline vs candidate comparison flow
+- research summaries, winner selection, rejection reasons, robustness summaries, and release-gate summaries
+- archived research exports across strategy package, training log, report history, and history events
+- replay of:
+  - winner
+  - gate
+  - quality
+  - evaluation source
+  - split metrics
+
+Assessment:
+
+- this loop is already closed and usable for research iteration
+- it is stronger than a demo and already behaves like a real research workbench
+- its main remaining gap is not workflow shape, but engine depth
+
+#### 2. Autoresearch-style strategy evolution
+
+Completed:
+
+- explicit iteration hypotheses
+- per-variant hypotheses
+- cycle summaries
+- next-hypothesis generation
+- autoresearch memory
+- hypothesis-quality scoring
+- convergence-state tracking
+
+Assessment:
+
+- the system already supports structured research memory rather than naive repeated prompting
+- this is now a real automatic-evolution loop, not a one-shot generator
+- the remaining work is to deepen hypothesis quality and pruning logic, not to invent the loop
+
+#### 3. Programmer Agent repair loop
+
+Completed:
+
+- bounded retry execution
+- compile, contract, and targeted pytest validation
+- failure summaries
+- repair plans
+- progress tracking
+- stop reasons
+- acceptance summaries
+- rollback summaries
+- promotion summaries
+- repair-chain stability summaries
+
+Assessment:
+
+- this loop is already operational and no longer just "run aider once"
+- the main remaining gap is stronger autonomy and broader validation depth
+
+#### 4. Terminal integration loop
+
+Completed:
+
+- terminal adapter generation from user-supplied docs and endpoint metadata
+- config candidates
+- Programmer Agent handoff
+- readiness summaries
+- smoke tests
+- response-shape checks
+- configurable response-field mapping
+- repair summaries
+- runtime summaries
+- cross-page repair jumps and repair-note backfill
+
+Assessment:
+
+- terminal integration is now a closed integration workflow
+- the remaining gap is real endpoint depth, not workflow absence
+
+#### 5. Runtime visibility loop
+
+Completed:
+
+- module, library, agent, token, cache, and performance visibility
+- research, repair, terminal, data, and LLM runtime health summaries
+- cross-page jump-back repair navigation
+
+Assessment:
+
+- the platform can now explain where the current weakness is
+- the remaining gap is production-grade operational depth, not the absence of observability structure
+
+### Work In Progress
+
+These areas already have strong scaffolding, but are not yet deep enough to be treated as finished.
+
+#### 1. Real backtest coupling
+
+Current state:
+
+- real local-history evaluation is available
+- coverage summaries, coverage grades, binding summaries, and split metrics exist
+- research conclusions already penalize weak coverage and surrogate-only evaluation
+
+Why it is still in progress:
+
+- the engine is not yet a final research-grade execution engine
+- real-market constraints and deeper portfolio behavior are still lighter than the desired end state
+
+#### 2. LLM production hardening
+
+Current state:
+
+- multi-model routing is present
+- fallback visibility is present
+- runtime-health now shows live vs fallback task health
+
+Why it is still in progress:
+
+- runtime routing is visible, but provider execution hardening is still incomplete
+- timeout normalization, stronger retry policy, and final production behavior are not yet fully closed
+
+#### 3. Long-running single-user operation
+
+Current state:
+
+- runtime health already compresses research, repair, terminal, data, and LLM state
+- data-health summaries and terminal-runtime summaries exist
+
+Why it is still in progress:
+
+- long-running operation is now observable, but not yet fully hardened
+- the platform still lacks deeper recovery and sustained-operation mechanics
+
+### Remaining Work
+
+These are the still-open areas that block calling the platform "fully finished" rather than "high-completion research platform".
+
+#### 1. Real backtest engine finalization
+
+Still needed:
+
+- deeper real-market execution constraints
+- stronger portfolio realism
+- stronger coupling between real execution results and final research decisions
+
+#### 2. Programmer Agent final hardening
+
+Still needed:
+
+- stronger rollback execution flow
+- broader validation matrix
+- more autonomous long-chain repair behavior
+- stronger acceptance standards for stable promotion
+
+#### 3. Terminal integration final hardening
+
+Still needed:
+
+- deeper connectivity tests against real user endpoints
+- stronger account/order-state synchronization logic
+- more mature terminal-specific recovery paths
+
+#### 4. Long-running platform hardening
+
+Still needed:
+
+- richer data refresh and failure recovery mechanics
+- stronger sustained-operation safeguards
+- more mature runtime and recovery playbooks
 
 The system does not yet have:
 
@@ -137,6 +338,7 @@ Need:
 - automatic retry prompt regeneration
 - bounded retry loop
 - stable rollback to the last known-good commit
+- explicit acceptance, rollback, promotion, and stability gating for each repair chain
 
 Why:
 

@@ -362,7 +362,15 @@ class WorkflowService:
                     previous_failure=previous_failure,
                     feedback=feedback,
                 )
-                plans = self._build_upgrade_plans(strategy_type, analysis, behavior, targets)
+                iteration_hypothesis = self.evolver.propose_iteration_hypothesis(
+                    strategy_type=strategy_type,
+                    objective_metric=objective_metric,
+                    analysis=analysis,
+                    previous_failure=previous_failure,
+                    feedback=feedback,
+                )
+                plans = self._build_upgrade_plans(strategy_type, analysis, behavior, targets, iteration_hypothesis)
+                variant_hypotheses = self.evolver.derive_variant_hypotheses(iteration_hypothesis, plans)
                 variants = []
                 for variant_index, plan in enumerate(plans, start=1):
                     variant_candidate = self._build_variant_candidate(candidate, plan, variant_index)
@@ -388,6 +396,7 @@ class WorkflowService:
                             "llm_profile": artifact["profile"],
                             "llm_generation_summary": artifact["summary"],
                             "evaluation": evaluation,
+                            "hypothesis": next((item for item in variant_hypotheses if item["variant_id"] == plan["variant_id"]), {}),
                         }
                     )
                 baseline_evaluation = self._evaluate_strategy_candidate(
@@ -449,6 +458,10 @@ class WorkflowService:
                     },
                     "baseline_evaluation": baseline_evaluation,
                     "analysis": analysis,
+                    "autoresearch_state": {
+                        "iteration_hypothesis": iteration_hypothesis,
+                        "variant_hypotheses": variant_hypotheses,
+                    },
                     "previous_failure_summary": previous_failure,
                     "upgrade_plans": plans,
                     "candidate_variants": variants,
@@ -468,8 +481,25 @@ class WorkflowService:
                     research_summary,
                     session.programmer_runs[-1] if session.programmer_runs else None,
                 )
+                autoresearch_cycle_summary = self._build_autoresearch_cycle_summary(
+                    iteration_hypothesis=iteration_hypothesis,
+                    winner=winner,
+                    failed_checks=failed_checks,
+                    repair_route_summary=repair_route_summary,
+                    research_summary=research_summary,
+                )
+                autoresearch_memory = self._build_autoresearch_memory(
+                    session=session,
+                    iteration_hypothesis=iteration_hypothesis,
+                    autoresearch_cycle_summary=autoresearch_cycle_summary,
+                    failed_checks=failed_checks,
+                )
                 research_summary["repair_route_summary"] = repair_route_summary
+                research_summary["autoresearch_cycle_summary"] = autoresearch_cycle_summary
+                research_summary["autoresearch_memory_summary"] = autoresearch_memory
                 session.strategy_package["research_summary"] = research_summary
+                session.strategy_package["autoresearch_state"]["cycle_summary"] = autoresearch_cycle_summary
+                session.strategy_package["autoresearch_state"]["memory"] = autoresearch_memory
                 self._record_agent_activity(
                     "strategy_integrity_checker",
                     "error" if any(check["check_type"] == "integrity" and check["status"] == "fail" for check in session.strategy_checks) else "ok",
@@ -508,6 +538,9 @@ class WorkflowService:
                         "recommended_stability_score": winner["evaluation"].get("stability_score"),
                         "failed_checks": [check["check_type"] for check in failed_checks],
                         "repair_route_summary": repair_route_summary,
+                        "iteration_hypothesis": iteration_hypothesis,
+                        "autoresearch_cycle_summary": autoresearch_cycle_summary,
+                        "autoresearch_memory": autoresearch_memory,
                     }
                 )
                 research_export = self._build_research_export_manifest(
@@ -546,8 +579,17 @@ class WorkflowService:
                         "test_objective_score": research_export.get("research_summary", {}).get("evaluation_snapshot", {}).get("test", {}).get("objective_score"),
                         "walk_forward_score": research_export.get("research_summary", {}).get("evaluation_snapshot", {}).get("walk_forward_score"),
                         "train_test_gap": research_export.get("research_summary", {}).get("evaluation_snapshot", {}).get("train_test_gap"),
+                        "coverage_symbol_count": research_export.get("coverage_summary", {}).get("symbol_count"),
+                        "coverage_total_bar_count": research_export.get("coverage_summary", {}).get("total_bar_count"),
+                        "coverage_walk_forward_window_count": research_export.get("coverage_summary", {}).get("walk_forward_window_count"),
+                        "coverage_grade": research_export.get("coverage_summary", {}).get("coverage_grade"),
+                        "coverage_warnings": research_export.get("coverage_summary", {}).get("coverage_warnings"),
                         "repair_route_lane": (research_export.get("primary_repair_route") or {}).get("lane"),
                         "repair_route_priority": (research_export.get("primary_repair_route") or {}).get("priority"),
+                        "hypothesis_id": iteration_hypothesis.get("hypothesis_id"),
+                        "next_hypothesis": autoresearch_cycle_summary.get("next_hypothesis"),
+                        "hypothesis_quality": autoresearch_memory.get("hypothesis_quality"),
+                        "hypothesis_convergence": autoresearch_memory.get("convergence_status"),
                     },
                 )
                 if not failed_checks and iteration_mode != "free":
@@ -728,6 +770,7 @@ class WorkflowService:
         analysis: dict,
         behavior: BehavioralReport,
         objective_targets: dict[str, float],
+        iteration_hypothesis: dict,
     ) -> list[dict]:
         return [
             {
@@ -741,6 +784,8 @@ class WorkflowService:
                 ],
                 "reasoning": analysis["current_strategy_problems"],
                 "objective_targets": objective_targets,
+                "hypothesis_id": f"{iteration_hypothesis.get('hypothesis_id', 'hyp')}-structural_upgrade",
+                "hypothesis_statement": f"Test whether tighter structure can validate: {iteration_hypothesis.get('statement', 'unknown')}",
                 "behavior_anchor": {
                     "noise_sensitivity": behavior.noise_susceptibility,
                     "overtrading_tendency": behavior.intervention_risk,
@@ -757,6 +802,8 @@ class WorkflowService:
                 ],
                 "reasoning": analysis["current_strategy_problems"],
                 "objective_targets": objective_targets,
+                "hypothesis_id": f"{iteration_hypothesis.get('hypothesis_id', 'hyp')}-strategy_improvement",
+                "hypothesis_statement": f"Test whether edge capture improvements can validate: {iteration_hypothesis.get('statement', 'unknown')}",
                 "behavior_anchor": {
                     "panic_sell_tendency": behavior.panic_sell_score,
                     "hold_strength": behavior.discipline_score,
@@ -771,6 +818,7 @@ class WorkflowService:
         candidate["metadata"]["variant_id"] = plan["variant_id"]
         candidate["metadata"]["plan_name"] = plan["plan_name"]
         candidate["metadata"]["focus"] = plan["focus"]
+        candidate["metadata"]["hypothesis_id"] = plan.get("hypothesis_id")
         candidate["parameters"] = dict(candidate.get("parameters", {}))
         if plan["variant_id"] == "structural_upgrade":
             for key in ("max_position_pct", "portfolio_drawdown_limit_pct", "hard_stop_loss_pct"):
@@ -861,6 +909,22 @@ class WorkflowService:
             "walk_forward_score": split_metrics["stability"]["walk_forward_score"],
             "stability_score": stability_score,
             "evaluation_source": "heuristic_surrogate",
+            "coverage_summary": {
+                "symbol_count": len(list(dict.fromkeys(signal.get("symbol") for signal in candidate.get("signals", []) if signal.get("symbol")))),
+                "symbols": sorted(list(dict.fromkeys(signal.get("symbol") for signal in candidate.get("signals", []) if signal.get("symbol")))),
+                "total_bar_count": None,
+                "symbol_bar_counts": {},
+                "date_range": {
+                    "start": dataset_plan.get("train", {}).get("start"),
+                    "end": dataset_plan.get("test", {}).get("end"),
+                },
+                "walk_forward_window_count": len(dataset_plan.get("walk_forward_windows", [])),
+                "split_bar_counts": {
+                    "train": {"symbol_count": None, "bar_count": None},
+                    "validation": {"symbol_count": None, "bar_count": None},
+                    "test": {"symbol_count": None, "bar_count": None},
+                },
+            },
         }
         if self.settings.performance_enabled:
             self._candidate_eval_cache[cache_key] = dict(evaluation)
@@ -891,12 +955,20 @@ class WorkflowService:
             split_win_rate = round(win_rate_pct * multipliers["win_rate"], 2)
             split_drawdown = round(drawdown_pct * multipliers["drawdown"], 2)
             split_max_loss = round(max_loss_pct * multipliers["max_loss"], 2)
+            gross_exposure_pct = round(100.0 * min(1.0, 0.22 + 0.03 * max(0, variant_index)), 2)
+            net_exposure_pct = round(gross_exposure_pct * 0.85, 2)
             result[split_name] = {
                 "period": dataset_plan[split_name],
                 "expected_return_pct": split_return,
                 "win_rate_pct": split_win_rate,
                 "drawdown_pct": split_drawdown,
                 "max_loss_pct": split_max_loss,
+                "observation_count": 0,
+                "active_symbol_count": 0,
+                "gross_exposure_pct": gross_exposure_pct,
+                "net_exposure_pct": net_exposure_pct,
+                "avg_daily_turnover_proxy_pct": round(2.0 + variant_index * 0.4, 2),
+                "avg_volume": 0.0,
                 "objective_score": self._objective_score(
                     objective_metric,
                     targets,
@@ -932,6 +1004,12 @@ class WorkflowService:
                     "win_rate_pct": wf_win_rate,
                     "drawdown_pct": wf_drawdown,
                     "max_loss_pct": wf_max_loss,
+                    "observation_count": 0,
+                    "active_symbol_count": 0,
+                    "gross_exposure_pct": round(100.0 * min(1.0, 0.22 + 0.03 * max(0, variant_index)), 2),
+                    "net_exposure_pct": round(100.0 * min(1.0, 0.22 + 0.03 * max(0, variant_index)) * 0.85, 2),
+                    "avg_daily_turnover_proxy_pct": round(2.0 + variant_index * 0.4, 2),
+                    "avg_volume": 0.0,
                 }
             )
 
@@ -1064,6 +1142,7 @@ class WorkflowService:
             "walk_forward_score": walk_forward_score,
             "stability_score": stability_score,
             "evaluation_source": "local_history_backtest",
+            "coverage_summary": split_metrics.get("coverage") or {},
         }
 
     def _validate_programmer_changes(self, target_files: list[str]) -> tuple[bool, str]:
@@ -1077,10 +1156,13 @@ class WorkflowService:
             )
             if result.returncode != 0:
                 return False, result.stderr.strip() or result.stdout.strip() or "py_compile failed"
+            contract_ok, contract_detail = self._validate_programmer_python_contracts(python_targets)
+            if not contract_ok:
+                return False, contract_detail
 
         test_targets = self._candidate_test_targets(target_files)
         if not test_targets:
-            return True, "py_compile passed; no mapped pytest targets."
+            return True, "py_compile and contract checks passed; no mapped pytest targets."
 
         pytest_result = subprocess.run(
             ["python", "-m", "pytest", *test_targets, "-q"],
@@ -1089,8 +1171,25 @@ class WorkflowService:
             text=True,
         )
         if pytest_result.returncode == 0:
-            return True, f"py_compile passed; pytest passed for {', '.join(test_targets)}"
+            return True, f"py_compile, contract checks, and pytest passed for {', '.join(test_targets)}"
         return False, pytest_result.stderr.strip() or pytest_result.stdout.strip() or "pytest failed"
+
+    def _validate_programmer_python_contracts(self, python_targets: list[str]) -> tuple[bool, str]:
+        repo_root = Path(self.settings.programmer_agent_repo_path)
+        for item in python_targets:
+            path = repo_root / item
+            if not path.exists():
+                return False, f"contract check failed: missing target file {item}"
+            try:
+                source = path.read_text(encoding="utf-8")
+            except OSError as exc:
+                return False, f"contract check failed: unable to read {item}: {exc}"
+            stripped = source.strip()
+            if not stripped:
+                return False, f"contract check failed: empty python target {item}"
+            if item.startswith("src/") and "class " not in source and "def " not in source and "=" not in source:
+                return False, f"contract check failed: no class/function/assignment definitions found in {item}"
+        return True, "contract checks passed"
 
     def _candidate_test_targets(self, target_files: list[str]) -> list[str]:
         repo_root = Path(self.settings.programmer_agent_repo_path)
@@ -1114,19 +1213,35 @@ class WorkflowService:
         return list(dict.fromkeys(discovered))
 
     def _compare_variant_results(self, baseline_evaluation: dict, variants: list[dict]) -> dict:
+        def adjusted_score(evaluation: dict) -> float:
+            raw = float(evaluation.get("objective_score") or 0.0)
+            source = evaluation.get("evaluation_source")
+            coverage = evaluation.get("coverage_summary") or {}
+            coverage_grade = coverage.get("coverage_grade") or "healthy"
+            if source != "local_history_backtest":
+                raw -= 0.08
+            if coverage_grade == "warning":
+                raw -= 0.04
+            elif coverage_grade == "degraded":
+                raw -= 0.1
+            return round(raw, 4)
+
         best = {
             "variant_id": "baseline",
             "objective_score": baseline_evaluation["objective_score"],
+            "adjusted_score": adjusted_score(baseline_evaluation),
             "evaluation": baseline_evaluation,
             "reason": "Baseline remains the strongest current reference.",
         }
         for variant in variants:
-            if variant["evaluation"]["objective_score"] > best["objective_score"]:
+            variant_adjusted = adjusted_score(variant["evaluation"])
+            if variant_adjusted > best["adjusted_score"]:
                 best = {
                     "variant_id": variant["variant_id"],
                     "objective_score": variant["evaluation"]["objective_score"],
+                    "adjusted_score": variant_adjusted,
                     "evaluation": variant["evaluation"],
-                    "reason": f"{variant['plan']['plan_name']} beats baseline on the configured objective.",
+                    "reason": f"{variant['plan']['plan_name']} beats baseline on the adjusted research score after source and coverage penalties.",
                 }
         return best
 
@@ -1192,12 +1307,31 @@ class WorkflowService:
         winner_gain = round(winner_test - baseline_test, 4)
         check_target_eval = selected_check_target.get("evaluation") or {}
         check_target_dataset = check_target_eval.get("dataset_evaluation") or {}
+        coverage_summary = self._assess_backtest_coverage(
+            check_target_eval.get("coverage_summary") or {},
+            check_target_eval.get("evaluation_source"),
+        )
+        backtest_binding_summary = self._build_backtest_binding_summary(
+            evaluation_source=check_target_eval.get("evaluation_source"),
+            coverage_summary=coverage_summary,
+            robustness_grade="acceptable",
+        )
         winner_gap = abs(float(winner_entry.get("train_test_gap") or 0.0))
         winner_stability = float(winner_entry.get("stability_score") or 0.0)
-        if winner_stability >= 0.8 and winner_gap <= 0.12:
+        if (
+            winner_stability >= 0.8
+            and winner_gap <= 0.12
+            and backtest_binding_summary.get("grade") == "strong"
+            and coverage_summary.get("coverage_grade") == "healthy"
+        ):
             robustness_grade = "strong"
             robustness_note = "The winner remains stable across out-of-sample evaluation and the train-test gap is controlled."
-        elif winner_stability >= 0.6 and winner_gap <= 0.2:
+        elif (
+            winner_stability >= 0.6
+            and winner_gap <= 0.2
+            and backtest_binding_summary.get("grade") in {"strong", "partial"}
+            and coverage_summary.get("coverage_grade") != "degraded"
+        ):
             robustness_grade = "acceptable"
             robustness_note = "The winner is usable, but stability or train-test dispersion still needs monitoring."
         else:
@@ -1238,11 +1372,15 @@ class WorkflowService:
             "walk_forward_score": check_target_dataset.get("stability", {}).get("walk_forward_score"),
             "stability_score": check_target_eval.get("stability_score"),
             "train_test_gap": check_target_dataset.get("stability", {}).get("train_test_gap"),
+            "coverage_summary": coverage_summary,
         }
         evaluation_highlights = []
         if evaluation_snapshot["test"]:
             evaluation_highlights.append(
                 f"Test score {evaluation_snapshot['test'].get('objective_score', 'unknown')} with return {evaluation_snapshot['test'].get('expected_return_pct', 'unknown')}% and drawdown {evaluation_snapshot['test'].get('drawdown_pct', 'unknown')}%."
+            )
+            evaluation_highlights.append(
+                f"Test exposure gross/net {evaluation_snapshot['test'].get('gross_exposure_pct', 'unknown')}%/{evaluation_snapshot['test'].get('net_exposure_pct', 'unknown')}% with turnover proxy {evaluation_snapshot['test'].get('avg_daily_turnover_proxy_pct', 'unknown')}%."
             )
         if evaluation_snapshot["validation"]:
             evaluation_highlights.append(
@@ -1254,6 +1392,21 @@ class WorkflowService:
             )
         if evaluation_snapshot["train_test_gap"] is not None:
             evaluation_highlights.append(f"Train-test gap is {evaluation_snapshot['train_test_gap']}.")
+        if coverage_summary:
+            evaluation_highlights.append(
+                f"Coverage includes {coverage_summary.get('symbol_count', 'unknown')} symbols and {coverage_summary.get('walk_forward_window_count', 0)} walk-forward windows."
+            )
+            if coverage_summary.get("total_bar_count") is not None:
+                evaluation_highlights.append(f"Historical bars covered: {coverage_summary.get('total_bar_count')}.")
+            if coverage_summary.get("coverage_grade"):
+                evaluation_highlights.append(
+                    f"Coverage health is {coverage_summary.get('coverage_grade')}: {coverage_summary.get('coverage_health_note', 'no note')}."
+                )
+        backtest_binding_summary = self._build_backtest_binding_summary(
+            evaluation_source=check_target_eval.get("evaluation_source"),
+            coverage_summary=coverage_summary,
+            robustness_grade=robustness_grade,
+        )
         return {
             "objective_metric": objective_metric,
             "strategy_type": strategy_type,
@@ -1268,6 +1421,7 @@ class WorkflowService:
                 "winner_stability_score": winner_entry.get("stability_score"),
                 "baseline_test_objective_score": baseline_test,
                 "winner_advantage_vs_baseline": winner_gain,
+                "winner_adjusted_research_score": winner.get("adjusted_score"),
                 "reason": winner.get("reason"),
             },
             "check_target_summary": {
@@ -1276,6 +1430,7 @@ class WorkflowService:
                 "evaluation_source": check_target_eval.get("evaluation_source"),
                 "test_objective_score": check_target_eval.get("test_objective_score"),
                 "stability_score": check_target_eval.get("stability_score"),
+                "coverage_summary": coverage_summary,
                 "reason": (
                     f"Only the current best candidate ({selected_check_target.get('variant_id')}) proceeds to integrity and stress/overfit validation."
                 ),
@@ -1290,6 +1445,7 @@ class WorkflowService:
             },
             "evaluation_snapshot": evaluation_snapshot,
             "evaluation_highlights": evaluation_highlights,
+            "backtest_binding_summary": backtest_binding_summary,
             "rejection_summary": rejection_summary,
             "candidate_rankings": [
                 {
@@ -1314,6 +1470,68 @@ class WorkflowService:
                 f"and stability {winner_entry.get('stability_score', 'unknown')}. "
                 f"Relative to baseline, the winner changes the test objective by {winner_gain}."
             ),
+        }
+
+    def _assess_backtest_coverage(self, coverage_summary: dict, evaluation_source: str | None) -> dict:
+        coverage = dict(coverage_summary or {})
+        warnings: list[str] = []
+        grade = "healthy"
+        note = "Historical coverage is broad enough for research review."
+        symbol_count = coverage.get("symbol_count")
+        total_bar_count = coverage.get("total_bar_count")
+        walk_forward_window_count = coverage.get("walk_forward_window_count") or 0
+        split_bar_counts = coverage.get("split_bar_counts") or {}
+        validation_bar_count = (split_bar_counts.get("validation") or {}).get("bar_count")
+        test_bar_count = (split_bar_counts.get("test") or {}).get("bar_count")
+
+        if evaluation_source != "local_history_backtest":
+            grade = "warning"
+            warnings.append("heuristic_only_no_real_bar_coverage")
+            note = "This evaluation used surrogate scoring, so historical bar coverage is not available."
+        else:
+            if symbol_count is not None and symbol_count < 2:
+                warnings.append("narrow_symbol_coverage")
+            if total_bar_count is not None and total_bar_count < 120:
+                warnings.append("limited_bar_history")
+            if walk_forward_window_count < 2:
+                warnings.append("limited_walk_forward_windows")
+            if validation_bar_count is not None and validation_bar_count < 20:
+                warnings.append("short_validation_window")
+            if test_bar_count is not None and test_bar_count < 20:
+                warnings.append("short_test_window")
+
+            if len(warnings) >= 3 or "limited_bar_history" in warnings:
+                grade = "degraded"
+                note = "Historical coverage is thin, so research conclusions should be treated cautiously."
+            elif warnings:
+                grade = "warning"
+                note = "Historical coverage is usable, but the current dataset is still narrower than ideal."
+
+        coverage["coverage_grade"] = grade
+        coverage["coverage_warnings"] = warnings
+        coverage["coverage_health_note"] = note
+        return coverage
+
+    def _build_backtest_binding_summary(self, evaluation_source: str | None, coverage_summary: dict, robustness_grade: str) -> dict:
+        source = evaluation_source or "unknown"
+        coverage_grade = coverage_summary.get("coverage_grade") or "unknown"
+        if source == "local_history_backtest" and coverage_grade == "healthy" and robustness_grade in {"strong", "acceptable"}:
+            grade = "strong"
+            note = "Research conclusions are anchored by real historical backtest coverage."
+        elif source == "local_history_backtest" and coverage_grade in {"healthy", "warning"}:
+            grade = "partial"
+            note = "Research conclusions use real historical bars, but coverage or robustness still limits confidence."
+        elif source == "heuristic_surrogate":
+            grade = "weak"
+            note = "Research conclusions rely on surrogate evaluation and should not be treated as fully backtest-backed."
+        else:
+            grade = "weak"
+            note = "Backtest linkage is limited, so research conclusions remain provisional."
+        return {
+            "grade": grade,
+            "evaluation_source": source,
+            "coverage_grade": coverage_grade,
+            "note": note,
         }
 
     def _finalize_research_summary(self, research_summary: dict, strategy_checks: list[dict]) -> dict:
@@ -1372,6 +1590,8 @@ class WorkflowService:
             "robustness_grade": robustness.get("grade"),
             "check_target_variant_id": check_target.get("variant_id"),
             "evaluation_source": check_target.get("evaluation_source"),
+            "coverage_summary": check_target.get("coverage_summary") or {},
+            "backtest_binding_summary": research.get("backtest_binding_summary") or {},
             "next_iteration_focus": research.get("next_iteration_focus") or [],
             "repair_route_summary": research.get("repair_route_summary") or [],
             "primary_repair_route": (research.get("repair_route_summary") or [None])[0],
@@ -1499,6 +1719,96 @@ class WorkflowService:
                 routes.append(programmer_route)
 
         return routes
+
+    def _build_autoresearch_cycle_summary(
+        self,
+        iteration_hypothesis: dict,
+        winner: dict,
+        failed_checks: list[dict],
+        repair_route_summary: list[dict],
+        research_summary: dict,
+    ) -> dict:
+        failed_names = [item.get("check_type") for item in failed_checks if item.get("check_type")]
+        primary_route = (repair_route_summary or [None])[0] or {}
+        learned = (
+            "The current hypothesis produced a releasable winner."
+            if not failed_names
+            else f"The current hypothesis improved ranking, but the winner still failed: {', '.join(failed_names)}."
+        )
+        return {
+            "hypothesis_id": iteration_hypothesis.get("hypothesis_id"),
+            "winner_variant_id": winner.get("variant_id"),
+            "learned": learned,
+            "failed_checks": failed_names,
+            "next_hypothesis": (
+                f"Next iteration should stress {primary_route.get('lane', 'the current repair lane')} "
+                f"while preserving {winner.get('variant_id', 'winner')} test advantage."
+            ),
+            "next_focus": list(research_summary.get("next_iteration_focus") or []),
+        }
+
+    def _build_autoresearch_memory(
+        self,
+        session: WorkflowSession,
+        iteration_hypothesis: dict,
+        autoresearch_cycle_summary: dict,
+        failed_checks: list[dict],
+    ) -> dict:
+        recent_entries = [
+            {
+                "iteration_no": item.get("iteration_no"),
+                "hypothesis_id": (item.get("iteration_hypothesis") or {}).get("hypothesis_id"),
+                "focus_problem": (item.get("iteration_hypothesis") or {}).get("focus_problem"),
+                "winner_variant_id": (item.get("autoresearch_cycle_summary") or {}).get("winner_variant_id"),
+                "failed_checks": (item.get("autoresearch_cycle_summary") or {}).get("failed_checks") or [],
+                "next_hypothesis": (item.get("autoresearch_cycle_summary") or {}).get("next_hypothesis"),
+            }
+            for item in session.strategy_training_log[-4:]
+            if item.get("iteration_hypothesis") or item.get("autoresearch_cycle_summary")
+        ]
+        recent_entries.append(
+            {
+                "iteration_no": None,
+                "hypothesis_id": iteration_hypothesis.get("hypothesis_id"),
+                "focus_problem": iteration_hypothesis.get("focus_problem"),
+                "winner_variant_id": autoresearch_cycle_summary.get("winner_variant_id"),
+                "failed_checks": autoresearch_cycle_summary.get("failed_checks") or [],
+                "next_hypothesis": autoresearch_cycle_summary.get("next_hypothesis"),
+            }
+        )
+        focus_set = {item.get("focus_problem") for item in recent_entries if item.get("focus_problem")}
+        route_set = {
+            item.get("next_hypothesis")
+            for item in recent_entries
+            if item.get("next_hypothesis")
+        }
+        if len(recent_entries) >= 3 and len(focus_set) == 1:
+            convergence_status = "converging"
+            convergence_note = "Recent iterations keep refining the same core problem, so the research loop is converging."
+        elif len(focus_set) >= 3 or len(route_set) >= 3:
+            convergence_status = "diverging"
+            convergence_note = "Recent iterations are changing focus quickly, so the research loop is still exploring or drifting."
+        else:
+            convergence_status = "learning"
+            convergence_note = "The loop is accumulating evidence, but the core repair lane is not fully stable yet."
+
+        if not failed_checks:
+            hypothesis_quality = "strong"
+            quality_note = "The current hypothesis produced a winner that passed the current release gate."
+        elif len(failed_checks) == 1:
+            hypothesis_quality = "partial"
+            quality_note = "The current hypothesis improved the candidate set, but one major blocker remains."
+        else:
+            hypothesis_quality = "weak"
+            quality_note = "The current hypothesis still leaves multiple blockers unresolved."
+
+        return {
+            "hypothesis_quality": hypothesis_quality,
+            "quality_note": quality_note,
+            "convergence_status": convergence_status,
+            "convergence_note": convergence_note,
+            "recent_hypotheses": recent_entries,
+        }
 
     def approve_strategy(self, session_id: UUID) -> WorkflowSession:
         session = self.get_session(session_id)
@@ -1913,7 +2223,8 @@ class WorkflowService:
         category: str,
         base_url: str,
         api_key_env: str | None,
-        docs_summary: str,
+        docs_summary: str | None,
+        docs_url: str | None = None,
         sample_endpoint: str | None = None,
         auth_style: str = "header",
         response_format: str = "json",
@@ -1925,6 +2236,7 @@ class WorkflowService:
             base_url=base_url,
             api_key_env=api_key_env,
             docs_summary=docs_summary,
+            docs_url=docs_url,
             sample_endpoint=sample_endpoint,
             auth_style=auth_style,
             response_format=response_format,
@@ -1938,7 +2250,7 @@ class WorkflowService:
             report_type="data_source_expansion",
             title=f"Data Source Expansion: {provider_name}",
             body=result,
-            related_refs=[base_url],
+            related_refs=[base_url, *( [docs_url] if docs_url else [] )],
         )
         self._append_history_event(
             session,
@@ -1947,6 +2259,7 @@ class WorkflowService:
             {
                 "provider_name": provider_name,
                 "category": category,
+                "docs_url": docs_url,
                 "target_module": result["target_module"],
                 "target_test": result["target_test"],
             },
@@ -2048,6 +2361,7 @@ class WorkflowService:
         balances_endpoint: str,
         docs_summary: str,
         user_notes: str | None = None,
+        response_field_map: dict[str, str] | None = None,
     ) -> WorkflowSession:
         session = self.get_session(session_id)
         request = TradingTerminalIntegrationRequest(
@@ -2065,10 +2379,12 @@ class WorkflowService:
             balances_endpoint=balances_endpoint,
             docs_summary=docs_summary,
             user_notes=user_notes,
+            response_field_map=response_field_map,
         )
         result = self.terminal_integrator.build_terminal_package(request)
         result["run_id"] = f"terminal-{len(session.terminal_integration_runs) + 1}"
         result["timestamp"] = self._now_iso()
+        result["terminal_runtime_summary"] = self._build_terminal_runtime_summary(result)
         session.terminal_integration_runs.append(result)
         self._archive_report(
             session,
@@ -2087,6 +2403,7 @@ class WorkflowService:
                 "target_module": result["target_module"],
                 "target_test": result["target_test"],
                 "docs_fetch_ok": result["docs_context"]["docs_fetch_ok"],
+                "integration_readiness": result.get("integration_readiness_summary", {}).get("status"),
             },
         )
         self._record_agent_activity(
@@ -2141,6 +2458,7 @@ class WorkflowService:
         result["timestamp"] = self._now_iso()
         result["applied_run_id"] = selected_run["run_id"]
         selected_run["programmer_apply"] = result
+        selected_run["terminal_runtime_summary"] = self._build_terminal_runtime_summary(selected_run)
         session.programmer_runs.append(result)
         self._archive_report(
             session,
@@ -2189,6 +2507,10 @@ class WorkflowService:
         result["timestamp"] = self._now_iso()
         result["run_id"] = selected_run["run_id"]
         selected_run["terminal_test"] = result
+        selected_run["terminal_runtime_summary"] = self._build_terminal_runtime_summary(selected_run)
+        checks = result.get("checks", [])
+        passed_check_count = sum(1 for item in checks if item.get("status") == "pass")
+        readiness = selected_run.get("integration_readiness_summary", {})
         self._archive_report(
             session,
             report_type="trading_terminal_test",
@@ -2202,8 +2524,15 @@ class WorkflowService:
             "交易终端接入 smoke test 已完成。",
             {
                 "run_id": selected_run["run_id"],
+                "terminal_name": selected_run.get("terminal_name"),
+                "terminal_type": selected_run.get("terminal_type"),
+                "readiness_status": readiness.get("status"),
+                "passed_check_count": passed_check_count,
+                "total_check_count": len(checks),
                 "status": result.get("status"),
                 "summary": result.get("summary"),
+                "repair_route": result.get("repair_summary", {}).get("primary_route"),
+                "repair_priority": result.get("repair_summary", {}).get("priority"),
             },
         )
         self._record_agent_activity(
@@ -2214,6 +2543,47 @@ class WorkflowService:
             session.session_id,
         )
         return session
+
+    def _build_terminal_runtime_summary(self, run: dict) -> dict:
+        readiness = run.get("integration_readiness_summary") or {}
+        test = run.get("terminal_test") or {}
+        repair = test.get("repair_summary") or {}
+        checks = test.get("checks") or []
+        passed = sum(1 for item in checks if item.get("status") == "pass")
+        readiness_status = readiness.get("status") or "unknown"
+        test_status = test.get("status") or "not_tested"
+        if test_status == "ok" and readiness_status == "ready":
+            return {
+                "status": "healthy",
+                "readiness_status": readiness_status,
+                "test_status": test_status,
+                "passed_check_count": passed,
+                "total_check_count": len(checks),
+                "note": "Terminal package is ready for the next connectivity stage.",
+                "next_action": "Proceed to stronger endpoint verification or controlled local integration.",
+                "primary_route": repair.get("primary_route") or "none",
+            }
+        if readiness_status == "blocked" or test_status in {"warning", "error"}:
+            return {
+                "status": "fragile",
+                "readiness_status": readiness_status,
+                "test_status": test_status,
+                "passed_check_count": passed,
+                "total_check_count": len(checks),
+                "note": "Terminal package is not ready yet. Fix readiness gaps or failed smoke-test contracts first.",
+                "next_action": (repair.get("actions") or ["Return to the terminal integration page and fix the failed contract or endpoint."])[0],
+                "primary_route": repair.get("primary_route") or "data_shape_repair",
+            }
+        return {
+            "status": "warning",
+            "readiness_status": readiness_status,
+            "test_status": test_status,
+            "passed_check_count": passed,
+            "total_check_count": len(checks),
+            "note": "Terminal package has partial readiness but still needs another validation pass.",
+            "next_action": "Run or rerun smoke tests after reviewing endpoint coverage and field mapping.",
+            "primary_route": repair.get("primary_route") or "readiness_review",
+        }
 
     def compose_market_template_campaign(
         self,
@@ -2315,6 +2685,8 @@ class WorkflowService:
             "libraries": self._library_diagnostics(),
             "agents": self._agent_diagnostics(),
             "performance": self._performance_snapshot(),
+            "data_health": self._data_health_snapshot(),
+            "runtime_health": self._runtime_health_summary(),
             "recent_agent_logs": self.agent_activity_log[-30:],
             "recent_errors": [item for item in self.agent_activity_log if item["status"] == "error"][-10:],
             "token_usage": self.llm_runtime.usage_snapshot(),
@@ -2481,6 +2853,230 @@ class WorkflowService:
             },
             "market_data_cache": self.market_data.cache_stats(),
             "llm_cache": self.llm_runtime.cache_stats(),
+        }
+
+    def _data_health_snapshot(self) -> dict:
+        latest_market = None
+        latest_intelligence = None
+        latest_financials = None
+        latest_dark_pool = None
+        latest_options = None
+        sessions_with_data = 0
+        latest_financials_provider = None
+        latest_dark_pool_provider = None
+        latest_options_provider = None
+        latest_intelligence_query = None
+        latest_market_symbol = None
+        for session in self.sessions.values():
+            has_data = False
+            if session.market_snapshots:
+                market_points = [item for item in session.market_snapshots if item.get("timestamp") or item.get("observed_at")]
+                if market_points:
+                    latest_market_item = max(market_points, key=lambda item: item.get("timestamp") or item.get("observed_at") or "")
+                    latest_market = max([latest_market, latest_market_item.get("timestamp") or latest_market_item.get("observed_at")])
+                    if latest_market_item.get("symbol"):
+                        latest_market_symbol = latest_market_item.get("symbol")
+                has_data = True
+            if session.intelligence_runs:
+                runs = [item for item in session.intelligence_runs if item.get("timestamp")]
+                if runs:
+                    latest_intelligence_item = max(runs, key=lambda item: item.get("timestamp") or "")
+                    latest_intelligence = max([latest_intelligence, latest_intelligence_item.get("timestamp")])
+                    latest_intelligence_query = latest_intelligence_item.get("query") or latest_intelligence_query
+                has_data = True
+            if session.financials_runs:
+                runs = [item for item in session.financials_runs if item.get("timestamp")]
+                if runs:
+                    latest_financials_item = max(runs, key=lambda item: item.get("timestamp") or "")
+                    latest_financials = max([latest_financials, latest_financials_item.get("timestamp")])
+                    latest_financials_provider = latest_financials_item.get("provider") or latest_financials_provider
+                has_data = True
+            if session.dark_pool_runs:
+                runs = [item for item in session.dark_pool_runs if item.get("timestamp")]
+                if runs:
+                    latest_dark_pool_item = max(runs, key=lambda item: item.get("timestamp") or "")
+                    latest_dark_pool = max([latest_dark_pool, latest_dark_pool_item.get("timestamp")])
+                    latest_dark_pool_provider = latest_dark_pool_item.get("provider") or latest_dark_pool_provider
+                has_data = True
+            if session.options_runs:
+                runs = [item for item in session.options_runs if item.get("timestamp")]
+                if runs:
+                    latest_options_item = max(runs, key=lambda item: item.get("timestamp") or "")
+                    latest_options = max([latest_options, latest_options_item.get("timestamp")])
+                    latest_options_provider = latest_options_item.get("provider") or latest_options_provider
+                has_data = True
+            if has_data:
+                sessions_with_data += 1
+        recent_data_failures = [
+            item
+            for item in self.agent_activity_log
+            if item["status"] == "error"
+            and item["operation"] in {"search_intelligence", "fetch_financials_data", "fetch_dark_pool_data", "fetch_options_data"}
+        ][-10:]
+        failure_counts: dict[str, int] = {}
+        for item in recent_data_failures:
+            operation = item["operation"]
+            failure_counts[operation] = failure_counts.get(operation, 0) + 1
+        status = "healthy"
+        note = "Recent data activity looks healthy."
+        if (
+            not latest_market
+            and not latest_intelligence
+            and not latest_financials
+            and not latest_dark_pool
+            and not latest_options
+        ):
+            status = "fragile"
+            note = "No recent market, intelligence, financials, dark-pool, or options data has been recorded."
+        elif len(recent_data_failures) >= 3:
+            status = "warning"
+            note = "Recent data fetches show repeated failures. Check providers, keys, network, or local file paths."
+        elif recent_data_failures:
+            status = "warning"
+            note = "There are recent data fetch failures, but the data layer is still partially active."
+        return {
+            "status": status,
+            "note": note,
+            "sessions_with_data": sessions_with_data,
+            "latest_market_timestamp": latest_market,
+            "latest_market_symbol": latest_market_symbol,
+            "latest_intelligence_timestamp": latest_intelligence,
+            "latest_intelligence_query": latest_intelligence_query,
+            "latest_financials_timestamp": latest_financials,
+            "latest_financials_provider": latest_financials_provider,
+            "latest_dark_pool_timestamp": latest_dark_pool,
+            "latest_dark_pool_provider": latest_dark_pool_provider,
+            "latest_options_timestamp": latest_options,
+            "latest_options_provider": latest_options_provider,
+            "recent_failure_count": len(recent_data_failures),
+            "recent_failure_operations": [item["operation"] for item in recent_data_failures],
+            "recent_failure_counts": failure_counts,
+        }
+
+    def _runtime_health_summary(self) -> dict:
+        latest_strategy_session = None
+        latest_strategy_log = None
+        latest_strategy_ts = ""
+        latest_terminal_run = None
+        latest_terminal_ts = ""
+        for session in self.sessions.values():
+            for item in session.strategy_training_log:
+                ts = item.get("timestamp") or ""
+                if ts >= latest_strategy_ts:
+                    latest_strategy_ts = ts
+                    latest_strategy_log = item
+                    latest_strategy_session = session
+            for run in session.terminal_integration_runs:
+                test = run.get("terminal_test") or {}
+                ts = test.get("timestamp") or run.get("timestamp") or ""
+                if ts >= latest_terminal_ts:
+                    latest_terminal_ts = ts
+                    latest_terminal_run = run
+
+        research_status = "warning"
+        research_note = "当前还没有足够的策略研究记录。"
+        repair_status = "warning"
+        repair_note = "当前还没有足够的修复记录。"
+        terminal_status = "warning"
+        terminal_note = "当前还没有终端测试记录。"
+        llm_status = "warning"
+        llm_note = "当前还没有 LLM 运行摘要。"
+
+        if latest_strategy_log:
+            research = latest_strategy_log.get("research_summary") or {}
+            gate = (research.get("final_release_gate_summary") or {}).get("gate_status") or "unknown"
+            robustness = (research.get("robustness_summary") or {}).get("grade") or "unknown"
+            if gate == "passed" and robustness == "strong":
+                research_status = "healthy"
+                research_note = "最新策略研究通过发布门，且稳健性较强。"
+            elif gate == "blocked" or robustness == "fragile":
+                research_status = "fragile"
+                research_note = "最新策略研究仍被发布门阻塞，或稳健性不足。"
+            else:
+                research_note = "最新策略研究已完成，但仍需继续观察 gate 与稳健性。"
+
+            if latest_strategy_session:
+                recent_logs = latest_strategy_session.strategy_training_log[-5:]
+                route_names = [((item.get("repair_route_summary") or [{}])[0] or {}).get("lane", "无") for item in recent_logs]
+                priorities = [((item.get("repair_route_summary") or [{}])[0] or {}).get("priority", "unknown") for item in recent_logs]
+                if len(recent_logs) >= 3 and len(set(route_names)) == 1 and len(set(priorities)) <= 2:
+                    repair_status = "healthy"
+                    repair_note = "最近几轮主修复路线稳定，修复目标正在收敛。"
+                elif len(set(route_names)) >= 3:
+                    repair_status = "fragile"
+                    repair_note = "最近几轮主修复路线变化较大，修复问题仍在发散。"
+                else:
+                    repair_note = "修复路线已有一定稳定性，但仍未完全收敛。"
+
+        latest_terminal_runtime = {}
+        if latest_terminal_run:
+            latest_terminal_runtime = latest_terminal_run.get("terminal_runtime_summary") or self._build_terminal_runtime_summary(latest_terminal_run)
+            terminal_status = latest_terminal_runtime.get("status") or "warning"
+            terminal_note = latest_terminal_runtime.get("note") or "终端接入已有测试记录，但仍建议继续检查返回结构和 endpoint 完整性。"
+
+        data_health = self._data_health_snapshot()
+        data_status = "healthy"
+        data_note = "最近数据层没有明显失败。"
+        if data_health.get("recent_failure_count", 0) > 0:
+            data_status = "warning"
+            data_note = "最近存在数据查询失败，建议检查 provider、网络或本地路径。"
+        if (
+            not data_health.get("latest_market_timestamp")
+            and not data_health.get("latest_intelligence_timestamp")
+            and not data_health.get("latest_financials_timestamp")
+            and not data_health.get("latest_dark_pool_timestamp")
+            and not data_health.get("latest_options_timestamp")
+        ):
+            data_status = "fragile"
+            data_note = "当前还没有任何有效数据更新记录。"
+
+        llm_description = self.llm_runtime.describe()
+        llm_tasks = llm_description.get("tasks", {})
+        fallback_tasks = [name for name, item in llm_tasks.items() if item.get("generation_mode") == "template_fallback"]
+        live_tasks = [name for name, item in llm_tasks.items() if item.get("generation_mode") == "live_llm"]
+        if not llm_description.get("enabled"):
+            llm_status = "fragile"
+            llm_note = "LLM runtime 当前被禁用，关键研究与总结任务将退回 fallback。"
+        elif live_tasks and not fallback_tasks:
+            llm_status = "healthy"
+            llm_note = "关键 LLM 任务当前都走 live provider。"
+        elif live_tasks and fallback_tasks:
+            llm_status = "warning"
+            llm_note = "当前 LLM 任务处于 live 与 fallback 混合状态，建议补齐缺失凭据。"
+        else:
+            llm_status = "fragile"
+            llm_note = "当前所有 LLM 任务都在 fallback 模式下运行。"
+
+        statuses = [research_status, repair_status, terminal_status, data_status, llm_status]
+        overall_status = "healthy"
+        overall_note = "研究、修复、终端、数据和模型层整体健康。"
+        if "fragile" in statuses:
+            overall_status = "fragile"
+            overall_note = "至少有一条关键链路处于脆弱状态，当前不适合长时间无人值守使用。"
+        elif "warning" in statuses:
+            overall_status = "warning"
+            overall_note = "整体可用，但仍有链路需要继续观察和修复。"
+
+        return {
+            "status": overall_status,
+            "note": overall_note,
+            "research": {"status": research_status, "note": research_note, "timestamp": latest_strategy_ts or None},
+            "repair": {"status": repair_status, "note": repair_note, "timestamp": latest_strategy_ts or None},
+            "terminal": {
+                "status": terminal_status,
+                "note": terminal_note,
+                "timestamp": latest_terminal_ts or None,
+                "next_action": latest_terminal_runtime.get("next_action"),
+                "primary_route": latest_terminal_runtime.get("primary_route"),
+            },
+            "data": {"status": data_status, "note": data_note},
+            "llm": {
+                "status": llm_status,
+                "note": llm_note,
+                "live_task_count": len(live_tasks),
+                "fallback_task_count": len(fallback_tasks),
+                "fallback_tasks": fallback_tasks[:8],
+            },
         }
 
     def _get_intelligence_cache(self, key: tuple) -> dict | None:

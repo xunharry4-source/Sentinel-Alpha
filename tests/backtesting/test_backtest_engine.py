@@ -50,6 +50,11 @@ def test_simple_backtest_engine_generates_split_metrics() -> None:
     assert "validation" in result
     assert "test" in result
     assert isinstance(result["walk_forward"], list)
+    assert "gross_exposure_pct" in result["test"]
+    assert "avg_daily_turnover_proxy_pct" in result["test"]
+    assert result["coverage"]["symbol_count"] == 1
+    assert result["coverage"]["total_bar_count"] == len(bars)
+    assert result["coverage"]["walk_forward_window_count"] == 1
 
 
 def test_simple_backtest_engine_supports_multi_asset_with_costs() -> None:
@@ -117,3 +122,7 @@ def test_simple_backtest_engine_supports_multi_asset_with_costs() -> None:
 
     assert result is not None
     assert result["test"]["expected_return_pct"] != 0
+    assert result["test"]["active_symbol_count"] == 2
+    assert result["test"]["avg_daily_turnover_proxy_pct"] >= 0
+    assert result["coverage"]["symbol_count"] == 2
+    assert result["coverage"]["split_bar_counts"]["test"]["symbol_count"] == 2
