@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>配置管理 | Sentinel-Alpha</title>
+  <link rel="stylesheet" href="../styles.css" />
+</head>
+<body>
+  <main class="page-shell">
+    <section data-shell="summary"></section>
+    <nav class="shell-nav" data-shell="nav"></nav>
+
+    <section class="panel">
+      <p class="eyebrow">Configuration</p>
+      <h1>配置管理与自动测试</h1>
+      <p class="profiler-note" id="config-note">加载当前配置中。</p>
+    </section>
+
+    <section class="panel">
+      <p class="eyebrow">Provider Defaults</p>
+      <div class="trade-config">
+        <label class="config-field">
+          <span>行情默认 Provider</span>
+          <input id="cfg-market-default" type="text" value="" />
+        </label>
+        <label class="config-field">
+          <span>财报默认 Provider</span>
+          <input id="cfg-fundamentals-default" type="text" value="" />
+        </label>
+        <label class="config-field">
+          <span>暗池默认 Provider</span>
+          <input id="cfg-dark-pool-default" type="text" value="" />
+        </label>
+        <label class="config-field">
+          <span>期权默认 Provider</span>
+          <input id="cfg-options-default" type="text" value="" />
+        </label>
+      </div>
+      <p class="eyebrow">Local File Paths</p>
+      <div class="trade-config">
+        <label class="config-field">
+          <span>行情本地目录</span>
+          <input id="cfg-market-local-path" type="text" value="" />
+        </label>
+        <label class="config-field">
+          <span>财报本地目录</span>
+          <input id="cfg-fundamentals-local-path" type="text" value="" />
+        </label>
+        <label class="config-field">
+          <span>暗池本地目录</span>
+          <input id="cfg-dark-pool-local-path" type="text" value="" />
+        </label>
+        <label class="config-field">
+          <span>期权本地目录</span>
+          <input id="cfg-options-local-path" type="text" value="" />
+        </label>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="button-row">
+        <button id="reload-config">重新加载配置</button>
+        <button id="save-config">保存并自动测试</button>
+        <button id="test-config">仅测试当前配置</button>
+      </div>
+      <label for="config-editor" class="eyebrow">配置 Payload(JSON)</label>
+      <textarea id="config-editor" class="config-editor" spellcheck="false"></textarea>
+    </section>
+
+    <section class="panel">
+      <p class="eyebrow">Single Checks</p>
+      <h2>单项测试</h2>
+      <div class="button-row">
+        <button id="test-sec-provider">只测 SEC</button>
+        <button id="test-finra-provider">只测 FINRA</button>
+        <button id="test-yahoo-options-provider">只测 Yahoo Options</button>
+      </div>
+      <ul id="config-single-test-results" class="result-list">
+        <li>等待单项测试。</li>
+      </ul>
+    </section>
+
+    <section class="panel">
+      <p class="eyebrow">Generated Source Candidates</p>
+      <h2>数据源扩充候选项</h2>
+      <p class="profiler-note">这里会自动展示“数据源扩充页”生成的适配器候选，可一键挂入配置，或直接设为该分类默认 Provider。</p>
+      <div id="config-generated-candidates" class="candidate-grid">
+        <article class="candidate-card">
+          <strong>当前还没有候选项。</strong>
+          <p>请先到数据源扩充页生成至少一个适配器方案。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="two-column-grid">
+      <section class="panel">
+        <p class="eyebrow">Validation Summary</p>
+        <ul id="config-validation-summary" class="result-list">
+          <li>等待配置测试。</li>
+        </ul>
+      </section>
+      <section class="panel">
+        <p class="eyebrow">Validation Checks</p>
+        <ul id="config-validation-checks" class="result-list">
+          <li>等待配置测试。</li>
+        </ul>
+      </section>
+    </section>
+  </main>
+  <script src="../session-shell.js"></script>
+  <script src="../page-configuration.js"></script>
+</body>
+</html>

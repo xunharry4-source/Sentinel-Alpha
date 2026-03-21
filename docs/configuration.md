@@ -1,5 +1,11 @@
 # Configuration
 
+## License
+
+The project and its configuration artifacts are distributed under the Apache License 2.0.
+
+- [LICENSE](/Users/harry/Documents/git/Sentinel-Alpha/LICENSE)
+
 Sentinel-Alpha must not rely on hardcoded runtime endpoints or storage addresses inside business logic.
 
 ## Canonical Config Sources
@@ -24,6 +30,10 @@ Sentinel-Alpha must not rely on hardcoded runtime endpoints or storage addresses
 - intelligence search enablement
 - intelligence RSS search templates
 - intelligence fetch timeout and max document count
+- market-data default provider
+- market-data enabled free providers
+- market-data request timeout
+- provider-specific API key env names and base URLs
 - LLM global enablement
 - default LLM provider/model/temperature/max tokens
 - provider credential env names
@@ -75,6 +85,47 @@ Environment variables may override storage secrets when needed:
 - `SENTINEL_GRAFANA_URL`
 
 These overrides are the expected deployment path for Docker and other container runtimes.
+
+Market-data providers currently supported by config are:
+
+- `yahoo`
+- `alphavantage`
+- `finnhub`
+- `akshare`
+- `local_file`
+
+Fundamentals providers:
+
+- `sec`
+- `alphavantage`
+- `finnhub`
+- `local_file`
+
+Dark-pool providers:
+
+- `finra`
+- `local_file`
+
+Options providers:
+
+- `yahoo_options`
+- `finnhub`
+- `local_file`
+
+`local_file` provider defaults:
+
+- `base_path = "data/local_market_data"`
+- `quote_filename = "{symbol}_quote.json"`
+- `history_filename = "{symbol}_{interval}.csv"`
+
+Expected local history CSV columns:
+
+- `timestamp`
+- `open`
+- `high`
+- `low`
+- `close`
+- `volume`
 
 ## Frontend Config
 

@@ -104,6 +104,7 @@
         </div>
         <p class="profiler-note" id="strategy-recommendation-note">完成模拟测试后，这里会给出默认策略类型推荐。</p>
         <p class="profiler-note" id="strategy-note">每个策略版本都会自动经过 Integrity 与 Stress/Overfit 检查。</p>
+        <p class="profiler-note" id="strategy-performance-note">当前还没有增量训练性能信息。</p>
       </article>
       <article class="panel">
         <p class="eyebrow">Package</p>
@@ -127,11 +128,69 @@
         </ul>
       </article>
       <article class="panel">
+        <p class="eyebrow">Features</p>
+        <h3>训练特征快照</h3>
+        <ul id="strategy-feature-list" class="result-list">
+          <li>还没有训练特征。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Input Manifest</p>
+        <h3>训练输入说明</h3>
+        <ul id="strategy-input-manifest-list" class="result-list">
+          <li>还没有训练输入说明。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Data Bundles</p>
+        <h3>输入数据包注册表</h3>
+        <ul id="strategy-data-bundles-list" class="result-list">
+          <li>还没有输入数据包记录。</li>
+        </ul>
+      </article>
+      <article class="panel">
         <p class="eyebrow">Compare</p>
         <h3>基准与双方案对比</h3>
         <div id="strategy-variant-grid" class="check-grid">
           <article class="check-card"><strong>还没有方案对比。</strong><p>完成一轮策略训练后，这里会显示 baseline 与两个方案的结果。</p></article>
         </div>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">LLM Routing</p>
+        <h3>模型矩阵</h3>
+        <section id="strategy-model-grid" class="check-grid">
+          <article class="check-card"><strong>还没有模型路由信息。</strong></article>
+        </section>
+        <ul id="strategy-model-list" class="result-list">
+          <li>还没有模型路由信息。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Token Usage</p>
+        <h3>本轮 LLM 消耗</h3>
+        <section id="strategy-token-grid" class="check-grid">
+          <article class="check-card"><strong>还没有 token 使用信息。</strong></article>
+        </section>
+        <ul id="strategy-token-list" class="result-list">
+          <li>还没有 token 使用信息。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Backtest</p>
+        <h3>回测与分段评估</h3>
+        <ul id="strategy-backtest-list" class="result-list">
+          <li>还没有回测结果。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Walk Forward</p>
+        <h3>滚动窗口结果</h3>
+        <section id="strategy-walkforward-grid" class="check-grid">
+          <article class="check-card"><strong>还没有 walk-forward 热力视图。</strong></article>
+        </section>
+        <ul id="strategy-walkforward-list" class="result-list">
+          <li>还没有 walk-forward 结果。</li>
+        </ul>
       </article>
       <article class="panel">
         <p class="eyebrow">Code</p>
@@ -164,6 +223,42 @@
           <li>还没有 Programmer Agent 记录。</li>
         </ul>
         <pre id="programmer-diff-panel" class="json-panel">还没有代码差异。</pre>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Programmer Stats</p>
+        <h3>失败类型统计</h3>
+        <section id="programmer-stats-grid" class="check-grid">
+          <article class="check-card"><strong>还没有 Programmer Agent 趋势视图。</strong></article>
+        </section>
+        <ul id="programmer-stats-list" class="result-list">
+          <li>还没有 Programmer Agent 统计。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Programmer Trend</p>
+        <h3>失败趋势</h3>
+        <div class="trade-config">
+          <label class="config-field">
+            <span>过滤类型</span>
+            <select id="programmer-trend-filter">
+              <option value="all">全部</option>
+              <option value="success">success</option>
+              <option value="compile_failure">compile_failure</option>
+              <option value="test_failure">test_failure</option>
+              <option value="execution_failure">execution_failure</option>
+              <option value="validation_failure">validation_failure</option>
+              <option value="commit_failure">commit_failure</option>
+              <option value="disabled">disabled</option>
+              <option value="misconfigured">misconfigured</option>
+            </select>
+          </label>
+        </div>
+        <section id="programmer-trend-grid" class="check-grid">
+          <article class="check-card"><strong>还没有 Programmer Agent 趋势时间线。</strong></article>
+        </section>
+        <ul id="programmer-trend-list" class="result-list">
+          <li>还没有 Programmer Agent 趋势时间线。</li>
+        </ul>
       </article>
       <article class="panel">
         <p class="eyebrow">Checks</p>

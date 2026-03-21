@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>交易终端接入 | Sentinel-Alpha</title>
+  <link rel="stylesheet" href="../styles.css" />
+</head>
+<body>
+  <main class="page-shell">
+    <section data-shell="summary"></section>
+    <nav class="shell-nav" data-shell="nav"></nav>
+
+    <section class="panel">
+      <p class="eyebrow">Trading Terminal Integration</p>
+      <h1>交易终端接入与代码生成</h1>
+      <p class="profiler-note" id="terminal-note">填写你使用的交易终端、官方文档地址、鉴权方式和下单接口信息，系统会抓取文档上下文、生成适配器代码和测试代码，并可一键交给 Programmer Agent 落文件。</p>
+    </section>
+
+    <section class="panel">
+      <p class="eyebrow">Terminal Form</p>
+      <div class="trade-config">
+        <label class="config-field">
+          <span>终端名称</span>
+          <input id="terminal-name" type="text" value="ExampleBroker" />
+        </label>
+        <label class="config-field">
+          <span>终端类型</span>
+          <select id="terminal-type">
+            <option value="broker_api">broker_api</option>
+            <option value="desktop_terminal">desktop_terminal</option>
+            <option value="rest_gateway">rest_gateway</option>
+            <option value="fix_gateway">fix_gateway</option>
+            <option value="local_sdk">local_sdk</option>
+          </select>
+        </label>
+        <label class="config-field">
+          <span>官方文档 URL</span>
+          <input id="terminal-docs-url" type="text" value="https://example.com/docs/api" />
+        </label>
+        <label class="config-field">
+          <span>文档搜索 URL</span>
+          <input id="terminal-search-url" type="text" value="https://example.com/docs/search?q=order+api" />
+        </label>
+      </div>
+      <div class="trade-config">
+        <label class="config-field">
+          <span>API Base URL</span>
+          <input id="terminal-base-url" type="text" value="https://api.example.com" />
+        </label>
+        <label class="config-field">
+          <span>API Key 环境变量</span>
+          <input id="terminal-api-key-env" type="text" value="EXAMPLE_BROKER_KEY" />
+        </label>
+        <label class="config-field">
+          <span>鉴权方式</span>
+          <select id="terminal-auth-style">
+            <option value="header">header</option>
+            <option value="query">query</option>
+            <option value="bearer">bearer</option>
+          </select>
+        </label>
+      </div>
+      <div class="trade-config">
+        <label class="config-field">
+          <span>下单 Endpoint</span>
+          <input id="terminal-order-endpoint" type="text" value="orders/place" />
+        </label>
+        <label class="config-field">
+          <span>撤单 Endpoint</span>
+          <input id="terminal-cancel-endpoint" type="text" value="orders/cancel" />
+        </label>
+        <label class="config-field">
+          <span>持仓 Endpoint</span>
+          <input id="terminal-positions-endpoint" type="text" value="portfolio/positions" />
+        </label>
+      </div>
+      <label class="config-field">
+        <span>接口/文档摘要</span>
+        <textarea id="terminal-docs-summary" class="config-editor compact-editor" spellcheck="false">REST trading API with endpoints for place order, cancel order, and fetch positions. Uses limit orders and account-level authentication.</textarea>
+      </label>
+      <label class="config-field">
+        <span>用户补充信息</span>
+        <textarea id="terminal-user-notes" class="config-editor compact-editor" spellcheck="false">我主要需要限价单、撤单、持仓同步和订单状态查询。</textarea>
+      </label>
+      <div class="button-row">
+        <button id="generate-terminal">生成终端接入方案</button>
+        <button id="apply-terminal">交给 Programmer Agent 写入真实文件</button>
+      </div>
+    </section>
+
+    <section class="two-column-grid">
+      <section class="panel">
+        <p class="eyebrow">Run Selection</p>
+        <label class="config-field">
+          <span>选择生成记录</span>
+          <select id="terminal-run-select"></select>
+        </label>
+        <ul id="terminal-validation" class="result-list">
+          <li>等待生成终端接入方案。</li>
+        </ul>
+      </section>
+      <section class="panel">
+        <p class="eyebrow">Docs Context</p>
+        <ul id="terminal-docs-context" class="result-list">
+          <li>等待抓取官方文档上下文。</li>
+        </ul>
+      </section>
+    </section>
+
+    <section class="grid two-up">
+      <section class="panel">
+        <p class="eyebrow">Generated Adapter Code</p>
+        <pre id="terminal-module-code" class="code-block">等待生成终端适配器代码。</pre>
+      </section>
+      <section class="panel">
+        <p class="eyebrow">Generated Test Code</p>
+        <pre id="terminal-test-code" class="code-block">等待生成终端测试代码。</pre>
+      </section>
+    </section>
+
+    <section class="grid two-up">
+      <section class="panel">
+        <p class="eyebrow">Config Candidate</p>
+        <pre id="terminal-config-candidate" class="code-block">等待生成配置候选。</pre>
+      </section>
+      <section class="panel">
+        <p class="eyebrow">Diff / Commit</p>
+        <pre id="terminal-diff" class="code-block">等待 Programmer Agent 运行结果。</pre>
+      </section>
+    </section>
+
+    <section class="panel">
+      <p class="eyebrow">History</p>
+      <ul id="terminal-run-list" class="result-list">
+        <li>当前还没有交易终端接入历史。</li>
+      </ul>
+    </section>
+  </main>
+  <script src="../session-shell.js"></script>
+  <script src="../page-terminal-integration.js"></script>
+</body>
+</html>

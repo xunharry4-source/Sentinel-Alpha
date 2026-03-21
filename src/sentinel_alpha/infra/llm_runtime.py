@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from copy import deepcopy
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 
@@ -29,6 +30,9 @@ class LLMRuntime:
         self.settings = settings or get_settings()
         self.usage_totals: dict[str, dict[str, object]] = {}
         self.recent_calls: list[dict[str, object]] = []
+        self._result_cache: dict[tuple, dict] = {}
+        self._cache_hits = 0
+        self._cache_misses = 0
         self.langfuse = self._build_langfuse_client()
 
     def agent_profile(self, agent: str) -> AgentLLMProfile:
@@ -133,6 +137,16 @@ class LLMRuntime:
         return {
             "totals": self.usage_totals,
             "recent_calls": self.recent_calls[-20:],
+            "cache": self.cache_stats(),
+        }
+
+    def cache_stats(self) -> dict[str, int | bool]:
+        return {
+            "enabled": self.settings.performance_enabled,
+            "entries": len(self._result_cache),
+            "max_entries": self.settings.performance_llm_cache_size,
+            "hits": self._cache_hits,
+            "misses": self._cache_misses,
         }
 
     def generate_strategy_code(
@@ -146,6 +160,23 @@ class LLMRuntime:
         analysis_profile = self.task_profile("strategy_analysis", fallback_agent="strategy_evolver")
         codegen_profile = self.task_profile("strategy_codegen", fallback_agent="strategy_evolver")
         critic_profile = self.task_profile("strategy_critic", fallback_agent="strategy_integrity_checker")
+        cache_key = (
+            "strategy_codegen",
+            strategy_type,
+            tuple(selected_universe),
+            repr(candidate_payload),
+            feedback or "",
+            analysis_profile.provider,
+            analysis_profile.model,
+            codegen_profile.provider,
+            codegen_profile.model,
+            critic_profile.provider,
+            critic_profile.model,
+        )
+        cached = self._cache_get(cache_key)
+        if cached is not None:
+            self._record_cache_hit("strategy_codegen", codegen_profile)
+            return cached
         symbols = ", ".join(selected_universe)
         signals = candidate_payload.get("signals", [])
         parameters = candidate_payload.get("parameters", {})
@@ -177,7 +208,7 @@ class LLMRuntime:
         self._record_usage("strategy_analysis", analysis_profile, prompt_basis, str(candidate_payload))
         self._record_usage("strategy_codegen", codegen_profile, prompt_basis, code)
         self._record_usage("strategy_critic", critic_profile, code, "strategy code reviewed")
-        return {
+        result = {
             "profile": {
                 "agent": asdict(profile),
                 "analysis": asdict(analysis_profile),
@@ -191,9 +222,15 @@ class LLMRuntime:
                 f"critic={critic_profile.provider}/{critic_profile.model}."
             ),
         }
+        return self._cache_set(cache_key, result)
 
     def summarize_intelligence(self, query: str, documents: list[dict]) -> dict:
         profile = self.task_profile("market_summarization", fallback_agent="intelligence_agent")
+        cache_key = ("market_summarization", query, repr(documents), profile.provider, profile.model)
+        cached = self._cache_get(cache_key)
+        if cached is not None:
+            self._record_cache_hit("market_summarization", profile)
+            return cached
         source_urls = [item.get("url", "") for item in documents if item.get("url")]
         titles = [item.get("title", "untitled") for item in documents[:5]]
         positive_count = sum(1 for item in documents if float(item.get("sentiment_hint", 0.0)) > 0.15)
@@ -222,7 +259,7 @@ class LLMRuntime:
             f" 主要来源聚焦于 {', '.join(sorted({item.get('source', 'unknown') for item in documents[:4]})) or 'unknown'}。"
         )
         self._record_usage("market_summarization", profile, f"{query}|{documents}", summary_text)
-        return {
+        result = {
             "query": query,
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "document_count": len(documents),
@@ -235,6 +272,7 @@ class LLMRuntime:
             "source_urls": source_urls,
             "profile": asdict(profile),
         }
+        return self._cache_set(cache_key, result)
 
     def _record_usage(self, task: str, profile: AgentLLMProfile, prompt_text: str, output_text: str) -> None:
         input_tokens = self._estimate_tokens(prompt_text)
@@ -270,6 +308,46 @@ class LLMRuntime:
         )
         self.recent_calls = self.recent_calls[-50:]
         self._trace_to_langfuse(task, profile, prompt_text, output_text, input_tokens, output_tokens)
+
+    def _record_cache_hit(self, task: str, profile: AgentLLMProfile) -> None:
+        key = f"{task}:{profile.provider}:{profile.model}"
+        bucket = self.usage_totals.setdefault(
+            key,
+            {
+                "task": task,
+                "provider": profile.provider,
+                "model": profile.model,
+                "generation_mode": profile.generation_mode,
+                "calls": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_hits": 0,
+                "last_called_at": None,
+            },
+        )
+        bucket["cache_hits"] = int(bucket.get("cache_hits", 0)) + 1
+        bucket["last_called_at"] = datetime.now(timezone.utc).isoformat()
+
+    def _cache_get(self, key: tuple) -> dict | None:
+        if not self.settings.performance_enabled:
+            return None
+        cached = self._result_cache.get(key)
+        if cached is not None:
+            self._cache_hits += 1
+            return deepcopy(cached)
+        self._cache_misses += 1
+        return None
+
+    def _cache_set(self, key: tuple, value: dict) -> dict:
+        if self.settings.performance_enabled:
+            self._result_cache[key] = deepcopy(value)
+            self._trim_cache()
+        return deepcopy(value)
+
+    def _trim_cache(self) -> None:
+        while len(self._result_cache) > self.settings.performance_llm_cache_size:
+            first_key = next(iter(self._result_cache))
+            self._result_cache.pop(first_key, None)
 
     def _estimate_tokens(self, text: object) -> int:
         raw = str(text or "")

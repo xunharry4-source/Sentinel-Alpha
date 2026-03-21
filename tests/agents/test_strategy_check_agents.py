@@ -23,7 +23,21 @@ def test_strategy_integrity_checker_rejects_future_leakage() -> None:
 def test_strategy_stress_checker_rejects_fragile_candidates() -> None:
     agent = StrategyStressCheckerAgent()
     result = agent.evaluate(
-        {"selected_universe": ["AAPL"], "strategy_type": "mean_reversion_aligned"},
+        {
+            "selected_universe": ["AAPL"],
+            "strategy_type": "mean_reversion_aligned",
+            "recommended_variant": {
+                "evaluation": {
+                    "dataset_evaluation": {
+                        "train": {"objective_score": 0.93},
+                        "validation": {"objective_score": 0.52},
+                        "test": {"objective_score": 0.44},
+                        "walk_forward": [{"objective_score": 0.5}, {"objective_score": 0.48}],
+                        "stability": {"score": 0.41, "walk_forward_score": 0.49, "train_test_gap": 0.49},
+                    }
+                }
+            },
+        },
         {
             "strategy_type": "mean_reversion_aligned",
             "parameters": {
@@ -45,3 +59,5 @@ def test_strategy_stress_checker_rejects_fragile_candidates() -> None:
 
     assert result["status"] == "fail"
     assert "too_small_trade_universe" in result["flags"]
+    assert "out_of_sample_score_too_low" in result["flags"]
+    assert "walk_forward_instability" in result["flags"]

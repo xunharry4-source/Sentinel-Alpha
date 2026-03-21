@@ -55,6 +55,10 @@ def test_strategy_evolver_agent_builds_candidate_and_brief() -> None:
         selected_universe=["TSLA", "NVDA", "QQQ"],
         feedback="Reduce concentration",
         strategy_type="trend_following_aligned",
+        features={
+            "intelligence": {"factors": {"contradiction_score": 0.2}},
+            "dark_pool": {"factors": {"accumulation_score": 0.7}},
+        },
     )
 
     assert policy.max_position_pct > 0
@@ -62,3 +66,4 @@ def test_strategy_evolver_agent_builds_candidate_and_brief() -> None:
     assert candidate.strategy_type == "trend_following_aligned"
     assert candidate.version
     assert candidate.parameters
+    assert candidate.metadata["feature_bundle"] == "enabled"

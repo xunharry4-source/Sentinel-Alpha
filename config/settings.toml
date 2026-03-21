@@ -22,6 +22,12 @@ qdrant_collection = "behavior_memory"
 minimum_universe_size = 5
 health_retry_ms = 5000
 
+[performance]
+enabled = true
+market_data_cache_size = 128
+llm_cache_size = 64
+dataset_plan_cache_size = 16
+
 [monitoring]
 user_monitor_enabled = true
 strategy_monitor_enabled = true
@@ -31,10 +37,111 @@ market_monitor_enabled = true
 enabled = true
 max_documents = 6
 request_timeout_seconds = 8
-rss_search_templates = [
-  "https://news.google.com/rss/search?q={query}",
-  "https://feeds.finance.yahoo.com/rss/2.0/headline?s={query}&region=US&lang=en-US"
-]
+rss_search_templates = ["https://news.google.com/rss/search?q={query}", "https://feeds.finance.yahoo.com/rss/2.0/headline?s={query}&region=US&lang=en-US"]
+
+[market_data]
+default_provider = "yahoo"
+enabled_providers = ["yahoo", "alphavantage", "finnhub", "akshare", "local_file"]
+request_timeout_seconds = 10
+
+[market_data.providers]
+[market_data.providers.yahoo]
+enabled = true
+api_key_env = ""
+base_url = "https://query1.finance.yahoo.com"
+
+[market_data.providers.alphavantage]
+enabled = true
+api_key_env = "ALPHAVANTAGE_API_KEY"
+base_url = "https://www.alphavantage.co"
+
+[market_data.providers.finnhub]
+enabled = true
+api_key_env = "FINNHUB_API_KEY"
+base_url = "https://finnhub.io/api/v1"
+
+[market_data.providers.akshare]
+enabled = true
+api_key_env = ""
+base_url = ""
+
+[market_data.providers.local_file]
+enabled = true
+api_key_env = ""
+base_path = "data/local_market_data"
+quote_filename = "{symbol}_quote.json"
+history_filename = "{symbol}_{interval}.csv"
+
+[fundamentals]
+default_provider = "sec"
+enabled_providers = ["sec", "alphavantage", "finnhub", "local_file"]
+request_timeout_seconds = 12
+
+[fundamentals.providers]
+[fundamentals.providers.sec]
+enabled = true
+api_key_env = ""
+base_url = "https://data.sec.gov"
+submissions_base_url = "https://data.sec.gov/submissions"
+companyfacts_base_url = "https://data.sec.gov/api/xbrl/companyfacts"
+company_tickers_url = "https://www.sec.gov/files/company_tickers.json"
+user_agent = "Sentinel-Alpha/0.1 support@sentinel-alpha.local"
+
+[fundamentals.providers.alphavantage]
+enabled = true
+api_key_env = "ALPHAVANTAGE_API_KEY"
+base_url = "https://www.alphavantage.co"
+
+[fundamentals.providers.finnhub]
+enabled = true
+api_key_env = "FINNHUB_API_KEY"
+base_url = "https://finnhub.io/api/v1"
+
+[fundamentals.providers.local_file]
+enabled = true
+api_key_env = ""
+base_path = "data/local_market_data"
+financials_filename = "{symbol}_financials.json"
+
+[dark_pool]
+default_provider = "finra"
+enabled_providers = ["finra", "local_file"]
+request_timeout_seconds = 12
+
+[dark_pool.providers]
+[dark_pool.providers.finra]
+enabled = true
+api_key_env = ""
+base_url = "https://api.finra.org"
+dataset = "otcmarket/weeklySummary"
+
+[dark_pool.providers.local_file]
+enabled = true
+api_key_env = ""
+base_path = "data/local_market_data"
+dark_pool_filename = "{symbol}_dark_pool.json"
+
+[options_data]
+default_provider = "yahoo_options"
+enabled_providers = ["yahoo_options", "finnhub", "local_file"]
+request_timeout_seconds = 12
+
+[options_data.providers]
+[options_data.providers.yahoo_options]
+enabled = true
+api_key_env = ""
+base_url = "https://query2.finance.yahoo.com"
+
+[options_data.providers.finnhub]
+enabled = true
+api_key_env = "FINNHUB_API_KEY"
+base_url = "https://finnhub.io/api/v1"
+
+[options_data.providers.local_file]
+enabled = true
+api_key_env = ""
+base_path = "data/local_market_data"
+options_filename = "{symbol}_options.json"
 
 [llm]
 enabled = false
@@ -43,6 +150,7 @@ default_model = "gpt-4.1-mini"
 default_temperature = 0.2
 default_max_tokens = 1200
 
+[llm.providers]
 [llm.providers.openai]
 api_key_env = "OPENAI_API_KEY"
 base_url_env = "OPENAI_BASE_URL"
@@ -55,6 +163,7 @@ base_url_env = "ANTHROPIC_BASE_URL"
 api_key_env = "GOOGLE_API_KEY"
 base_url_env = "GOOGLE_API_BASE"
 
+[llm.agents]
 [llm.agents.intent_aligner]
 provider = "openai"
 model = "gpt-4.1-mini"
@@ -103,6 +212,7 @@ model = "gpt-4.1-mini"
 temperature = 0.0
 max_tokens = 1400
 
+[llm.tasks]
 [llm.tasks.intent_translation]
 provider = "openai"
 model = "gpt-4.1-mini"
@@ -150,10 +260,12 @@ enabled = false
 command = "aider"
 args = ["--yes-always"]
 repo_path = "/Users/harry/Documents/git/Sentinel-Alpha"
-allowed_paths = ["src/sentinel_alpha/strategies", "tests", "scripts"]
+allowed_paths = ["src/sentinel_alpha/strategies", "src/sentinel_alpha/infra/generated_sources", "src/sentinel_alpha/infra/generated_terminals", "tests", "scripts"]
 auto_commit = true
 timeout_seconds = 180
+retry_attempts = 3
 
+[observability]
 [observability.prometheus]
 enabled = true
 metrics_path = "/metrics"

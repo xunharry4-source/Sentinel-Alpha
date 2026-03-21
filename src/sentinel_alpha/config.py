@@ -24,10 +24,30 @@ class AppSettings:
     qdrant_collection: str
     minimum_universe_size: int
     health_retry_ms: int
+    performance_enabled: bool
+    performance_market_data_cache_size: int
+    performance_llm_cache_size: int
+    performance_dataset_plan_cache_size: int
     intelligence_enabled: bool
     intelligence_max_documents: int
     intelligence_request_timeout_seconds: int
     intelligence_rss_search_templates: list[str]
+    market_data_default_provider: str
+    market_data_enabled_providers: list[str]
+    market_data_request_timeout_seconds: int
+    market_data_provider_configs: dict[str, dict[str, str | bool]]
+    fundamentals_default_provider: str
+    fundamentals_enabled_providers: list[str]
+    fundamentals_request_timeout_seconds: int
+    fundamentals_provider_configs: dict[str, dict[str, str | bool]]
+    dark_pool_default_provider: str
+    dark_pool_enabled_providers: list[str]
+    dark_pool_request_timeout_seconds: int
+    dark_pool_provider_configs: dict[str, dict[str, str | bool]]
+    options_default_provider: str
+    options_enabled_providers: list[str]
+    options_request_timeout_seconds: int
+    options_provider_configs: dict[str, dict[str, str | bool]]
     llm_enabled: bool
     llm_default_provider: str
     llm_default_model: str
@@ -43,6 +63,7 @@ class AppSettings:
     programmer_agent_allowed_paths: list[str]
     programmer_agent_auto_commit: bool
     programmer_agent_timeout_seconds: int
+    programmer_agent_retry_attempts: int
     prometheus_enabled: bool
     prometheus_metrics_path: str
     sentry_enabled: bool
@@ -150,7 +171,12 @@ def get_settings() -> AppSettings:
     frontend = payload.get("frontend", {})
     storage = payload.get("storage", {})
     behavior = payload.get("behavior", {})
+    performance = payload.get("performance", {})
     intelligence = payload.get("intelligence", {})
+    market_data = payload.get("market_data", {})
+    fundamentals = payload.get("fundamentals", {})
+    dark_pool = payload.get("dark_pool", {})
+    options_data = payload.get("options_data", {})
     llm = payload.get("llm", {})
     programmer_agent = payload.get("programmer_agent", {})
     observability = payload.get("observability", {})
@@ -161,6 +187,10 @@ def get_settings() -> AppSettings:
     llm_providers = llm.get("providers", {})
     llm_agents = llm.get("agents", {})
     llm_tasks = llm.get("tasks", {})
+    market_data_providers = market_data.get("providers", {})
+    fundamentals_providers = fundamentals.get("providers", {})
+    dark_pool_providers = dark_pool.get("providers", {})
+    options_providers = options_data.get("providers", {})
 
     return AppSettings(
         app_name=str(_required(app, "name")),
@@ -177,10 +207,30 @@ def get_settings() -> AppSettings:
         qdrant_collection=os.getenv("SENTINEL_QDRANT_COLLECTION", str(_required(storage, "qdrant_collection"))),
         minimum_universe_size=int(_required(behavior, "minimum_universe_size")),
         health_retry_ms=int(_required(behavior, "health_retry_ms")),
+        performance_enabled=_env_bool("SENTINEL_PERFORMANCE_ENABLED", bool(performance.get("enabled", True))),
+        performance_market_data_cache_size=int(os.getenv("SENTINEL_MARKET_DATA_CACHE_SIZE", str(performance.get("market_data_cache_size", 128)))),
+        performance_llm_cache_size=int(os.getenv("SENTINEL_LLM_CACHE_SIZE", str(performance.get("llm_cache_size", 64)))),
+        performance_dataset_plan_cache_size=int(os.getenv("SENTINEL_DATASET_PLAN_CACHE_SIZE", str(performance.get("dataset_plan_cache_size", 16)))),
         intelligence_enabled=bool(_required(intelligence, "enabled")),
         intelligence_max_documents=int(_required(intelligence, "max_documents")),
         intelligence_request_timeout_seconds=int(_required(intelligence, "request_timeout_seconds")),
         intelligence_rss_search_templates=list(_required(intelligence, "rss_search_templates")),
+        market_data_default_provider=str(_required(market_data, "default_provider")),
+        market_data_enabled_providers=list(_required(market_data, "enabled_providers")),
+        market_data_request_timeout_seconds=int(_required(market_data, "request_timeout_seconds")),
+        market_data_provider_configs={str(name): dict(config) for name, config in market_data_providers.items()},
+        fundamentals_default_provider=str(_required(fundamentals, "default_provider")),
+        fundamentals_enabled_providers=list(_required(fundamentals, "enabled_providers")),
+        fundamentals_request_timeout_seconds=int(_required(fundamentals, "request_timeout_seconds")),
+        fundamentals_provider_configs={str(name): dict(config) for name, config in fundamentals_providers.items()},
+        dark_pool_default_provider=str(_required(dark_pool, "default_provider")),
+        dark_pool_enabled_providers=list(_required(dark_pool, "enabled_providers")),
+        dark_pool_request_timeout_seconds=int(_required(dark_pool, "request_timeout_seconds")),
+        dark_pool_provider_configs={str(name): dict(config) for name, config in dark_pool_providers.items()},
+        options_default_provider=str(_required(options_data, "default_provider")),
+        options_enabled_providers=list(_required(options_data, "enabled_providers")),
+        options_request_timeout_seconds=int(_required(options_data, "request_timeout_seconds")),
+        options_provider_configs={str(name): dict(config) for name, config in options_providers.items()},
         llm_enabled=_env_bool("SENTINEL_LLM_ENABLED", bool(llm.get("enabled", False))),
         llm_default_provider=os.getenv("SENTINEL_LLM_DEFAULT_PROVIDER", str(llm.get("default_provider", "openai"))),
         llm_default_model=os.getenv("SENTINEL_LLM_DEFAULT_MODEL", str(llm.get("default_model", "gpt-4.1-mini"))),
@@ -193,9 +243,10 @@ def get_settings() -> AppSettings:
         programmer_agent_command=os.getenv("SENTINEL_PROGRAMMER_AGENT_COMMAND", str(programmer_agent.get("command", "aider"))),
         programmer_agent_args=list(programmer_agent.get("args", ["--yes-always"])),
         programmer_agent_repo_path=os.getenv("SENTINEL_PROGRAMMER_AGENT_REPO_PATH", str(programmer_agent.get("repo_path", str(_repo_root())))),
-        programmer_agent_allowed_paths=list(programmer_agent.get("allowed_paths", ["src/sentinel_alpha/strategies", "tests", "scripts"])),
+        programmer_agent_allowed_paths=list(programmer_agent.get("allowed_paths", ["src/sentinel_alpha/strategies", "src/sentinel_alpha/infra/generated_sources", "src/sentinel_alpha/infra/generated_terminals", "tests", "scripts"])),
         programmer_agent_auto_commit=_env_bool("SENTINEL_PROGRAMMER_AGENT_AUTO_COMMIT", bool(programmer_agent.get("auto_commit", True))),
         programmer_agent_timeout_seconds=int(os.getenv("SENTINEL_PROGRAMMER_AGENT_TIMEOUT_SECONDS", str(programmer_agent.get("timeout_seconds", 180)))),
+        programmer_agent_retry_attempts=int(os.getenv("SENTINEL_PROGRAMMER_AGENT_RETRY_ATTEMPTS", str(programmer_agent.get("retry_attempts", 3)))),
         prometheus_enabled=_env_bool("SENTINEL_PROMETHEUS_ENABLED", bool(prometheus.get("enabled", True))),
         prometheus_metrics_path=os.getenv("SENTINEL_PROMETHEUS_METRICS_PATH", str(prometheus.get("metrics_path", "/metrics"))),
         sentry_enabled=_env_bool("SENTINEL_SENTRY_ENABLED", bool(sentry.get("enabled", False))),

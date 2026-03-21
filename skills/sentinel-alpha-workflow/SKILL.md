@@ -79,6 +79,19 @@ Required rule:
   - recent errors
   - token usage summary
 
+Production observability rule:
+
+- observability is not complete until users can locate failures across:
+  - API
+  - database
+  - provider
+  - agent
+  - code-mutation task
+  - order execution
+  - token and model usage
+- monitoring work is incomplete if the user still cannot tell which layer failed and why
+- production observability should include dashboards, alerting, tracing, and operator diagnosis paths
+
 ## Web Module Rule
 
 The frontend must live inside a dedicated web module, not as ad hoc loose files at the repo root.
@@ -120,6 +133,7 @@ An additional implementation agent is allowed when local code mutation is requir
 | Agent | Core Responsibility | Key Capabilities |
 | --- | --- | --- |
 | `Programmer Agent` | perform controlled local code changes from natural-language instructions and preserve diff/commit/rollback trace | Aider integration, git diff, commit capture, rollback anchoring |
+| `Trading Terminal Integration Agent` | turn a user-specified broker or terminal into a generated adapter package with docs context, tests, and config candidate | docs retrieval, adapter generation, test generation, Programmer Agent handoff |
 
 Two additional strategy-check agents are mandatory before any strategy version can be approved:
 
@@ -172,9 +186,13 @@ Strategy training is a loop, not a one-shot action.
 Required rule:
 
 - each iteration must produce a new strategy version
-- each iteration must run the two mandatory check agents
 - each iteration must be logged
 - iteration failures must be logged with explicit error detail
+- each iteration must first select the current best version under the dataset protocol
+- only the selected best version should run the mandatory pre-approval check agents:
+  - `Strategy Integrity Checker`
+  - `Strategy Stress and Overfit Checker`
+- non-selected intermediate candidates should remain comparison artifacts, not approval targets
 - strategy versions must use the canonical version format:
   - `V<major>.<minor>-<test_version>-<strategy_name>`
 - examples:
@@ -187,6 +205,111 @@ Required rule:
 - the user must be allowed to choose:
   - guided auto-iteration until the version passes
   - free iteration for a fixed number of rounds even if the user wants to keep exploring
+
+## Strategy Logic Isolation Rule
+
+The platform must be reusable across future strategy families without rewriting the workflow every time.
+
+Required rule:
+
+- the default expectation is that future work changes strategy logic only
+- do not require workflow rewrites just because a new strategy family is introduced
+- do not require UI flow rewrites just because a new strategy family is introduced
+- do not require storage schema rewrites just because a new strategy family is introduced
+- strategy-specific behavior should live behind the strategy interface and candidate contract
+- the following layers are workflow-stable and must be treated as reusable platform infrastructure:
+  - user onboarding
+  - simulation and behavioral profiling
+  - profile evolution
+  - trade-universe intake
+  - objective selection
+  - strategy versioning
+  - integrity checks
+  - stress and overfit checks
+  - deployment approval
+  - monitoring
+  - history and report archiving
+- when adding or revising a strategy, prefer changing:
+  - strategy logic
+  - strategy parameters
+  - strategy code generation prompts
+  - strategy evaluation inputs
+- when adding or revising a strategy, avoid changing:
+  - workflow phase order
+  - report/history contracts
+  - monitoring contracts
+  - validation protocol shape
+  - API flow unless the existing interface is provably insufficient
+
+Production platform rule:
+
+- future strategy work should usually not require changes to:
+  - execution state machine
+  - risk-control contracts
+  - auth and audit contracts
+  - monitoring and alerting contracts
+  - backup and restore procedures
+
+The system should behave as a general strategy platform where new strategy families plug into a fixed operating process.
+
+## Dataset Protocol Rule
+
+Training data, validation data, and comparison data must follow a canonical protocol rather than ad hoc per-strategy handling.
+
+Required rule:
+
+- each strategy cycle must define a `dataset_plan`
+- the canonical protocol is:
+  - `train`
+  - `validation`
+  - `test`
+  - `walk_forward_windows`
+- baseline and every candidate variant must be evaluated under the same protocol
+- recommendation should prefer the strongest test-set objective score, not just the in-sample score
+- the workflow must preserve:
+  - train objective score
+  - validation objective score
+  - test objective score
+  - walk-forward score
+  - stability score
+  - train-test gap
+- stress and overfit checks must be allowed to reject a candidate because of:
+  - low out-of-sample score
+  - excessive train-test gap
+  - weak walk-forward stability
+- this protocol is workflow-level infrastructure and should not be rewritten per strategy
+- if a strategy needs a custom feature set, only the feature logic should change; the dataset protocol should remain fixed unless the product architecture itself changes
+
+## Production Readiness Rule
+
+The workflow is not production-ready until all of the following exist as platform capabilities:
+
+- real broker or exchange execution
+- stable order lifecycle and reconciliation
+- production risk controls:
+  - account loss limits
+  - drawdown limits
+  - position and concentration limits
+  - kill switches
+- stable data engineering:
+  - scheduled ingestion
+  - bad-data handling
+  - schema validation
+  - dedupe and weighting persistence
+  - historical versioning
+- authentication and authorization
+- audit logs for:
+  - configuration changes
+  - strategy approvals
+  - execution-mode changes
+  - code mutation tasks
+- backup, restore, and migration procedures
+- alerting and operator runbooks
+
+Required design rule:
+
+- these are platform-level concerns
+- they must be solved generically once, not re-implemented separately per strategy family
 
 ## Architecture Rule
 

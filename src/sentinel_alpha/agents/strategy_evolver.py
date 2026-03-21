@@ -122,6 +122,7 @@ class StrategyEvolverAgent:
         selected_universe: list[str],
         feedback: str | None = None,
         strategy_type: str = "rule_based_aligned",
+        features: dict | None = None,
     ) -> StrategyCandidate:
         context = StrategyContext(
             user=user,
@@ -130,5 +131,6 @@ class StrategyEvolverAgent:
             risk_policy=policy,
             selected_universe=selected_universe,
             feedback=feedback,
+            features=features or {},
         )
         return self.optimizer.build_candidate(strategy_type, context)

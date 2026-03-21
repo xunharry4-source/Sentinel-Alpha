@@ -29,6 +29,7 @@ class MeanReversionAlignedStrategy(TradingStrategy):
                         "Mean reversion is only allowed when downside averaging tendency is controlled.",
                         f"trend_score={context.market.trend_score:.2f}",
                         f"averaging_down_score={context.behavior.averaging_down_score:.2f}",
+                        f"feature_snapshot_available={'yes' if context.features else 'no'}",
                     ],
                 )
             ],
@@ -40,5 +41,6 @@ class MeanReversionAlignedStrategy(TradingStrategy):
             metadata={
                 "style": "mean_reversion",
                 "selected_universe_size": len(context.selected_universe),
+                "feature_bundle": "enabled" if context.features else "disabled",
             },
         )

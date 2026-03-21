@@ -12,6 +12,17 @@ The objective is not raw return maximization. The objective is user-aligned util
 
 The current implementation supports multi-model routing rather than a single fixed LLM path. Different agents and tasks can use different providers and models, and strategy training can run as a guided auto-iteration loop or as a free iteration workflow.
 
+The intended operating model is now explicit:
+
+- future work should usually change strategy logic only
+- the workflow, monitoring, archival, approval, and dataset protocol should remain platform-stable
+- strategy evaluation should follow a canonical:
+  - `train`
+  - `validation`
+  - `test`
+  - `walk_forward`
+  protocol rather than ad hoc per-strategy handling
+
 Observability now includes:
 
 - Prometheus metrics exposure
@@ -27,6 +38,29 @@ The code mutation layer now includes a controlled `Programmer Agent` backed by `
 - commit hash capture
 - rollback anchor capture
 - strategy-code experiment history
+
+Free market-data integration now includes:
+
+- `Yahoo Finance` public quote/history endpoints
+- `Google News RSS` and `Yahoo Finance RSS` for public news retrieval
+- `Alpha Vantage` via API key
+- `Finnhub` via API key
+- `AkShare` as an optional local Python provider
+- `local_file` for local CSV/JSON quote and history files
+
+Additional free datasets now include:
+
+- fundamentals:
+  - `SEC EDGAR` official free source
+  - `Alpha Vantage` and `Finnhub` as free third-party fallbacks
+  - `local_file` fallback
+- dark pool:
+  - `FINRA` official free source
+  - `local_file` fallback
+- options:
+  - `Yahoo Finance` free third-party source
+  - `Finnhub` fallback
+  - `local_file` fallback
 
 ## What Exists Now
 
@@ -53,6 +87,7 @@ The code mutation layer now includes a controlled `Programmer Agent` backed by `
 - technical guide: [github-technical-guide.md](/Users/harry/Documents/git/Sentinel-Alpha/docs/github-technical-guide.md)
 - architecture: [architecture.md](/Users/harry/Documents/git/Sentinel-Alpha/docs/architecture.md)
 - configuration: [configuration.md](/Users/harry/Documents/git/Sentinel-Alpha/docs/configuration.md)
+- completion roadmap: [completion-roadmap.md](/Users/harry/Documents/git/Sentinel-Alpha/docs/completion-roadmap.md)
 - Docker deployment: [docker-deployment.md](/Users/harry/Documents/git/Sentinel-Alpha/docs/docker-deployment.md)
 - API spec: [api-spec.md](/Users/harry/Documents/git/Sentinel-Alpha/docs/api-spec.md)
 - database spec: [database-spec.md](/Users/harry/Documents/git/Sentinel-Alpha/docs/database-spec.md)
@@ -104,6 +139,21 @@ Docker deployment details:
 
 - [docker-deployment.md](/Users/harry/Documents/git/Sentinel-Alpha/docs/docker-deployment.md)
 
+Market data APIs:
+
+- `GET /api/market-data/providers`
+- `GET /api/market-data/quote`
+- `GET /api/market-data/history`
+- `GET /api/market-data/financials`
+- `GET /api/market-data/dark-pool`
+- `GET /api/market-data/options`
+
+Local file market-data defaults:
+
+- base path: `data/local_market_data`
+- quote file: `{symbol}_quote.json`
+- history file: `{symbol}_{interval}.csv`
+
 ## License
 
 This project is licensed under the Apache License 2.0.
@@ -122,6 +172,7 @@ Canonical frontend module:
 - [preferences.html](/Users/harry/Documents/git/Sentinel-Alpha/src/sentinel_alpha/webapp/static/pages/preferences.html)
 - [strategy.html](/Users/harry/Documents/git/Sentinel-Alpha/src/sentinel_alpha/webapp/static/pages/strategy.html)
 - [intelligence.html](/Users/harry/Documents/git/Sentinel-Alpha/src/sentinel_alpha/webapp/static/pages/intelligence.html)
+- [trading-terminal-integration.html](/Users/harry/Documents/git/Sentinel-Alpha/src/sentinel_alpha/webapp/static/pages/trading-terminal-integration.html)
 - [system-health.html](/Users/harry/Documents/git/Sentinel-Alpha/src/sentinel_alpha/webapp/static/pages/system-health.html)
 - [operations.html](/Users/harry/Documents/git/Sentinel-Alpha/src/sentinel_alpha/webapp/static/pages/operations.html)
 
@@ -161,6 +212,23 @@ Current programmer-agent support:
 - diff / commit / rollback outputs
 - session-level archival through `programmer_runs`, `history_events`, and `report_history`
 
+## Production Gaps
+
+The current repository is a strong platform prototype, not a finished production trading system.
+
+The remaining production-critical areas are:
+
+- real broker and exchange execution
+- hardened backtest and walk-forward engine on real data
+- production risk controls and kill switches
+- stable data pipelines for market, financials, options, and dark-pool data
+- authentication, authorization, and audit trail coverage
+- monitoring, alerting, runbooks, backup, and restore discipline
+
+Canonical gap and completion tracking:
+
+- [completion-roadmap.md](/Users/harry/Documents/git/Sentinel-Alpha/docs/completion-roadmap.md)
+
 Current API support:
 
 - `GET /api/llm-config`
@@ -182,9 +250,27 @@ Strategy training is now modeled as a loop:
 - choose auto-iteration count
 - generate candidate
 - generate strategy code artifact
-- run integrity and stress/overfit checks
+- choose the current best version under the comparison protocol
+- run integrity and stress/overfit checks only on that selected best version
 - if checks fail, keep iterating
 - if checks pass, allow approval
+
+The reusable platform rule is:
+
+- change strategy logic, code, parameters, and prompts when evolving strategy families
+- avoid changing workflow phases, monitoring contracts, archival contracts, or approval gates unless the platform architecture itself is being redesigned
+- avoid changing risk, audit, and dataset-protocol contracts unless the platform architecture itself is being redesigned
+
+The strategy evaluation protocol is:
+
+- build a canonical `dataset_plan`
+- evaluate `baseline`, `variant A`, and `variant B` under the same:
+  - `train`
+  - `validation`
+  - `test`
+  - `walk_forward`
+  windows
+- prefer the strongest valid `test` score, then use validation and walk-forward stability as rejection guards
 
 Every iteration writes:
 
@@ -194,6 +280,18 @@ Every iteration writes:
 - feedback history
 - strategy report archive
 - version-comparison-ready metadata
+
+Current strategy packages now include:
+
+- `dataset_plan`
+- `evaluation_protocol`
+- per-variant dataset evaluation
+- `train objective score`
+- `validation objective score`
+- `test objective score`
+- `walk_forward score`
+- `stability score`
+- `train_test_gap`
 
 The strategy frontend now exposes:
 

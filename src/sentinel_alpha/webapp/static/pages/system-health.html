@@ -48,6 +48,39 @@
         <p class="profiler-note" id="system-health-note">正在检查系统健康。</p>
       </article>
       <article class="panel">
+        <p class="eyebrow">Performance</p>
+        <h3>内存与增量计算</h3>
+        <div class="result-summary">
+          <div class="result-card">
+            <span>Mode</span>
+            <strong id="perf-mode">-</strong>
+          </div>
+          <div class="result-card">
+            <span>Dataset Hits</span>
+            <strong id="perf-dataset-hits">0</strong>
+          </div>
+          <div class="result-card">
+            <span>Context Hits</span>
+            <strong id="perf-context-hits">0</strong>
+          </div>
+          <div class="result-card">
+            <span>LLM Cache Hits</span>
+            <strong id="perf-llm-hits">0</strong>
+          </div>
+          <div class="result-card">
+            <span>Eval Cache Hits</span>
+            <strong id="perf-eval-hits">0</strong>
+          </div>
+          <div class="result-card">
+            <span>Intel Cache Hits</span>
+            <strong id="perf-intel-hits">0</strong>
+          </div>
+        </div>
+        <ul id="performance-summary-list" class="result-list">
+          <li>当前还没有性能摘要。</li>
+        </ul>
+      </article>
+      <article class="panel">
         <p class="eyebrow">LLM Usage</p>
         <h3>Token 使用概览</h3>
         <div class="result-summary">

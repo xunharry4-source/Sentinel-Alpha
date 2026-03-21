@@ -22,6 +22,8 @@ class RuleBasedAlignedStrategy(TradingStrategy):
             f"panic_sell_score={context.behavior.panic_sell_score:.2f}",
             f"noise_sensitivity={context.behavior.noise_susceptibility:.2f}",
         ]
+        if context.features:
+            rationale.append("factor_snapshot_available=yes")
         if context.feedback:
             rationale.append(f"user_feedback={context.feedback}")
 
@@ -45,5 +47,6 @@ class RuleBasedAlignedStrategy(TradingStrategy):
             metadata={
                 "selected_universe_size": len(context.selected_universe),
                 "feedback_present": "yes" if context.feedback else "no",
+                "feature_bundle": "enabled" if context.features else "disabled",
             },
         )

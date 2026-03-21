@@ -132,6 +132,80 @@ function renderStrategyAnalysis(snapshot) {
   );
 }
 
+function renderFeatureSnapshot(snapshot) {
+  const features = snapshot?.strategy_package?.feature_snapshot || {};
+  const lines = [];
+  if (features.meta) {
+    lines.push(`meta / version=${features.meta.snapshot_version || "unknown"} / hash=${features.meta.snapshot_hash || "unknown"} / bundle=${features.meta.data_bundle_id || "unknown"}`);
+  }
+  if (features.data_quality) {
+    lines.push(`data_quality / coverage=${features.data_quality.section_coverage_score ?? "unknown"} / providers=${features.data_quality.provider_count ?? 0}`);
+    lines.push(`data_quality / available=${(features.data_quality.available_sections || []).join(", ") || "none"} / missing=${(features.data_quality.missing_sections || []).join(", ") || "none"}`);
+  }
+  if (features.source_lineage) {
+    const lineage = features.source_lineage;
+    lines.push(`lineage / market=${lineage.market?.source || "none"} / intel=${lineage.intelligence?.run_id || "none"} / financials=${lineage.fundamentals?.run_id || "none"}`);
+    lines.push(`lineage / dark_pool=${lineage.dark_pool?.run_id || "none"} / options=${lineage.options?.run_id || "none"}`);
+  }
+  if (features.behavioral) {
+    lines.push(`behavioral / noise=${features.behavioral.noise_sensitivity ?? "unknown"} / panic=${features.behavioral.panic_sell_tendency ?? "unknown"} / overtrade=${features.behavioral.overtrading_tendency ?? "unknown"}`);
+  }
+  if (features.market) {
+    lines.push(`market / symbol=${features.market.symbol || "unknown"} / timeframe=${features.market.timeframe || "unknown"} / regime=${features.market.regime_tag || "unknown"}`);
+  }
+  if (features.preferences) {
+    lines.push(`preferences / freq=${features.preferences.trading_frequency || "unknown"} / timeframe=${features.preferences.preferred_timeframe || "unknown"} / conflict=${features.preferences.conflict_level || "none"}`);
+  }
+  if (features.intelligence?.factors) {
+    lines.push(`intelligence / credibility=${features.intelligence.factors.credibility_score ?? "unknown"} / contradiction=${features.intelligence.factors.contradiction_score ?? "unknown"} / docs=${features.intelligence.document_count ?? 0}`);
+  }
+  if (features.fundamentals?.factors) {
+    lines.push(`fundamentals / quality=${features.fundamentals.factors.quality_score ?? "unknown"} / deterioration=${features.fundamentals.factors.deterioration_score ?? "unknown"}`);
+  }
+  if (features.dark_pool?.factors) {
+    lines.push(`dark_pool / accumulation=${features.dark_pool.factors.accumulation_score ?? "unknown"} / records=${features.dark_pool.factors.record_count ?? "unknown"}`);
+  }
+  if (features.options?.factors) {
+    lines.push(`options / pressure=${features.options.factors.options_pressure_score ?? "unknown"} / oi=${features.options.factors.total_open_interest ?? "unknown"}`);
+  }
+  renderList("strategy-feature-list", lines, "还没有训练特征。");
+}
+
+function renderInputManifest(snapshot) {
+  const manifest = snapshot?.strategy_package?.input_manifest || {};
+  const lineage = manifest.source_lineage || {};
+  const lines = [];
+  if (manifest.data_bundle_id || manifest.feature_snapshot_version) {
+    lines.push(`bundle / ${manifest.data_bundle_id || "unknown"} / snapshot=${manifest.feature_snapshot_version || "unknown"}`);
+  }
+  if (manifest.dataset_protocol || manifest.objective_metric) {
+    lines.push(`dataset / protocol=${manifest.dataset_protocol || "unknown"} / objective=${manifest.objective_metric || "unknown"} / walk_forward=${manifest.walk_forward_windows ?? "unknown"}`);
+  }
+  if (manifest.selected_universe?.length) {
+    lines.push(`universe / size=${manifest.selected_universe_size ?? manifest.selected_universe.length} / ${manifest.selected_universe.join(", ")}`);
+  }
+  if (manifest.available_sections?.length || manifest.provider_coverage?.length) {
+    lines.push(`coverage / sections=${(manifest.available_sections || []).join(", ") || "none"} / providers=${(manifest.provider_coverage || []).join(", ") || "none"}`);
+  }
+  if (lineage.market || lineage.intelligence || lineage.fundamentals || lineage.dark_pool || lineage.options) {
+    lines.push(`lineage / market=${lineage.market?.source || "none"} / intel=${lineage.intelligence?.run_id || "none"} / financials=${lineage.fundamentals?.run_id || "none"}`);
+    lines.push(`lineage / dark_pool=${lineage.dark_pool?.run_id || "none"} / options=${lineage.options?.run_id || "none"}`);
+  }
+  renderList("strategy-input-manifest-list", lines, "还没有训练输入说明。");
+}
+
+function renderDataBundles(snapshot) {
+  const bundles = snapshot?.data_bundles || [];
+  renderList(
+    "strategy-data-bundles-list",
+    bundles
+      .slice()
+      .reverse()
+      .map((item) => `${item.created_at} / ${item.data_bundle_id} / protocol=${item.dataset_protocol || "unknown"} / universe=${item.selected_universe_size || 0} / uses=${item.usage_count || 0}`),
+    "还没有输入数据包记录。"
+  );
+}
+
 function renderStrategyHistory(snapshot) {
   const logs = snapshot?.strategy_training_log || [];
   renderList(
@@ -143,7 +217,9 @@ function renderStrategyHistory(snapshot) {
         const target = item.objective_metric ? ` / 目标=${item.objective_metric}` : "";
         const failed = item.failed_checks?.length ? ` / 失败检查=${item.failed_checks.join(", ")}` : "";
         const error = item.error ? ` / 错误=${item.error}` : "";
-        return `${item.timestamp} / 第${item.iteration_no || "-"}版 / ${item.strategy_type || "unknown"} / ${item.status || "unknown"}${target}${failed}${error}`;
+        const snapshotVersion = item.feature_snapshot_version ? ` / snapshot=${item.feature_snapshot_version}` : "";
+        const bundleId = item.data_bundle_id ? ` / bundle=${item.data_bundle_id}` : "";
+        return `${item.timestamp} / 第${item.iteration_no || "-"}版 / ${item.strategy_type || "unknown"} / ${item.status || "unknown"}${target}${snapshotVersion}${bundleId}${failed}${error}`;
       }),
     "还没有策略迭代历史。"
   );
@@ -251,13 +327,204 @@ function renderProgrammerRuns(snapshot) {
     runs
       .slice()
       .reverse()
-      .map((item) => `${item.timestamp || "unknown"} / ${item.status || "unknown"} / commit=${item.commit_hash || "none"} / rollback=${item.rollback_commit || "none"} / files=${(item.changed_files || []).join(", ") || "none"}`),
+      .map((item) => `${item.timestamp || "unknown"} / ${item.status || "unknown"} / failure=${item.failure_type || "none"} / commit=${item.commit_hash || "none"} / rollback=${item.rollback_commit || "none"} / files=${(item.changed_files || []).join(", ") || "none"}`),
     "还没有 Programmer Agent 记录。"
   );
   const panel = document.querySelector("#programmer-diff-panel");
   if (panel) {
-    panel.textContent = runs.length ? (runs[runs.length - 1].diff || runs[runs.length - 1].stderr || "没有差异输出。") : "还没有代码差异。";
+    if (!runs.length) {
+      panel.textContent = "还没有代码差异。";
+    } else {
+      const latest = runs[runs.length - 1];
+      const attemptSummary = (latest.attempts || [])
+        .map((item) => `attempt=${item.attempt} status=${item.status} failure=${item.failure_type || "none"} validation=${item.validation_ok === false ? "fail" : "pass"}`)
+        .join("\n");
+      panel.textContent = [attemptSummary, latest.diff || "", latest.stderr || ""].filter(Boolean).join("\n\n");
+    }
   }
+}
+
+function renderProgrammerStats(snapshot) {
+  const runs = snapshot?.programmer_runs || [];
+  const counts = {};
+  for (const run of runs) {
+    const key = run.failure_type || (run.status === "ok" ? "success" : "unknown");
+    counts[key] = (counts[key] || 0) + 1;
+  }
+  const grid = document.querySelector("#programmer-stats-grid");
+  if (grid) {
+    const entries = Object.entries(counts).sort((a, b) => Number(b[1]) - Number(a[1]));
+    if (!entries.length) {
+      grid.innerHTML = `<article class="check-card"><strong>还没有 Programmer Agent 趋势视图。</strong></article>`;
+    } else {
+      grid.innerHTML = entries.map(([name, count]) => `
+        <article class="check-card ${name === "success" ? "check-pass" : "check-warning"}">
+          <div class="check-head">
+            <strong>${name}</strong>
+            <span class="status-chip ${name === "success" ? "success-chip" : "warn-chip"}">${count}</span>
+          </div>
+          <p class="check-summary">最近运行中，类型为 ${name} 的结果出现了 ${count} 次。</p>
+        </article>
+      `).join("");
+    }
+  }
+  const recentFailures = runs
+    .filter((item) => item.failure_type)
+    .slice()
+    .reverse()
+    .slice(0, 5)
+    .map((item) => `${item.timestamp || "unknown"} / ${item.failure_type} / ${item.validation_detail || item.stderr || item.error || "no detail"}`);
+  const summary = Object.entries(counts)
+    .sort((a, b) => Number(b[1]) - Number(a[1]))
+    .map(([name, count]) => `${name}: ${count}`);
+  renderList(
+    "programmer-stats-list",
+    [...summary, ...recentFailures],
+    "还没有 Programmer Agent 统计。"
+  );
+}
+
+function renderModelRouting(snapshot) {
+  const pkg = snapshot?.strategy_package || {};
+  const agentMap = pkg.agent_model_map || {};
+  const taskMap = pkg.task_model_map || {};
+  const grid = document.querySelector("#strategy-model-grid");
+  const agentEntries = Object.entries(agentMap);
+  const taskEntries = Object.entries(taskMap);
+  if (grid) {
+    if (!agentEntries.length && !taskEntries.length) {
+      grid.innerHTML = `<article class="check-card"><strong>还没有模型路由信息。</strong></article>`;
+    } else {
+      const agentCards = agentEntries.map(([agent, info]) => `
+        <article class="check-card">
+          <div class="check-head">
+            <strong>${agent}</strong>
+            <span class="status-chip outline-chip">agent</span>
+          </div>
+          <p class="check-summary">${info.provider || "unknown"} / ${info.model || "unknown"}</p>
+          <p class="check-label">fallback</p>
+          <p>${info.fallback_provider || "n/a"} / ${info.fallback_model || "n/a"}</p>
+        </article>
+      `).join("");
+      const taskCards = taskEntries.map(([task, info]) => `
+        <article class="check-card">
+          <div class="check-head">
+            <strong>${task}</strong>
+            <span class="status-chip outline-chip">task</span>
+          </div>
+          <p class="check-summary">${info.provider || "unknown"} / ${info.model || "unknown"}</p>
+          <p class="check-label">temperature</p>
+          <p>${info.temperature ?? "default"}</p>
+        </article>
+      `).join("");
+      grid.innerHTML = agentCards + taskCards;
+    }
+  }
+  const lines = [
+    ...agentEntries.map(([agent, info]) => `Agent / ${agent}: ${info.provider || "unknown"} / ${info.model || "unknown"}${info.fallback_model ? ` / fallback=${info.fallback_provider || "unknown"}:${info.fallback_model}` : ""}`),
+    ...taskEntries.map(([task, info]) => `Task / ${task}: ${info.provider || "unknown"} / ${info.model || "unknown"} / temperature=${info.temperature ?? "default"}`),
+  ];
+  renderList("strategy-model-list", lines, "还没有模型路由信息。");
+}
+
+function renderTokenUsage(snapshot) {
+  const usage = snapshot?.token_usage || {};
+  const totals = Object.values(usage?.totals || {});
+  const recent = usage?.recent_calls || [];
+  const calls = totals.reduce((sum, item) => sum + Number(item.calls || 0), 0);
+  const inputTokens = totals.reduce((sum, item) => sum + Number(item.input_tokens || 0), 0);
+  const outputTokens = totals.reduce((sum, item) => sum + Number(item.output_tokens || 0), 0);
+  const cacheHits = totals.reduce((sum, item) => sum + Number(item.cache_hits || 0), 0);
+  const grid = document.querySelector("#strategy-token-grid");
+  if (grid) {
+    if (!totals.length) {
+      grid.innerHTML = `<article class="check-card"><strong>还没有 token 使用信息。</strong></article>`;
+    } else {
+      grid.innerHTML = `
+        <article class="check-card">
+          <div class="check-head">
+            <strong>Calls</strong>
+            <span class="status-chip outline-chip">${calls}</span>
+          </div>
+          <p class="check-summary">本轮及近期会话累计 LLM 调用次数。</p>
+        </article>
+        <article class="check-card">
+          <div class="check-head">
+            <strong>Input Tokens</strong>
+            <span class="status-chip outline-chip">${inputTokens}</span>
+          </div>
+          <p class="check-summary">输入 token 估算总量。</p>
+        </article>
+        <article class="check-card">
+          <div class="check-head">
+            <strong>Output Tokens</strong>
+            <span class="status-chip outline-chip">${outputTokens}</span>
+          </div>
+          <p class="check-summary">输出 token 估算总量。</p>
+        </article>
+        <article class="check-card">
+          <div class="check-head">
+            <strong>Cache Hits</strong>
+            <span class="status-chip outline-chip">${cacheHits}</span>
+          </div>
+          <p class="check-summary">命中 LLM 结果缓存的次数。</p>
+        </article>
+      `;
+    }
+  }
+  const lines = [
+    ...totals
+      .slice()
+      .sort((a, b) => Number(b.calls || 0) - Number(a.calls || 0))
+      .map((item) => `${item.task} / ${item.provider}/${item.model} / calls=${item.calls} / cache_hits=${item.cache_hits || 0} / in=${item.input_tokens} / out=${item.output_tokens}`),
+    ...recent.slice(-5).reverse().map((item) => `${item.timestamp || "unknown"} / ${item.task} / ${item.provider}/${item.model} / in=${item.input_tokens} / out=${item.output_tokens}`),
+  ];
+  renderList("strategy-token-list", lines, "还没有 token 使用信息。");
+}
+
+function renderProgrammerTrend(snapshot) {
+  const filter = document.querySelector("#programmer-trend-filter")?.value || "all";
+  const runs = (snapshot?.programmer_runs || [])
+    .filter((run) => {
+      if (filter === "all") return true;
+      const kind = run.failure_type || (run.status === "ok" ? "success" : run.status || "unknown");
+      return kind === filter;
+    })
+    .slice()
+    .reverse()
+    .slice(0, 10);
+  const grid = document.querySelector("#programmer-trend-grid");
+  if (grid) {
+    if (!runs.length) {
+      grid.innerHTML = `<article class="check-card"><strong>还没有 Programmer Agent 趋势时间线。</strong></article>`;
+    } else {
+      grid.innerHTML = runs.map((run) => {
+        const kind = run.failure_type || (run.status === "ok" ? "success" : run.status || "unknown");
+        const ok = kind === "success";
+        const statusClass = ok ? "check-pass" : "check-warning";
+        const chipClass = ok ? "success-chip" : "warn-chip";
+        return `
+          <article class="check-card ${statusClass}">
+            <div class="check-head">
+              <strong>${run.timestamp || "unknown"}</strong>
+              <span class="status-chip ${chipClass}">${kind}</span>
+            </div>
+            <p class="check-summary">status=${run.status || "unknown"} / attempts=${(run.attempts || []).length || 1}</p>
+            <p class="check-label">detail</p>
+            <p>${run.validation_detail || run.error || run.stderr || "no detail"}</p>
+          </article>
+        `;
+      }).join("");
+    }
+  }
+  renderList(
+    "programmer-trend-list",
+    runs.map((run) => {
+      const kind = run.failure_type || (run.status === "ok" ? "success" : run.status || "unknown");
+      return `${run.timestamp || "unknown"} / ${kind} / attempts=${(run.attempts || []).length || 1} / ${run.validation_detail || run.error || run.stderr || "no detail"}`;
+    }),
+    "还没有 Programmer Agent 趋势时间线。"
+  );
 }
 
 async function runProgrammerAgent() {
@@ -279,7 +546,6 @@ async function runProgrammerAgent() {
       }),
     });
     storeSnapshot(latest);
-    renderShell("strategy");
     renderStrategy(latest);
     const latestRun = (latest.programmer_runs || [])[latest.programmer_runs.length - 1] || {};
     setText("strategy-note", `Programmer Agent 已执行，status=${latestRun.status || "unknown"}。`);
@@ -331,7 +597,8 @@ function restoreStrategyVersion(snapshot) {
 
 function variantScoreLine(title, evaluation) {
   if (!evaluation) return `${title}: 无评估`;
-  return `${title}: 收益 ${evaluation.expected_return_pct}% / 胜率 ${evaluation.win_rate_pct}% / 回撤 ${evaluation.drawdown_pct}% / 最大亏损 ${evaluation.max_loss_pct}% / 目标分 ${evaluation.objective_score}`;
+  const source = evaluation.evaluation_source ? ` / 来源 ${evaluation.evaluation_source}` : "";
+  return `${title}: 收益 ${evaluation.expected_return_pct}% / 胜率 ${evaluation.win_rate_pct}% / 回撤 ${evaluation.drawdown_pct}% / 最大亏损 ${evaluation.max_loss_pct}% / 目标分 ${evaluation.objective_score}${source}`;
 }
 
 function renderVariantComparison(snapshot) {
@@ -385,6 +652,77 @@ function renderStrategyCode(snapshot) {
   target.textContent = variant?.generated_code || pkg.generated_strategy_code;
 }
 
+function renderStrategyPerformance(snapshot) {
+  const pkg = snapshot?.strategy_package || {};
+  const datasetPlan = pkg.dataset_plan || {};
+  const parts = [];
+  if (datasetPlan.protocol) {
+    parts.push(`dataset=${datasetPlan.protocol}`);
+  }
+  if (datasetPlan.cache_mode) {
+    parts.push(`mode=${datasetPlan.cache_mode}`);
+  }
+  if (datasetPlan.cache_hit !== undefined) {
+    parts.push(`dataset_cache_hit=${datasetPlan.cache_hit ? "yes" : "no"}`);
+  }
+  setText("strategy-performance-note", parts.length ? `增量训练: ${parts.join(" / ")}` : "当前还没有增量训练性能信息。");
+}
+
+function renderBacktestSummary(snapshot) {
+  const pkg = snapshot?.strategy_package || {};
+  const evaluation = pkg.recommended_variant?.evaluation || pkg.baseline_evaluation || null;
+  const dataset = evaluation?.dataset_evaluation || {};
+  if (!evaluation || !dataset.train || !dataset.validation || !dataset.test) {
+    const grid = document.querySelector("#strategy-walkforward-grid");
+    if (grid) {
+      grid.innerHTML = `<article class="check-card"><strong>还没有 walk-forward 热力视图。</strong></article>`;
+    }
+    renderList("strategy-backtest-list", [], "还没有回测结果。");
+    renderList("strategy-walkforward-list", [], "还没有 walk-forward 结果。");
+    return;
+  }
+  renderList(
+    "strategy-backtest-list",
+    [
+      `评估来源: ${evaluation.evaluation_source || "unknown"}`,
+      `Train: 收益 ${dataset.train.expected_return_pct}% / 胜率 ${dataset.train.win_rate_pct}% / 回撤 ${dataset.train.drawdown_pct}% / 最大亏损 ${dataset.train.max_loss_pct}% / 分数 ${dataset.train.objective_score}`,
+      `Validation: 收益 ${dataset.validation.expected_return_pct}% / 胜率 ${dataset.validation.win_rate_pct}% / 回撤 ${dataset.validation.drawdown_pct}% / 最大亏损 ${dataset.validation.max_loss_pct}% / 分数 ${dataset.validation.objective_score}`,
+      `Test: 收益 ${dataset.test.expected_return_pct}% / 胜率 ${dataset.test.win_rate_pct}% / 回撤 ${dataset.test.drawdown_pct}% / 最大亏损 ${dataset.test.max_loss_pct}% / 分数 ${dataset.test.objective_score}`,
+      `Stability: score=${dataset.stability?.score ?? "unknown"} / walk_forward=${dataset.stability?.walk_forward_score ?? "unknown"} / gap=${dataset.stability?.train_test_gap ?? "unknown"}`,
+    ],
+    "还没有回测结果。"
+  );
+  const walkForward = dataset.walk_forward || [];
+  const grid = document.querySelector("#strategy-walkforward-grid");
+  if (grid) {
+    if (!walkForward.length) {
+      grid.innerHTML = `<article class="check-card"><strong>还没有 walk-forward 热力视图。</strong></article>`;
+    } else {
+      grid.innerHTML = walkForward.map((item) => {
+        const score = Number(item.objective_score || 0);
+        const statusClass = score >= 0.8 ? "check-pass" : score >= 0.55 ? "check-warning" : "check-fail";
+        const chipClass = score >= 0.8 ? "success-chip" : score >= 0.55 ? "warn-chip" : "danger-chip";
+        return `
+          <article class="check-card ${statusClass}">
+            <div class="check-head">
+              <strong>${item.window_id}</strong>
+              <span class="status-chip ${chipClass}">${score.toFixed(4)}</span>
+            </div>
+            <p class="check-summary">收益 ${item.expected_return_pct}% / 胜率 ${item.win_rate_pct}% / 回撤 ${item.drawdown_pct}%</p>
+            <p class="check-label">窗口</p>
+            <p>${item.validation_start} -> ${item.validation_end}</p>
+          </article>
+        `;
+      }).join("");
+    }
+  }
+  renderList(
+    "strategy-walkforward-list",
+    walkForward.map((item) => `窗口 ${item.window_id}: 收益 ${item.expected_return_pct}% / 胜率 ${item.win_rate_pct}% / 回撤 ${item.drawdown_pct}% / 最大亏损 ${item.max_loss_pct}% / 分数 ${item.objective_score}`),
+    "还没有 walk-forward 结果。"
+  );
+}
+
 function renderStrategy(snapshot) {
   formatJsonIntoList("strategy-package-list", snapshot?.strategy_package || null, "还没有策略包。");
   renderStrategyStatus(snapshot);
@@ -416,15 +754,24 @@ function renderStrategy(snapshot) {
     );
   }
   renderStrategyAnalysis(snapshot);
+  renderFeatureSnapshot(snapshot);
+  renderInputManifest(snapshot);
+  renderDataBundles(snapshot);
   renderStrategyHistory(snapshot);
   renderStrategyArchive(snapshot);
   renderFailureEvolution(snapshot);
   populateVersionSelectors(snapshot);
   renderVariantComparison(snapshot);
+  renderModelRouting(snapshot);
+  renderTokenUsage(snapshot);
+  renderBacktestSummary(snapshot);
   renderStrategyCode(snapshot);
+  renderStrategyPerformance(snapshot);
   renderVersionCode(snapshot);
   runVersionCompare(snapshot);
   renderProgrammerRuns(snapshot);
+  renderProgrammerStats(snapshot);
+  renderProgrammerTrend(snapshot);
   renderStrategyLogs();
 }
 
@@ -470,7 +817,6 @@ async function submitUniverse() {
       }),
     });
     storeSnapshot(latest);
-    renderShell("strategy");
     renderStrategy(latest);
     setText("strategy-note", "交易标的已提交。");
     appendStrategyLog("success", `交易标的已提交：${(latest.trade_universe?.expanded || []).join(", ")}`);
@@ -517,7 +863,6 @@ async function iterateStrategy() {
       }),
     });
     storeSnapshot(latest);
-    renderShell("strategy");
     renderStrategy(latest);
     const phase = latest.phase || "unknown";
     const checks = latest.strategy_checks || [];
@@ -551,7 +896,6 @@ async function approveStrategy() {
   try {
     const latest = await apiRequest(`/api/sessions/${snapshot.session_id}/strategy/approve`, { method: "POST" });
     storeSnapshot(latest);
-    renderShell("strategy");
     renderStrategy(latest);
     setText("strategy-note", "策略已确认。");
     appendStrategyLog("success", `策略确认完成，phase=${latest.phase}`);
@@ -570,6 +914,7 @@ document.querySelector("#run-version-compare")?.addEventListener("click", () => 
 document.querySelector("#history-version-select")?.addEventListener("change", () => renderVersionCode(loadStoredSnapshot() || {}));
 document.querySelector("#restore-version-button")?.addEventListener("click", () => restoreStrategyVersion(loadStoredSnapshot() || {}));
 document.querySelector("#run-programmer-agent")?.addEventListener("click", runProgrammerAgent);
+document.querySelector("#programmer-trend-filter")?.addEventListener("change", () => renderProgrammerTrend(loadStoredSnapshot() || {}));
 document.querySelector("#apply-strategy-recommendation")?.addEventListener("click", () => {
   const report = loadStoredSnapshot()?.behavioral_report || {};
   if (report.recommended_strategy_type) {

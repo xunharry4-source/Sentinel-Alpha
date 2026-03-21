@@ -22,6 +22,8 @@ def test_agent_skill_files_exist() -> None:
         "skills/strategy-integrity-checker-agent/SKILL.md",
         "skills/strategy-stress-checker-agent/SKILL.md",
         "skills/programmer-agent/SKILL.md",
+        "skills/data-source-expansion-agent/SKILL.md",
+        "skills/trading-terminal-integration-agent/SKILL.md",
     ]
 
     missing = [path for path in expected if not (REPO_ROOT / path).exists()]

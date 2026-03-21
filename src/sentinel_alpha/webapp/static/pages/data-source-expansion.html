@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>数据源扩充 | Sentinel-Alpha</title>
+  <link rel="stylesheet" href="../styles.css" />
+</head>
+<body>
+  <main class="page-shell">
+    <section data-shell="summary"></section>
+    <nav class="shell-nav" data-shell="nav"></nav>
+
+    <section class="panel">
+      <p class="eyebrow">Data Source Expansion</p>
+      <h1>数据源扩充与一键落库</h1>
+      <p class="profiler-note" id="data-source-note">填写新的数据源信息，生成适配器代码、测试代码和配置候选，然后一键交给 Programmer Agent 写入工作区。</p>
+    </section>
+
+    <section class="panel">
+      <p class="eyebrow">Expansion Form</p>
+      <div class="trade-config">
+        <label class="config-field">
+          <span>数据源名称</span>
+          <input id="ds-provider-name" type="text" value="ExampleSource" />
+        </label>
+        <label class="config-field">
+          <span>分类</span>
+          <select id="ds-category">
+            <option value="market_data">行情</option>
+            <option value="fundamentals">财报</option>
+            <option value="dark_pool">暗池</option>
+            <option value="options">期权</option>
+          </select>
+        </label>
+        <label class="config-field">
+          <span>Base URL</span>
+          <input id="ds-base-url" type="text" value="https://api.example.com" />
+        </label>
+        <label class="config-field">
+          <span>API Key 环境变量</span>
+          <input id="ds-api-key-env" type="text" value="EXAMPLE_API_KEY" />
+        </label>
+        <label class="config-field">
+          <span>示例 Endpoint</span>
+          <input id="ds-sample-endpoint" type="text" value="quote" />
+        </label>
+        <label class="config-field">
+          <span>鉴权方式</span>
+          <select id="ds-auth-style">
+            <option value="header">header</option>
+            <option value="query">query</option>
+            <option value="bearer">bearer</option>
+          </select>
+        </label>
+        <label class="config-field">
+          <span>返回格式</span>
+          <select id="ds-response-format">
+            <option value="json">json</option>
+            <option value="csv">csv</option>
+            <option value="xml">xml</option>
+          </select>
+        </label>
+      </div>
+      <label class="config-field">
+        <span>文档摘要</span>
+        <textarea id="ds-docs-summary" class="config-editor compact-editor" spellcheck="false">REST JSON API with symbol-based endpoints for quote and history retrieval.</textarea>
+      </label>
+      <div class="button-row">
+        <button id="generate-data-source">生成扩充方案</button>
+        <button id="apply-data-source">交给 Programmer Agent 写入真实文件</button>
+      </div>
+    </section>
+
+    <section class="two-column-grid">
+      <section class="panel">
+        <p class="eyebrow">Run Selection</p>
+        <label class="config-field">
+          <span>选择生成记录</span>
+          <select id="ds-run-select"></select>
+        </label>
+        <ul id="data-source-validation" class="result-list">
+          <li>等待生成扩充方案。</li>
+        </ul>
+      </section>
+      <section class="panel">
+        <p class="eyebrow">Programmer Agent Apply</p>
+        <ul id="data-source-apply-summary" class="result-list">
+          <li>当前还没有执行落文件。</li>
+        </ul>
+      </section>
+    </section>
+
+    <section class="grid two-up">
+      <section class="panel">
+        <p class="eyebrow">Generated Adapter Code</p>
+        <pre id="data-source-module-code" class="code-block">等待生成模块代码。</pre>
+      </section>
+      <section class="panel">
+        <p class="eyebrow">Generated Test Code</p>
+        <pre id="data-source-test-code" class="code-block">等待生成测试代码。</pre>
+      </section>
+    </section>
+
+    <section class="grid two-up">
+      <section class="panel">
+        <p class="eyebrow">Config Candidate</p>
+        <pre id="data-source-config-candidate" class="code-block">等待生成配置候选。</pre>
+      </section>
+      <section class="panel">
+        <p class="eyebrow">Diff / Commit</p>
+        <pre id="data-source-diff" class="code-block">等待 Programmer Agent 运行结果。</pre>
+      </section>
+    </section>
+
+    <section class="panel">
+      <p class="eyebrow">History</p>
+      <ul id="data-source-run-list" class="result-list">
+        <li>当前还没有数据源扩充历史。</li>
+      </ul>
+    </section>
+  </main>
+  <script src="../session-shell.js"></script>
+  <script src="../page-data-source-expansion.js"></script>
+</body>
+</html>

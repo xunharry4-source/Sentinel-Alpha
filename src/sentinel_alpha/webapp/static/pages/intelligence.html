@@ -38,6 +38,89 @@
           <button id="search-intelligence">搜索情报</button>
         </div>
         <p class="profiler-note" id="intelligence-note">搜索结果会挂到当前 session，并可进入持久化层。</p>
+        <p class="profiler-note" id="intelligence-cache-note">当前还没有缓存命中信息。</p>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Financials</p>
+        <h3>财报查询</h3>
+        <div class="trade-config">
+          <label class="config-field">
+            <span>股票代码</span>
+            <input id="financials-symbol-input" type="text" value="AAPL" />
+          </label>
+          <label class="config-field">
+            <span>Provider</span>
+            <select id="financials-provider-input">
+              <option value="">默认 Provider</option>
+            </select>
+          </label>
+        </div>
+        <div class="action-buttons secondary">
+          <button id="search-financials">查询财报</button>
+        </div>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Dark Pool</p>
+        <h3>暗池查询</h3>
+        <div class="trade-config">
+          <label class="config-field">
+            <span>股票代码</span>
+            <input id="dark-pool-symbol-input" type="text" value="AAPL" />
+          </label>
+          <label class="config-field">
+            <span>Provider</span>
+            <select id="dark-pool-provider-input">
+              <option value="">默认 Provider</option>
+            </select>
+          </label>
+        </div>
+        <div class="action-buttons secondary">
+          <button id="search-dark-pool">查询暗池</button>
+        </div>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Options</p>
+        <h3>期权查询</h3>
+        <div class="trade-config">
+          <label class="config-field">
+            <span>股票代码</span>
+            <input id="options-symbol-input" type="text" value="AAPL" />
+          </label>
+          <label class="config-field">
+            <span>Provider</span>
+            <select id="options-provider-input">
+              <option value="">默认 Provider</option>
+            </select>
+          </label>
+          <label class="config-field">
+            <span>到期日</span>
+            <input id="options-expiration-input" type="text" value="" placeholder="可选" />
+          </label>
+        </div>
+        <div class="action-buttons secondary">
+          <button id="search-options">查询期权</button>
+        </div>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Financials Summary</p>
+        <h3>财报摘要卡片</h3>
+        <ul id="financials-summary-list" class="result-list">
+          <li>当前还没有财报摘要。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Dark Pool Summary</p>
+        <h3>暗池摘要卡片</h3>
+        <ul id="dark-pool-summary-list" class="result-list">
+          <li>当前还没有暗池摘要。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Options Summary</p>
+        <h3>期权摘要卡片</h3>
+        <ul id="options-summary-list" class="result-list">
+          <li>当前还没有期权摘要。</li>
+        </ul>
       </article>
       <article class="panel">
         <p class="eyebrow">Documents</p>
@@ -55,10 +138,66 @@
         <pre id="intelligence-report-json" class="json-panel">{}</pre>
       </article>
       <article class="panel">
+        <p class="eyebrow">Factors</p>
+        <h3>情报因子</h3>
+        <ul id="intelligence-factors-list" class="result-list">
+          <li>当前还没有情报因子。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Financial Factors</p>
+        <h3>财报因子</h3>
+        <ul id="financials-factors-list" class="result-list">
+          <li>当前还没有财报因子。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Dark Pool Factors</p>
+        <h3>暗池因子</h3>
+        <ul id="dark-pool-factors-list" class="result-list">
+          <li>当前还没有暗池因子。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Options Factors</p>
+        <h3>期权因子</h3>
+        <ul id="options-factors-list" class="result-list">
+          <li>当前还没有期权因子。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Event Clusters</p>
+        <h3>事件聚合视图</h3>
+        <ul id="information-cluster-list" class="result-list">
+          <li>当前还没有事件聚合视图。</li>
+        </ul>
+      </article>
+      <article class="panel">
         <p class="eyebrow">Archive</p>
         <h3>查询历史</h3>
         <ul id="intelligence-run-list" class="result-list">
           <li>当前还没有查询历史。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Financials Archive</p>
+        <h3>财报历史</h3>
+        <ul id="financials-run-list" class="result-list">
+          <li>当前还没有财报查询历史。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Dark Pool Archive</p>
+        <h3>暗池历史</h3>
+        <ul id="dark-pool-run-list" class="result-list">
+          <li>当前还没有暗池查询历史。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Options Archive</p>
+        <h3>期权历史</h3>
+        <ul id="options-run-list" class="result-list">
+          <li>当前还没有期权查询历史。</li>
         </ul>
       </article>
       <article class="panel">
@@ -67,6 +206,11 @@
         <ul id="intelligence-history-list" class="result-list">
           <li>当前还没有历史记录。</li>
         </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Payload</p>
+        <h3>最新结构化结果</h3>
+        <pre id="intelligence-market-json" class="json-panel">{}</pre>
       </article>
     </section>
   </main>

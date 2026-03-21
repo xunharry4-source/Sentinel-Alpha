@@ -1,5 +1,11 @@
 # Sentinel-Alpha Initial Architecture
 
+## License
+
+This architecture and the repository implementation are distributed under the Apache License 2.0.
+
+- [LICENSE](/Users/harry/Documents/git/Sentinel-Alpha/LICENSE)
+
 ## Design Principle
 
 The framework treats trading as a joint optimization problem across:
@@ -8,6 +14,19 @@ The framework treats trading as a joint optimization problem across:
 - user behavioral stability
 - intervention risk
 - hard safety limits
+
+An additional architectural rule now applies:
+
+- strategy logic is pluggable
+- workflow infrastructure is stable
+
+This means future strategy families should normally plug into the existing workflow instead of forcing rewrites to:
+
+- phase order
+- monitoring contracts
+- archival contracts
+- approval gates
+- dataset protocol
 
 ## Phase Model
 
@@ -149,10 +168,37 @@ Every iteration should produce:
 - a new strategy version
 - strategy package metadata
 - generated strategy code artifact
+- dataset plan
 - integrity-check result
 - stress/overfit-check result
 - strategy training log entry
 - archived report snapshot
+
+The canonical dataset protocol for strategy comparison is:
+
+- `train`
+- `validation`
+- `test`
+- `walk_forward_windows`
+
+`baseline` and every candidate variant must be evaluated under the same protocol.
+
+The workflow should preserve at least:
+
+- train objective score
+- validation objective score
+- test objective score
+- walk-forward score
+- stability score
+- train-test gap
+
+The approval logic should prefer:
+
+1. stronger test-set objective score
+2. acceptable validation behavior
+3. acceptable walk-forward stability
+4. selecting the current best version under the dataset protocol
+5. passing integrity and stress/overfit checks on that selected version
 
 If code-level strategy mutation is required, `ProgrammerAgent` may be invoked after `StrategyEvolverAgent` produces the change request and before the next validation loop starts.
 

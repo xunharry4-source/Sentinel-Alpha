@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import importlib.util
 from pathlib import Path
+import subprocess
 from uuid import UUID, uuid4
 
 from sentinel_alpha.agents.behavioral_profiler import BehavioralProfilerAgent
+from sentinel_alpha.agents.data_source_expansion_agent import DataSourceExpansionAgent, DataSourceExpansionRequest
 from sentinel_alpha.agents.intent_aligner import IntentAlignerAgent
 from sentinel_alpha.agents.intelligence_agent import IntelligenceAgent
 from sentinel_alpha.agents.market_asset_monitor_agent import MarketAssetMonitorAgent
@@ -19,10 +21,14 @@ from sentinel_alpha.agents.strategy_evolver import StrategyEvolverAgent
 from sentinel_alpha.agents.strategy_integrity_checker import StrategyIntegrityCheckerAgent
 from sentinel_alpha.agents.strategy_monitor_agent import StrategyMonitorAgent
 from sentinel_alpha.agents.strategy_stress_checker import StrategyStressCheckerAgent
+from sentinel_alpha.agents.trading_terminal_integration_agent import TradingTerminalIntegrationAgent, TradingTerminalIntegrationRequest
 from sentinel_alpha.agents.user_monitor_agent import UserMonitorAgent
 from dataclasses import asdict
 
 from sentinel_alpha.config import get_settings
+from sentinel_alpha.analysis import SessionFeaturePipeline
+from sentinel_alpha.backtesting import SimpleBacktestEngine
+from sentinel_alpha.infra.free_market_data import FreeMarketDataService
 from sentinel_alpha.infra.llm_runtime import LLMRuntime
 from sentinel_alpha.strategies.registry import StrategyRegistry
 from sentinel_alpha.domain.models import BehaviorEvent, MarketDataPoint, MarketSnapshot, ProfileEvolutionEvent, TradeExecutionRecord, UserProfile
@@ -53,10 +59,16 @@ class WorkflowSession:
     scenario_packages: list[dict] = field(default_factory=list)
     intelligence_documents: list[dict] = field(default_factory=list)
     information_events: list[dict] = field(default_factory=list)
+    data_bundles: list[dict] = field(default_factory=list)
     history_events: list[dict] = field(default_factory=list)
     report_history: list[dict] = field(default_factory=list)
     intelligence_runs: list[dict] = field(default_factory=list)
     programmer_runs: list[dict] = field(default_factory=list)
+    data_source_runs: list[dict] = field(default_factory=list)
+    terminal_integration_runs: list[dict] = field(default_factory=list)
+    financials_runs: list[dict] = field(default_factory=list)
+    dark_pool_runs: list[dict] = field(default_factory=list)
+    options_runs: list[dict] = field(default_factory=list)
 
 
 class WorkflowService:
@@ -77,10 +89,29 @@ class WorkflowService:
         self.strategy_integrity_checker = StrategyIntegrityCheckerAgent()
         self.strategy_stress_checker = StrategyStressCheckerAgent()
         self.programmer = ProgrammerAgent(self.settings)
+        self.data_source_expander = DataSourceExpansionAgent()
+        self.terminal_integrator = TradingTerminalIntegrationAgent()
         self.evolver = StrategyEvolverAgent()
         self.strategy_registry = StrategyRegistry()
+        self.backtest_engine = SimpleBacktestEngine()
+        self.feature_pipeline = SessionFeaturePipeline()
+        self.market_data = FreeMarketDataService(self.settings)
         self.llm_runtime = LLMRuntime(self.settings)
         self.agent_activity_log: list[dict] = []
+        self._dataset_plan_cache: dict[int, dict] = {}
+        self._iteration_context_cache: dict[tuple, dict] = {}
+        self._candidate_eval_cache: dict[tuple, dict] = {}
+        self._intelligence_cache: dict[tuple, dict] = {}
+        self._performance_counters = {
+            "iteration_context_hits": 0,
+            "iteration_context_misses": 0,
+            "dataset_plan_hits": 0,
+            "dataset_plan_misses": 0,
+            "candidate_eval_hits": 0,
+            "candidate_eval_misses": 0,
+            "intelligence_hits": 0,
+            "intelligence_misses": 0,
+        }
 
     def create_session(self, user_name: str, starting_capital: float) -> WorkflowSession:
         session = WorkflowSession(session_id=uuid4(), user_name=user_name, starting_capital=starting_capital)
@@ -280,29 +311,20 @@ class WorkflowService:
         targets = self._normalize_objective_targets(objective_metric, objective_targets or {})
         if feedback:
             self._apply_feedback_evolution(session, feedback, strategy_type)
+        iteration_context = self._get_iteration_context(
+            session=session,
+            strategy_type=strategy_type,
+            expanded=expanded,
+        )
         last_error: str | None = None
         for loop_index in range(max(1, auto_iterations)):
             iteration_no = 1 if session.strategy_package is None else session.strategy_package["iteration_no"] + 1
             try:
                 compatibility = max(0.35, min(0.95, 0.78 - 0.04 * max(0, iteration_no - 1)))
-                market = MarketSnapshot(
-                    symbol=expanded[0],
-                    expected_return_pct=16.0,
-                    realized_volatility_pct=28.0,
-                    trend_score=0.58 if strategy_type == "trend_following_aligned" else 0.18 if strategy_type == "mean_reversion_aligned" else 0.42,
-                    event_risk_score=0.32,
-                    liquidity_score=0.92,
-                )
-                user = UserProfile(
-                    user_id=str(session.session_id),
-                    preferred_assets=expanded,
-                    capital_base=session.starting_capital,
-                    target_holding_days=self._target_holding_days(session.trading_preferences),
-                    self_reported_risk_tolerance=0.5,
-                    confidence_level=0.55,
-                )
-                behavior = self._effective_behavior_report(session)
-                policy = self.evolver.derive_risk_policy(user, behavior)
+                market = iteration_context["market"]
+                user = iteration_context["user"]
+                behavior = iteration_context["behavior"]
+                policy = iteration_context["policy"]
                 self._record_agent_activity("strategy_evolver", "ok", "derive_risk_policy", "Derived risk policy for iteration.", session.session_id)
                 baseline_candidate = self.evolver.build_strategy_candidate(
                     user=user,
@@ -312,6 +334,7 @@ class WorkflowService:
                     selected_universe=expanded,
                     feedback=None,
                     strategy_type="rule_based_aligned",
+                    features=iteration_context["features"],
                 )
                 baseline_payload = asdict(baseline_candidate)
                 baseline_payload["version"] = self._strategy_version_label(1, iteration_no, 0, "baseline_rule_based")
@@ -323,11 +346,13 @@ class WorkflowService:
                     selected_universe=expanded,
                     feedback=feedback,
                     strategy_type=strategy_type,
+                    features=iteration_context["features"],
                 )
                 candidate_payload = asdict(candidate)
                 candidate_payload["version"] = self._strategy_version_label(1, iteration_no, 0, strategy_type)
                 self._record_agent_activity("strategy_evolver", "ok", "build_strategy_candidate", f"Built candidate {candidate_payload['version']}.", session.session_id)
                 previous_failure = self._previous_failure_summary(session)
+                dataset_plan = self._build_strategy_dataset_plan(iteration_no)
                 analysis = self._analyze_strategy_iteration(
                     session=session,
                     strategy_type=strategy_type,
@@ -347,7 +372,13 @@ class WorkflowService:
                         candidate_payload=asdict(variant_candidate),
                         feedback=f"{feedback or ''} | plan={plan['plan_name']}".strip(),
                     )
-                    evaluation = self._evaluate_strategy_candidate(asdict(variant_candidate), objective_metric, targets, variant_index)
+                    evaluation = self._evaluate_strategy_candidate(
+                        asdict(variant_candidate),
+                        objective_metric,
+                        targets,
+                        variant_index,
+                        dataset_plan,
+                    )
                     variants.append(
                         {
                             "variant_id": plan["variant_id"],
@@ -359,8 +390,22 @@ class WorkflowService:
                             "evaluation": evaluation,
                         }
                     )
-                baseline_evaluation = self._evaluate_strategy_candidate(asdict(baseline_candidate), objective_metric, targets, 0)
+                baseline_evaluation = self._evaluate_strategy_candidate(
+                    asdict(baseline_candidate),
+                    objective_metric,
+                    targets,
+                    0,
+                    dataset_plan,
+                )
                 winner = self._compare_variant_results(baseline_evaluation, variants)
+                selected_check_target = self._resolve_check_target(winner, baseline_payload, baseline_evaluation, variants)
+                input_manifest = self._build_input_manifest(
+                    selected_universe=expanded,
+                    dataset_plan=dataset_plan,
+                    features=iteration_context["features"],
+                    objective_metric=objective_metric,
+                )
+                self._register_data_bundle(session, input_manifest)
                 session.strategy_package = {
                     "iteration_no": iteration_no,
                     "version_label": self._strategy_version_label(1, iteration_no, 0, strategy_type),
@@ -378,12 +423,26 @@ class WorkflowService:
                     "behavioral_compatibility": compatibility,
                     "candidate": candidate_payload,
                     "baseline_candidate": baseline_payload,
+                    "dataset_plan": dataset_plan,
+                    "feature_snapshot": iteration_context["features"],
+                    "feature_snapshot_version": iteration_context["features"].get("meta", {}).get("snapshot_hash"),
+                    "data_bundle_id": iteration_context["features"].get("meta", {}).get("data_bundle_id"),
+                    "input_manifest": input_manifest,
+                    "evaluation_protocol": {
+                        "selection_target": "highest test objective score",
+                        "guardrails": [
+                            "validation objective score must remain within tolerance",
+                            "walk-forward stability must remain above threshold",
+                            "integrity and stress/overfit checks must pass before approval",
+                        ],
+                    },
                     "baseline_evaluation": baseline_evaluation,
                     "analysis": analysis,
                     "previous_failure_summary": previous_failure,
                     "upgrade_plans": plans,
                     "candidate_variants": variants,
                     "recommended_variant": winner,
+                    "selected_check_target": selected_check_target,
                     "llm_profile": variants[0]["llm_profile"] if variants else {},
                     "generated_strategy_code": variants[0]["generated_code"] if variants else "",
                     "llm_generation_summary": variants[0]["llm_generation_summary"] if variants else "",
@@ -416,10 +475,18 @@ class WorkflowService:
                         "iteration_mode": iteration_mode,
                         "objective_metric": objective_metric,
                         "objective_targets": targets,
+                        "dataset_plan": dataset_plan,
+                        "feature_snapshot": iteration_context["features"],
+                        "feature_snapshot_version": iteration_context["features"].get("meta", {}).get("snapshot_hash"),
+                        "data_bundle_id": iteration_context["features"].get("meta", {}).get("data_bundle_id"),
+                        "input_manifest": input_manifest,
                         "status": "rework_required" if failed_checks else "checked",
                         "feedback": feedback or "",
                         "analysis_summary": analysis["summary"],
                         "recommended_variant": winner["variant_id"],
+                        "selected_check_target": selected_check_target["variant_id"],
+                        "recommended_test_score": winner["evaluation"].get("test_objective_score"),
+                        "recommended_stability_score": winner["evaluation"].get("stability_score"),
                         "failed_checks": [check["check_type"] for check in failed_checks],
                     }
                 )
@@ -442,6 +509,7 @@ class WorkflowService:
                         "iteration_no": iteration_no,
                         "version_label": session.strategy_package["version_label"],
                         "status": "rework_required" if failed_checks else "checked",
+                        "data_bundle_id": session.strategy_package.get("data_bundle_id"),
                     },
                 )
                 if not failed_checks and iteration_mode != "free":
@@ -481,6 +549,71 @@ class WorkflowService:
             else "strategy_checked"
         )
         return session
+
+    def _build_strategy_dataset_plan(self, iteration_no: int) -> dict:
+        if self.settings.performance_enabled:
+            cached_plan = self._dataset_plan_cache.get(iteration_no)
+            if cached_plan is not None:
+                self._performance_counters["dataset_plan_hits"] += 1
+                return {
+                    "cache_mode": "memory_incremental",
+                    "cache_hit": True,
+                    **cached_plan,
+                }
+            self._performance_counters["dataset_plan_misses"] += 1
+
+        end_date = datetime.now(timezone.utc).date()
+        test_end = end_date - timedelta(days=(iteration_no - 1) * 7)
+        test_start = test_end - timedelta(days=89)
+        validation_end = test_start - timedelta(days=1)
+        validation_start = validation_end - timedelta(days=89)
+        train_end = validation_start - timedelta(days=1)
+        train_start = train_end - timedelta(days=729)
+
+        walk_forward_windows = []
+        for index in range(3):
+            anchor_end = validation_end - timedelta(days=index * 90)
+            anchor_start = anchor_end - timedelta(days=179)
+            eval_end = anchor_end + timedelta(days=45)
+            eval_start = anchor_end + timedelta(days=1)
+            walk_forward_windows.append(
+                {
+                    "window_id": f"wf_{index + 1}",
+                    "train_start": anchor_start.isoformat(),
+                    "train_end": anchor_end.isoformat(),
+                    "validation_start": eval_start.isoformat(),
+                    "validation_end": eval_end.isoformat(),
+                }
+            )
+
+        plan = {
+            "protocol": "time_series_split_with_walk_forward",
+            "train": {
+                "start": train_start.isoformat(),
+                "end": train_end.isoformat(),
+                "days": (train_end - train_start).days + 1,
+            },
+            "validation": {
+                "start": validation_start.isoformat(),
+                "end": validation_end.isoformat(),
+                "days": (validation_end - validation_start).days + 1,
+            },
+            "test": {
+                "start": test_start.isoformat(),
+                "end": test_end.isoformat(),
+                "days": (test_end - test_start).days + 1,
+            },
+            "walk_forward_windows": walk_forward_windows,
+            "comparison_rule": "select by test objective score, reject if validation or walk-forward stability falls below threshold",
+            "cache_mode": "memory_incremental" if self.settings.performance_enabled else "disabled",
+            "cache_hit": False,
+        }
+        if self.settings.performance_enabled:
+            self._dataset_plan_cache[iteration_no] = dict(plan)
+            while len(self._dataset_plan_cache) > self.settings.performance_dataset_plan_cache_size:
+                first_key = next(iter(self._dataset_plan_cache))
+                self._dataset_plan_cache.pop(first_key, None)
+        return plan
 
     def _normalize_objective_targets(self, objective_metric: str, objective_targets: dict) -> dict[str, float]:
         defaults = {
@@ -626,7 +759,31 @@ class WorkflowService:
         objective_metric: str,
         targets: dict[str, float],
         variant_index: int,
+        dataset_plan: dict,
     ) -> dict:
+        cache_key = (
+            repr(candidate),
+            objective_metric,
+            repr(targets),
+            variant_index,
+            repr(dataset_plan),
+        )
+        if self.settings.performance_enabled:
+            cached = self._candidate_eval_cache.get(cache_key)
+            if cached is not None:
+                self._performance_counters["candidate_eval_hits"] += 1
+                return dict(cached)
+            self._performance_counters["candidate_eval_misses"] += 1
+
+        real_backtest = self._evaluate_candidate_with_local_history(candidate, objective_metric, targets, dataset_plan)
+        if real_backtest is not None:
+            if self.settings.performance_enabled:
+                self._candidate_eval_cache[cache_key] = dict(real_backtest)
+                while len(self._candidate_eval_cache) > self.settings.performance_dataset_plan_cache_size * 8:
+                    first_key = next(iter(self._candidate_eval_cache))
+                    self._candidate_eval_cache.pop(first_key, None)
+            return real_backtest
+
         avg_conviction = sum(float(item.get("conviction", 0.0)) for item in candidate.get("signals", [])) / max(1, len(candidate.get("signals", [])))
         max_position = float(candidate.get("parameters", {}).get("max_position_pct", 0.12) or 0.12)
         hard_stop = float(candidate.get("parameters", {}).get("hard_stop_loss_pct", 0.06) or 0.06)
@@ -640,8 +797,19 @@ class WorkflowService:
             "drawdown": -drawdown_pct,
             "max_loss": -max_loss_pct,
         }[objective_metric]
-        score = self._objective_score(objective_metric, targets, expected_return_pct, win_rate_pct, drawdown_pct, max_loss_pct)
-        return {
+        split_metrics = self._build_split_metrics(
+            expected_return_pct,
+            win_rate_pct,
+            drawdown_pct,
+            max_loss_pct,
+            variant_index,
+            dataset_plan,
+            objective_metric,
+            targets,
+        )
+        score = split_metrics["test"]["objective_score"]
+        stability_score = split_metrics["stability"]["score"]
+        evaluation = {
             "expected_return_pct": expected_return_pct,
             "win_rate_pct": win_rate_pct,
             "drawdown_pct": drawdown_pct,
@@ -649,7 +817,99 @@ class WorkflowService:
             "objective_metric": objective_metric,
             "objective_value": objective_value,
             "objective_score": score,
+            "dataset_evaluation": split_metrics,
+            "validation_objective_score": split_metrics["validation"]["objective_score"],
+            "test_objective_score": split_metrics["test"]["objective_score"],
+            "walk_forward_score": split_metrics["stability"]["walk_forward_score"],
+            "stability_score": stability_score,
+            "evaluation_source": "heuristic_surrogate",
         }
+        if self.settings.performance_enabled:
+            self._candidate_eval_cache[cache_key] = dict(evaluation)
+            while len(self._candidate_eval_cache) > self.settings.performance_dataset_plan_cache_size * 8:
+                first_key = next(iter(self._candidate_eval_cache))
+                self._candidate_eval_cache.pop(first_key, None)
+        return evaluation
+
+    def _build_split_metrics(
+        self,
+        expected_return_pct: float,
+        win_rate_pct: float,
+        drawdown_pct: float,
+        max_loss_pct: float,
+        variant_index: int,
+        dataset_plan: dict,
+        objective_metric: str,
+        targets: dict[str, float],
+    ) -> dict:
+        split_adjustments = {
+            "train": {"return": 1.08, "win_rate": 1.03, "drawdown": 0.94, "max_loss": 0.95},
+            "validation": {"return": 0.98, "win_rate": 0.99, "drawdown": 1.03, "max_loss": 1.04},
+            "test": {"return": 0.94, "win_rate": 0.97, "drawdown": 1.08, "max_loss": 1.09},
+        }
+        result: dict[str, dict] = {}
+        for split_name, multipliers in split_adjustments.items():
+            split_return = round(expected_return_pct * multipliers["return"], 2)
+            split_win_rate = round(win_rate_pct * multipliers["win_rate"], 2)
+            split_drawdown = round(drawdown_pct * multipliers["drawdown"], 2)
+            split_max_loss = round(max_loss_pct * multipliers["max_loss"], 2)
+            result[split_name] = {
+                "period": dataset_plan[split_name],
+                "expected_return_pct": split_return,
+                "win_rate_pct": split_win_rate,
+                "drawdown_pct": split_drawdown,
+                "max_loss_pct": split_max_loss,
+                "objective_score": self._objective_score(
+                    objective_metric,
+                    targets,
+                    split_return,
+                    split_win_rate,
+                    split_drawdown,
+                    split_max_loss,
+                ),
+            }
+
+        walk_forward_results = []
+        for index, window in enumerate(dataset_plan.get("walk_forward_windows", []), start=1):
+            wf_return = round(expected_return_pct * (0.95 - index * 0.01) + variant_index * 0.15, 2)
+            wf_win_rate = round(win_rate_pct * (0.985 - index * 0.005), 2)
+            wf_drawdown = round(drawdown_pct * (1.03 + index * 0.01), 2)
+            wf_max_loss = round(max_loss_pct * (1.04 + index * 0.01), 2)
+            walk_forward_results.append(
+                {
+                    "window_id": window["window_id"],
+                    "train_start": window["train_start"],
+                    "train_end": window["train_end"],
+                    "validation_start": window["validation_start"],
+                    "validation_end": window["validation_end"],
+                    "objective_score": self._objective_score(
+                        objective_metric,
+                        targets,
+                        wf_return,
+                        wf_win_rate,
+                        wf_drawdown,
+                        wf_max_loss,
+                    ),
+                    "expected_return_pct": wf_return,
+                    "win_rate_pct": wf_win_rate,
+                    "drawdown_pct": wf_drawdown,
+                    "max_loss_pct": wf_max_loss,
+                }
+            )
+
+        walk_forward_score = round(
+            sum(item["objective_score"] for item in walk_forward_results) / max(1, len(walk_forward_results)),
+            4,
+        )
+        stability_gap = abs(result["train"]["objective_score"] - result["test"]["objective_score"])
+        stability_score = round(max(0.0, 1 - stability_gap) * 0.6 + walk_forward_score * 0.4, 4)
+        result["walk_forward"] = walk_forward_results
+        result["stability"] = {
+            "score": stability_score,
+            "walk_forward_score": walk_forward_score,
+            "train_test_gap": round(stability_gap, 4),
+        }
+        return result
 
     def _objective_score(
         self,
@@ -666,6 +926,154 @@ class WorkflowService:
         score += max(0.0, 1 - drawdown_pct / max(1.0, targets["target_drawdown_pct"])) * (0.5 if objective_metric == "drawdown" else 0.3)
         score += max(0.0, 1 - max_loss_pct / max(1.0, targets["target_max_loss_pct"])) * (0.5 if objective_metric == "max_loss" else 0.3)
         return round(score, 4)
+
+    def _evaluate_candidate_with_local_history(
+        self,
+        candidate: dict,
+        objective_metric: str,
+        targets: dict[str, float],
+        dataset_plan: dict,
+    ) -> dict | None:
+        if "local_file" not in self.settings.market_data_enabled_providers:
+            return None
+        bars_by_symbol: dict[str, list[dict]] = {}
+        exposure_by_symbol: dict[str, float] = {}
+        max_position = float(candidate.get("parameters", {}).get("max_position_pct", 0.12) or 0.12)
+        for signal in candidate.get("signals", []):
+            symbol = signal.get("symbol")
+            if not symbol:
+                continue
+            try:
+                history = self.market_data.fetch_history(symbol=symbol, interval="1d", provider="local_file")
+            except Exception:
+                continue
+            bars = history.get("bars", [])
+            if not bars:
+                continue
+            bars_by_symbol[symbol] = bars
+            action = str(signal.get("action", "hold")).lower()
+            direction = 1.0 if action == "buy" else -1.0 if action == "sell" else 0.0
+            exposure_by_symbol[symbol] = direction * float(signal.get("conviction", 0.0) or 0.0) * max_position
+        if not bars_by_symbol:
+            return None
+        split_metrics = self.backtest_engine.evaluate(
+            bars=bars_by_symbol,
+            exposure=exposure_by_symbol,
+            split_plan=dataset_plan,
+        )
+        if split_metrics is None:
+            return None
+        for split_name in ("train", "validation", "test"):
+            metrics = split_metrics.get(split_name)
+            if metrics is None:
+                return None
+            metrics["objective_score"] = self._objective_score(
+                objective_metric,
+                targets,
+                metrics["expected_return_pct"],
+                metrics["win_rate_pct"],
+                metrics["drawdown_pct"],
+                metrics["max_loss_pct"],
+            )
+        walk_forward_results = []
+        for window in split_metrics.get("walk_forward", []):
+            walk_forward_results.append(
+                {
+                    **window,
+                    "objective_score": self._objective_score(
+                        objective_metric,
+                        targets,
+                        window["expected_return_pct"],
+                        window["win_rate_pct"],
+                        window["drawdown_pct"],
+                        window["max_loss_pct"],
+                    ),
+                }
+            )
+        walk_forward_score = round(
+            sum(item["objective_score"] for item in walk_forward_results) / max(1, len(walk_forward_results)),
+            4,
+        )
+        stability_gap = abs(split_metrics["train"]["objective_score"] - split_metrics["test"]["objective_score"])
+        stability_score = round(max(0.0, 1 - stability_gap) * 0.6 + walk_forward_score * 0.4, 4)
+        dataset_evaluation = {
+            "train": split_metrics["train"],
+            "validation": split_metrics["validation"],
+            "test": split_metrics["test"],
+            "walk_forward": walk_forward_results,
+            "stability": {
+                "score": stability_score,
+                "walk_forward_score": walk_forward_score,
+                "train_test_gap": round(stability_gap, 4),
+            },
+        }
+        return {
+            "expected_return_pct": split_metrics["test"]["expected_return_pct"],
+            "win_rate_pct": split_metrics["test"]["win_rate_pct"],
+            "drawdown_pct": split_metrics["test"]["drawdown_pct"],
+            "max_loss_pct": split_metrics["test"]["max_loss_pct"],
+            "objective_metric": objective_metric,
+            "objective_value": {
+                "return": split_metrics["test"]["expected_return_pct"],
+                "win_rate": split_metrics["test"]["win_rate_pct"],
+                "drawdown": -split_metrics["test"]["drawdown_pct"],
+                "max_loss": -split_metrics["test"]["max_loss_pct"],
+            }[objective_metric],
+            "objective_score": split_metrics["test"]["objective_score"],
+            "dataset_evaluation": dataset_evaluation,
+            "validation_objective_score": split_metrics["validation"]["objective_score"],
+            "test_objective_score": split_metrics["test"]["objective_score"],
+            "walk_forward_score": walk_forward_score,
+            "stability_score": stability_score,
+            "evaluation_source": "local_history_backtest",
+        }
+
+    def _validate_programmer_changes(self, target_files: list[str]) -> tuple[bool, str]:
+        python_targets = [item for item in target_files if str(item).endswith(".py")]
+        if python_targets:
+            result = subprocess.run(
+                ["python", "-m", "py_compile", *python_targets],
+                cwd=self.settings.programmer_agent_repo_path,
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode != 0:
+                return False, result.stderr.strip() or result.stdout.strip() or "py_compile failed"
+
+        test_targets = self._candidate_test_targets(target_files)
+        if not test_targets:
+            return True, "py_compile passed; no mapped pytest targets."
+
+        pytest_result = subprocess.run(
+            ["python", "-m", "pytest", *test_targets, "-q"],
+            cwd=self.settings.programmer_agent_repo_path,
+            capture_output=True,
+            text=True,
+        )
+        if pytest_result.returncode == 0:
+            return True, f"py_compile passed; pytest passed for {', '.join(test_targets)}"
+        return False, pytest_result.stderr.strip() or pytest_result.stdout.strip() or "pytest failed"
+
+    def _candidate_test_targets(self, target_files: list[str]) -> list[str]:
+        repo_root = Path(self.settings.programmer_agent_repo_path)
+        discovered: list[str] = []
+        for item in target_files:
+            path = Path(item)
+            if path.parts and path.parts[0] == "tests" and path.suffix == ".py":
+                discovered.append(str(path))
+                continue
+            if path.suffix != ".py":
+                continue
+            stem = path.stem
+            candidate_paths = [
+                repo_root / "tests" / f"test_{stem}.py",
+                repo_root / "tests" / "agents" / f"test_{stem}.py",
+                repo_root / "tests" / "backtesting" / f"test_{stem}.py",
+            ]
+            for candidate in candidate_paths:
+                if candidate.exists():
+                    discovered.append(str(candidate.relative_to(repo_root)))
+        return list(dict.fromkeys(discovered))
 
     def _compare_variant_results(self, baseline_evaluation: dict, variants: list[dict]) -> dict:
         best = {
@@ -747,19 +1155,52 @@ class WorkflowService:
 
     def search_intelligence(self, session_id: UUID, query: str, max_documents: int | None = None) -> WorkflowSession:
         session = self.get_session(session_id)
+        cache_key = ("search_intelligence", str(session.session_id), query, max_documents or 0)
+        cached_run = self._get_intelligence_cache(cache_key)
+        if cached_run is not None:
+            session.intelligence_documents = cached_run["documents"]
+            session.intelligence_runs.append(
+                {
+                    **cached_run,
+                    "run_id": f"intel-{len(session.intelligence_runs) + 1}",
+                    "generated_at": self._now_iso(),
+                    "cache_hit": True,
+                }
+            )
+            self._record_agent_activity("intelligence_agent", "ok", "search_intelligence", f"Cache hit for query={query}.", session.session_id)
+            return session
         documents = [asdict(item) for item in self.intelligence.search(query, max_documents)]
         report = self.llm_runtime.summarize_intelligence(query, documents)
+        report["factors"] = self._extract_intelligence_factors(documents, report)
         self._record_agent_activity("intelligence_agent", "ok", "search_intelligence", f"Collected {len(documents)} documents for query={query}.", session.session_id)
         session.intelligence_documents = documents
-        session.intelligence_runs.append(
+        run = {
+            "run_id": f"intel-{len(session.intelligence_runs) + 1}",
+            "query": query,
+            "generated_at": self._now_iso(),
+            "document_count": len(documents),
+            "documents": documents,
+            "report": report,
+            "cache_hit": False,
+        }
+        session.intelligence_runs.append(run)
+        self._record_information_event(
+            session,
+            anchor=query,
+            category="intelligence",
+            summary=f"情报搜索完成，共 {len(documents)} 条文档。",
+            factors=report.get("factors") or {},
+            provider="multi_source",
+            related_refs=report.get("source_urls", []),
+        )
+        self._set_intelligence_cache(
+            cache_key,
             {
-                "run_id": f"intel-{len(session.intelligence_runs) + 1}",
                 "query": query,
-                "generated_at": self._now_iso(),
                 "document_count": len(documents),
                 "documents": documents,
                 "report": report,
-            }
+            },
         )
         self._archive_report(
             session,
@@ -773,6 +1214,230 @@ class WorkflowService:
             "intelligence_search_completed",
             "情报搜索与摘要已完成。",
             {"query": query, "document_count": len(documents)},
+        )
+        return session
+
+    def fetch_financials_data(self, session_id: UUID, symbol: str, provider: str | None = None) -> WorkflowSession:
+        session = self.get_session(session_id)
+        cache_key = ("financials", str(session.session_id), symbol, provider or "")
+        cached_run = self._get_intelligence_cache(cache_key)
+        if cached_run is not None:
+            session.financials_runs.append(
+                {
+                    **cached_run,
+                    "run_id": f"financials-{len(session.financials_runs) + 1}",
+                    "generated_at": self._now_iso(),
+                    "cache_hit": True,
+                }
+            )
+            self._record_agent_activity(
+                "intelligence_agent",
+                "ok",
+                "fetch_financials_data",
+                f"Cache hit for financials {symbol} via {cached_run.get('provider')}.",
+                session.session_id,
+            )
+            return session
+        payload = self.market_data.fetch_financials(symbol=symbol, provider=provider)
+        factors = self._extract_financial_factors(payload)
+        run = {
+            "run_id": f"financials-{len(session.financials_runs) + 1}",
+            "symbol": symbol,
+            "provider": payload.get("provider"),
+            "generated_at": self._now_iso(),
+            "payload": payload,
+            "factors": factors,
+            "cache_hit": False,
+        }
+        session.financials_runs.append(run)
+        self._record_information_event(
+            session,
+            anchor=symbol,
+            category="financials",
+            summary="财报数据已更新。",
+            factors=factors,
+            provider=payload.get("provider"),
+            related_refs=[symbol],
+        )
+        self._set_intelligence_cache(
+            cache_key,
+            {
+                "symbol": symbol,
+                "provider": payload.get("provider"),
+                "payload": payload,
+            },
+        )
+        self._archive_report(
+            session,
+            report_type="financials_summary",
+            title=f"Financials Data: {symbol}",
+            body={"payload": payload, "factors": factors},
+            related_refs=[symbol],
+        )
+        self._append_history_event(
+            session,
+            "financials_data_fetched",
+            "财报数据查询已完成。",
+            {"symbol": symbol, "provider": payload.get("provider")},
+        )
+        self._record_agent_activity(
+            "intelligence_agent",
+            "ok",
+            "fetch_financials_data",
+            f"Fetched financials for {symbol} via {payload.get('provider')}.",
+            session.session_id,
+        )
+        return session
+
+    def fetch_dark_pool_data(self, session_id: UUID, symbol: str, provider: str | None = None) -> WorkflowSession:
+        session = self.get_session(session_id)
+        cache_key = ("dark_pool", str(session.session_id), symbol, provider or "")
+        cached_run = self._get_intelligence_cache(cache_key)
+        if cached_run is not None:
+            session.dark_pool_runs.append(
+                {
+                    **cached_run,
+                    "run_id": f"dark-pool-{len(session.dark_pool_runs) + 1}",
+                    "generated_at": self._now_iso(),
+                    "cache_hit": True,
+                }
+            )
+            self._record_agent_activity(
+                "market_asset_monitor",
+                "ok",
+                "fetch_dark_pool_data",
+                f"Cache hit for dark-pool {symbol} via {cached_run.get('provider')}.",
+                session.session_id,
+            )
+            return session
+        payload = self.market_data.fetch_dark_pool(symbol=symbol, provider=provider)
+        factors = self._extract_dark_pool_factors(payload)
+        run = {
+            "run_id": f"dark-pool-{len(session.dark_pool_runs) + 1}",
+            "symbol": symbol,
+            "provider": payload.get("provider"),
+            "generated_at": self._now_iso(),
+            "payload": payload,
+            "factors": factors,
+            "cache_hit": False,
+        }
+        session.dark_pool_runs.append(run)
+        self._record_information_event(
+            session,
+            anchor=symbol,
+            category="dark_pool",
+            summary="暗池数据已更新。",
+            factors=factors,
+            provider=payload.get("provider"),
+            related_refs=[symbol],
+        )
+        self._set_intelligence_cache(
+            cache_key,
+            {
+                "symbol": symbol,
+                "provider": payload.get("provider"),
+                "payload": payload,
+            },
+        )
+        self._archive_report(
+            session,
+            report_type="dark_pool_summary",
+            title=f"Dark Pool Data: {symbol}",
+            body={"payload": payload, "factors": factors},
+            related_refs=[symbol],
+        )
+        self._append_history_event(
+            session,
+            "dark_pool_data_fetched",
+            "暗池数据查询已完成。",
+            {"symbol": symbol, "provider": payload.get("provider")},
+        )
+        self._record_agent_activity(
+            "market_asset_monitor",
+            "ok",
+            "fetch_dark_pool_data",
+            f"Fetched dark-pool data for {symbol} via {payload.get('provider')}.",
+            session.session_id,
+        )
+        return session
+
+    def fetch_options_data(
+        self,
+        session_id: UUID,
+        symbol: str,
+        provider: str | None = None,
+        expiration: str | None = None,
+    ) -> WorkflowSession:
+        session = self.get_session(session_id)
+        cache_key = ("options", str(session.session_id), symbol, provider or "", expiration or "")
+        cached_run = self._get_intelligence_cache(cache_key)
+        if cached_run is not None:
+            session.options_runs.append(
+                {
+                    **cached_run,
+                    "run_id": f"options-{len(session.options_runs) + 1}",
+                    "generated_at": self._now_iso(),
+                    "cache_hit": True,
+                }
+            )
+            self._record_agent_activity(
+                "strategy_monitor",
+                "ok",
+                "fetch_options_data",
+                f"Cache hit for options {symbol} via {cached_run.get('provider')}.",
+                session.session_id,
+            )
+            return session
+        payload = self.market_data.fetch_options(symbol=symbol, provider=provider, expiration=expiration)
+        factors = self._extract_options_factors(payload)
+        run = {
+            "run_id": f"options-{len(session.options_runs) + 1}",
+            "symbol": symbol,
+            "provider": payload.get("provider"),
+            "expiration": expiration,
+            "generated_at": self._now_iso(),
+            "payload": payload,
+            "factors": factors,
+            "cache_hit": False,
+        }
+        session.options_runs.append(run)
+        self._record_information_event(
+            session,
+            anchor=symbol,
+            category="options",
+            summary="期权数据已更新。",
+            factors=factors,
+            provider=payload.get("provider"),
+            related_refs=[symbol, expiration] if expiration else [symbol],
+        )
+        self._set_intelligence_cache(
+            cache_key,
+            {
+                "symbol": symbol,
+                "provider": payload.get("provider"),
+                "expiration": expiration,
+                "payload": payload,
+            },
+        )
+        self._archive_report(
+            session,
+            report_type="options_summary",
+            title=f"Options Data: {symbol}",
+            body={"payload": payload, "factors": factors},
+            related_refs=[symbol],
+        )
+        self._append_history_event(
+            session,
+            "options_data_fetched",
+            "期权数据查询已完成。",
+            {"symbol": symbol, "provider": payload.get("provider"), "expiration": expiration},
+        )
+        self._record_agent_activity(
+            "strategy_monitor",
+            "ok",
+            "fetch_options_data",
+            f"Fetched options data for {symbol} via {payload.get('provider')}.",
+            session.session_id,
         )
         return session
 
@@ -798,11 +1463,12 @@ class WorkflowService:
         commit_changes: bool = True,
     ) -> WorkflowSession:
         session = self.get_session(session_id)
-        result = self.programmer.execute(
+        result = self.programmer.execute_with_retries(
             instruction=instruction,
             target_files=target_files,
             context=context,
             commit_changes=commit_changes,
+            validator=self._validate_programmer_changes,
         )
         result["timestamp"] = self._now_iso()
         session.programmer_runs.append(result)
@@ -828,6 +1494,267 @@ class WorkflowService:
             "ok" if result.get("status") == "ok" else "error",
             "execute_programmer_task",
             result.get("error") or f"Changed files: {', '.join(result.get('changed_files', [])) or 'none'}",
+            session.session_id,
+        )
+        return session
+
+    def expand_data_source(
+        self,
+        session_id: UUID,
+        provider_name: str,
+        category: str,
+        base_url: str,
+        api_key_env: str | None,
+        docs_summary: str,
+        sample_endpoint: str | None = None,
+        auth_style: str = "header",
+        response_format: str = "json",
+    ) -> WorkflowSession:
+        session = self.get_session(session_id)
+        request = DataSourceExpansionRequest(
+            provider_name=provider_name,
+            category=category,
+            base_url=base_url,
+            api_key_env=api_key_env,
+            docs_summary=docs_summary,
+            sample_endpoint=sample_endpoint,
+            auth_style=auth_style,
+            response_format=response_format,
+        )
+        result = self.data_source_expander.build_integration_package(request)
+        result["run_id"] = f"datasource-{len(session.data_source_runs) + 1}"
+        result["timestamp"] = self._now_iso()
+        session.data_source_runs.append(result)
+        self._archive_report(
+            session,
+            report_type="data_source_expansion",
+            title=f"Data Source Expansion: {provider_name}",
+            body=result,
+            related_refs=[base_url],
+        )
+        self._append_history_event(
+            session,
+            "data_source_expansion_generated",
+            "数据源扩充方案已生成。",
+            {
+                "provider_name": provider_name,
+                "category": category,
+                "target_module": result["target_module"],
+                "target_test": result["target_test"],
+            },
+        )
+        self._record_agent_activity(
+            "data_source_expansion_agent",
+            "ok" if result["validation"]["ready_for_programmer_agent"] else "warning",
+            "expand_data_source",
+            f"Prepared adapter package for {provider_name} ({category}).",
+            session.session_id,
+        )
+        return session
+
+    def apply_data_source_expansion(
+        self,
+        session_id: UUID,
+        run_id: str | None = None,
+        commit_changes: bool = True,
+    ) -> WorkflowSession:
+        session = self.get_session(session_id)
+        if not session.data_source_runs:
+            raise ValueError("No data-source expansion run is available.")
+        selected_run = session.data_source_runs[-1]
+        if run_id:
+            matched = next((item for item in session.data_source_runs if item.get("run_id") == run_id), None)
+            if matched is None:
+                raise ValueError(f"Unknown data-source run: {run_id}")
+            selected_run = matched
+
+        instruction = (
+            f"Create or update the generated adapter module and test for provider "
+            f"{selected_run['provider_name']} ({selected_run['category']}). "
+            "Use the supplied code verbatim unless a minimal syntax or import correction is required. "
+            "Do not modify unrelated files."
+        )
+        context = (
+            f"Target module: {selected_run['target_module']}\n"
+            f"Target test: {selected_run['target_test']}\n\n"
+            "Write the following module code:\n"
+            f"{selected_run['generated_module_code']}\n\n"
+            "Write the following test code:\n"
+            f"{selected_run['generated_test_code']}\n\n"
+            "Generated config fragment:\n"
+            f"{selected_run['config_fragment']}"
+        )
+        result = self.programmer.execute(
+            instruction=instruction,
+            target_files=[selected_run["target_module"], selected_run["target_test"]],
+            context=context,
+            commit_changes=commit_changes,
+        )
+        result["timestamp"] = self._now_iso()
+        result["applied_run_id"] = selected_run["run_id"]
+        selected_run["programmer_apply"] = result
+        session.programmer_runs.append(result)
+        self._archive_report(
+            session,
+            report_type="data_source_programmer_apply",
+            title=f"Data Source Apply: {selected_run['provider_name']}",
+            body=result,
+            related_refs=[selected_run["target_module"], selected_run["target_test"]],
+        )
+        self._append_history_event(
+            session,
+            "data_source_expansion_applied" if result.get("status") == "ok" else "data_source_expansion_apply_failed",
+            "数据源扩充结果已交给 Programmer Agent 写入工作区。"
+            if result.get("status") == "ok"
+            else "数据源扩充结果交给 Programmer Agent 时失败。",
+            {
+                "run_id": selected_run["run_id"],
+                "status": result.get("status"),
+                "commit_hash": result.get("commit_hash"),
+                "changed_files": result.get("changed_files", []),
+            },
+        )
+        self._record_agent_activity(
+            "programmer_agent",
+            "ok" if result.get("status") == "ok" else "error",
+            "apply_data_source_expansion",
+            result.get("error") or f"Applied generated adapter for {selected_run['provider_name']}.",
+            session.session_id,
+        )
+        return session
+
+    def expand_trading_terminal(
+        self,
+        session_id: UUID,
+        terminal_name: str,
+        terminal_type: str,
+        official_docs_url: str,
+        docs_search_url: str | None,
+        api_base_url: str,
+        api_key_env: str | None,
+        auth_style: str,
+        order_endpoint: str,
+        cancel_endpoint: str,
+        positions_endpoint: str,
+        docs_summary: str,
+        user_notes: str | None = None,
+    ) -> WorkflowSession:
+        session = self.get_session(session_id)
+        request = TradingTerminalIntegrationRequest(
+            terminal_name=terminal_name,
+            terminal_type=terminal_type,
+            official_docs_url=official_docs_url,
+            docs_search_url=docs_search_url,
+            api_base_url=api_base_url,
+            api_key_env=api_key_env,
+            auth_style=auth_style,
+            order_endpoint=order_endpoint,
+            cancel_endpoint=cancel_endpoint,
+            positions_endpoint=positions_endpoint,
+            docs_summary=docs_summary,
+            user_notes=user_notes,
+        )
+        result = self.terminal_integrator.build_terminal_package(request)
+        result["run_id"] = f"terminal-{len(session.terminal_integration_runs) + 1}"
+        result["timestamp"] = self._now_iso()
+        session.terminal_integration_runs.append(result)
+        self._archive_report(
+            session,
+            report_type="trading_terminal_integration",
+            title=f"Trading Terminal Integration: {terminal_name}",
+            body=result,
+            related_refs=[official_docs_url, api_base_url],
+        )
+        self._append_history_event(
+            session,
+            "trading_terminal_integration_generated",
+            "交易终端接入方案已生成。",
+            {
+                "terminal_name": terminal_name,
+                "terminal_type": terminal_type,
+                "target_module": result["target_module"],
+                "target_test": result["target_test"],
+                "docs_fetch_ok": result["docs_context"]["docs_fetch_ok"],
+            },
+        )
+        self._record_agent_activity(
+            "trading_terminal_integration_agent",
+            "ok" if result["validation"]["ready_for_programmer_agent"] else "warning",
+            "expand_trading_terminal",
+            f"Prepared terminal adapter package for {terminal_name} ({terminal_type}).",
+            session.session_id,
+        )
+        return session
+
+    def apply_trading_terminal_integration(
+        self,
+        session_id: UUID,
+        run_id: str | None = None,
+        commit_changes: bool = True,
+    ) -> WorkflowSession:
+        session = self.get_session(session_id)
+        if not session.terminal_integration_runs:
+            raise ValueError("No trading-terminal integration run is available.")
+        selected_run = session.terminal_integration_runs[-1]
+        if run_id:
+            matched = next((item for item in session.terminal_integration_runs if item.get("run_id") == run_id), None)
+            if matched is None:
+                raise ValueError(f"Unknown trading-terminal run: {run_id}")
+            selected_run = matched
+        instruction = (
+            f"Create or update the generated trading terminal adapter and test for "
+            f"{selected_run['terminal_name']} ({selected_run['terminal_type']}). "
+            "Use the supplied code verbatim unless a minimal syntax or import correction is required. "
+            "Do not modify unrelated files."
+        )
+        context = (
+            f"Target module: {selected_run['target_module']}\n"
+            f"Target test: {selected_run['target_test']}\n"
+            f"Official docs: {selected_run['official_docs_url']}\n"
+            f"Docs search: {selected_run.get('docs_search_url') or 'n/a'}\n\n"
+            "Write the following module code:\n"
+            f"{selected_run['generated_module_code']}\n\n"
+            "Write the following test code:\n"
+            f"{selected_run['generated_test_code']}\n\n"
+            "Generated config candidate:\n"
+            f"{selected_run['config_candidate']}"
+        )
+        result = self.programmer.execute_with_retries(
+            instruction=instruction,
+            target_files=[selected_run["target_module"], selected_run["target_test"]],
+            context=context,
+            commit_changes=commit_changes,
+            validator=self._validate_programmer_changes,
+        )
+        result["timestamp"] = self._now_iso()
+        result["applied_run_id"] = selected_run["run_id"]
+        selected_run["programmer_apply"] = result
+        session.programmer_runs.append(result)
+        self._archive_report(
+            session,
+            report_type="trading_terminal_programmer_apply",
+            title=f"Trading Terminal Apply: {selected_run['terminal_name']}",
+            body=result,
+            related_refs=[selected_run["target_module"], selected_run["target_test"]],
+        )
+        self._append_history_event(
+            session,
+            "trading_terminal_integration_applied" if result.get("status") == "ok" else "trading_terminal_integration_apply_failed",
+            "交易终端接入结果已交给 Programmer Agent 写入工作区。"
+            if result.get("status") == "ok"
+            else "交易终端接入结果交给 Programmer Agent 时失败。",
+            {
+                "run_id": selected_run["run_id"],
+                "status": result.get("status"),
+                "commit_hash": result.get("commit_hash"),
+                "changed_files": result.get("changed_files", []),
+            },
+        )
+        self._record_agent_activity(
+            "programmer_agent",
+            "ok" if result.get("status") == "ok" else "error",
+            "apply_trading_terminal_integration",
+            result.get("error") or f"Applied terminal adapter for {selected_run['terminal_name']}.",
             session.session_id,
         )
         return session
@@ -874,6 +1801,9 @@ class WorkflowService:
             "pages/simulation.html",
             "pages/report.html",
             "pages/preferences.html",
+            "pages/configuration.html",
+            "pages/data-source-expansion.html",
+            "pages/trading-terminal-integration.html",
             "pages/strategy.html",
             "pages/intelligence.html",
             "pages/operations.html",
@@ -897,6 +1827,7 @@ class WorkflowService:
                 "Programmer Agent is attached." if self.settings.programmer_agent_enabled else "Programmer Agent is present but disabled by config.",
                 "Enable programmer_agent.enabled and install aider to allow controlled code modification." if not self.settings.programmer_agent_enabled else "No action required.",
             ),
+            self._module_status("trading_terminal_integration_agent", "ok", "Trading Terminal Integration Agent is attached.", "No action required."),
             self._module_status("strategy_registry", "ok", f"Registered strategies: {', '.join(self.strategy_registry.list_types())}.", "Register new strategy implementations here before exposing them to workflow."),
             self._module_status("monitoring_agents", "ok", "User, strategy, and market monitors are enabled in workflow.", "No action required."),
             self._module_status("strategy_check_agents", "ok", "Integrity checker and stress/overfit checker are enforced before approval.", "No action required."),
@@ -927,6 +1858,7 @@ class WorkflowService:
             "modules": modules,
             "libraries": self._library_diagnostics(),
             "agents": self._agent_diagnostics(),
+            "performance": self._performance_snapshot(),
             "recent_agent_logs": self.agent_activity_log[-30:],
             "recent_errors": [item for item in self.agent_activity_log if item["status"] == "error"][-10:],
             "token_usage": self.llm_runtime.usage_snapshot(),
@@ -944,12 +1876,43 @@ class WorkflowService:
     def _run_strategy_checks(self, session: WorkflowSession) -> list[dict]:
         behavior = (session.profile_evolution or {}).get("effective_profile") or session.behavioral_report or {}
         strategy = session.strategy_package or {}
-        candidate = strategy.get("candidate") or {}
+        check_target = strategy.get("selected_check_target") or {}
+        candidate = check_target.get("candidate") or strategy.get("candidate") or {}
         compatibility = strategy.get("behavioral_compatibility", 0.0)
         return [
             self.strategy_integrity_checker.evaluate(strategy, candidate),
             self.strategy_stress_checker.evaluate(strategy, candidate, behavior, compatibility),
         ]
+
+    def _resolve_check_target(
+        self,
+        winner: dict,
+        baseline_candidate: dict,
+        baseline_evaluation: dict,
+        variants: list[dict],
+    ) -> dict:
+        winner_id = winner.get("variant_id")
+        if winner_id == "baseline":
+            return {
+                "variant_id": "baseline",
+                "candidate": baseline_candidate,
+                "evaluation": baseline_evaluation,
+                "source": "baseline_candidate",
+            }
+        selected_variant = next((item for item in variants if item.get("variant_id") == winner_id), None)
+        if selected_variant is None:
+            return {
+                "variant_id": "baseline",
+                "candidate": baseline_candidate,
+                "evaluation": baseline_evaluation,
+                "source": "baseline_candidate_fallback",
+            }
+        return {
+            "variant_id": selected_variant["variant_id"],
+            "candidate": selected_variant["candidate"],
+            "evaluation": selected_variant["evaluation"],
+            "source": "candidate_variant",
+        }
 
     def _effective_behavior_report(self, session: WorkflowSession) -> BehavioralReport:
         profile = (session.profile_evolution or {}).get("effective_profile") or session.behavioral_report
@@ -964,8 +1927,285 @@ class WorkflowService:
                 notes=list(profile.get("notes", [])) if isinstance(profile.get("notes", []), list) else [],
             )
 
+    def _get_iteration_context(
+        self,
+        session: WorkflowSession,
+        strategy_type: str,
+        expanded: list[str],
+    ) -> dict:
+        profile = (session.profile_evolution or {}).get("effective_profile") or session.behavioral_report or {}
+        cache_key = (
+            str(session.session_id),
+            strategy_type,
+            tuple(expanded),
+            self._target_holding_days(session.trading_preferences),
+            repr(profile),
+        )
+        if self.settings.performance_enabled:
+            cached = self._iteration_context_cache.get(cache_key)
+            if cached is not None:
+                self._performance_counters["iteration_context_hits"] += 1
+                return cached
+            self._performance_counters["iteration_context_misses"] += 1
+
+        features = self.feature_pipeline.build(
+            behavioral_report=session.behavioral_report,
+            profile_evolution=session.profile_evolution,
+            trading_preferences=session.trading_preferences,
+            market_snapshots=session.market_snapshots,
+            intelligence_runs=session.intelligence_runs,
+            financials_runs=session.financials_runs,
+            dark_pool_runs=session.dark_pool_runs,
+            options_runs=session.options_runs,
+        )
+
+        latest_market = features["market"]
+        base_trend = 0.58 if strategy_type == "trend_following_aligned" else 0.18 if strategy_type == "mean_reversion_aligned" else 0.42
+        base_event_risk = 0.32
+
+        market = MarketSnapshot(
+            symbol=latest_market.get("symbol") or expanded[0],
+            expected_return_pct=16.0,
+            realized_volatility_pct=28.0,
+            trend_score=base_trend,
+            event_risk_score=base_event_risk,
+            liquidity_score=0.92,
+        )
+        user = UserProfile(
+            user_id=str(session.session_id),
+            preferred_assets=expanded,
+            capital_base=session.starting_capital,
+            target_holding_days=self._target_holding_days(session.trading_preferences),
+            self_reported_risk_tolerance=0.5,
+            confidence_level=0.55,
+        )
+        behavior = self._effective_behavior_report(session)
+        policy = self.evolver.derive_risk_policy(user, behavior)
+        context = {
+            "market": market,
+            "user": user,
+            "behavior": behavior,
+            "policy": policy,
+            "features": features,
+        }
+        if self.settings.performance_enabled:
+            self._iteration_context_cache[cache_key] = context
+            while len(self._iteration_context_cache) > self.settings.performance_dataset_plan_cache_size:
+                first_key = next(iter(self._iteration_context_cache))
+                self._iteration_context_cache.pop(first_key, None)
+        return context
+
+    def _performance_snapshot(self) -> dict:
+        return {
+            "enabled": self.settings.performance_enabled,
+            "mode": "memory_incremental" if self.settings.performance_enabled else "disabled",
+            "dataset_plan_cache": {
+                "entries": len(self._dataset_plan_cache),
+                "max_entries": self.settings.performance_dataset_plan_cache_size,
+                "hits": self._performance_counters["dataset_plan_hits"],
+                "misses": self._performance_counters["dataset_plan_misses"],
+            },
+            "iteration_context_cache": {
+                "entries": len(self._iteration_context_cache),
+                "max_entries": self.settings.performance_dataset_plan_cache_size,
+                "hits": self._performance_counters["iteration_context_hits"],
+                "misses": self._performance_counters["iteration_context_misses"],
+            },
+            "candidate_evaluation_cache": {
+                "entries": len(self._candidate_eval_cache),
+                "max_entries": self.settings.performance_dataset_plan_cache_size * 8,
+                "hits": self._performance_counters["candidate_eval_hits"],
+                "misses": self._performance_counters["candidate_eval_misses"],
+            },
+            "intelligence_cache": {
+                "entries": len(self._intelligence_cache),
+                "max_entries": self.settings.performance_market_data_cache_size,
+                "hits": self._performance_counters["intelligence_hits"],
+                "misses": self._performance_counters["intelligence_misses"],
+            },
+            "market_data_cache": self.market_data.cache_stats(),
+            "llm_cache": self.llm_runtime.cache_stats(),
+        }
+
+    def _get_intelligence_cache(self, key: tuple) -> dict | None:
+        if not self.settings.performance_enabled:
+            return None
+        cached = self._intelligence_cache.get(key)
+        if cached is not None:
+            self._performance_counters["intelligence_hits"] += 1
+            return dict(cached)
+        self._performance_counters["intelligence_misses"] += 1
+        return None
+
+    def _set_intelligence_cache(self, key: tuple, value: dict) -> None:
+        if not self.settings.performance_enabled:
+            return
+        self._intelligence_cache[key] = dict(value)
+        while len(self._intelligence_cache) > self.settings.performance_market_data_cache_size:
+            first_key = next(iter(self._intelligence_cache))
+            self._intelligence_cache.pop(first_key, None)
+
     def _module_status(self, name: str, status: str, detail: str, recommendation: str) -> dict:
         return {"name": name, "status": status, "detail": detail, "recommendation": recommendation}
+
+    def _extract_intelligence_factors(self, documents: list[dict], report: dict | None = None) -> dict:
+        report = report or {}
+        positive = sum(1 for item in documents if float(item.get("sentiment_hint", 0.0)) > 0.15)
+        negative = sum(1 for item in documents if float(item.get("sentiment_hint", 0.0)) < -0.15)
+        unique_sources = sorted({item.get("source", "unknown") for item in documents})
+        source_diversity = round(min(1.0, len(unique_sources) / max(1, len(documents))), 4)
+        sentiment_balance = round((positive - negative) / max(1, len(documents)), 4)
+        contradiction_score = round(min(1.0, (1 if positive else 0) + (1 if negative else 0)) * 0.5, 4)
+        credibility_score = round(
+            min(
+                1.0,
+                (
+                    0.35 * source_diversity
+                    + 0.35 * min(1.0, len(documents) / 6)
+                    + 0.3 * (1.0 - contradiction_score)
+                ),
+            ),
+            4,
+        )
+        return {
+            "document_count": len(documents),
+            "source_count": len(unique_sources),
+            "source_diversity_score": source_diversity,
+            "sentiment_balance": sentiment_balance,
+            "credibility_score": credibility_score,
+            "contradiction_score": contradiction_score,
+            "dominant_tone": report.get("dominant_tone", "mixed"),
+        }
+
+    def _extract_financial_factors(self, payload: dict) -> dict:
+        normalized = payload.get("normalized", {})
+        statements = normalized.get("statements", [])
+        first = statements[0] if statements else {}
+        revenue = first.get("revenue")
+        net_income = first.get("net_income")
+        overall_weight = float(normalized.get("overall_weight", 0.0) or 0.0)
+        quality_score = round(min(1.0, overall_weight * 0.5 + (0.25 if revenue is not None else 0.0) + (0.25 if net_income is not None else 0.0)), 4)
+        deterioration_score = round(max(0.0, 1.0 - quality_score), 4)
+        return {
+            "quality_score": quality_score,
+            "deterioration_score": deterioration_score,
+            "statement_count": len(statements),
+            "overall_weight": overall_weight,
+            "report_period": normalized.get("report_period") or payload.get("fiscal_period") or payload.get("fiscalDateEnding"),
+        }
+
+    def _extract_dark_pool_factors(self, payload: dict) -> dict:
+        normalized = payload.get("normalized", {})
+        records = normalized.get("records", [])
+        total_shares = sum(float(item.get("shares", item.get("volume", 0)) or 0) for item in records[:10])
+        overall_weight = float(normalized.get("overall_weight", 0.0) or 0.0)
+        accumulation_score = round(min(1.0, overall_weight * 0.5 + min(0.5, total_shares / 1000000)), 4)
+        return {
+            "accumulation_score": accumulation_score,
+            "record_count": len(records),
+            "total_recent_shares": round(total_shares, 2),
+            "overall_weight": overall_weight,
+        }
+
+    def _extract_options_factors(self, payload: dict) -> dict:
+        normalized = payload.get("normalized", {})
+        contracts = normalized.get("contracts", [])
+        total_open_interest = sum(float(item.get("open_interest", 0) or 0) for item in contracts[:20])
+        avg_iv = 0.0
+        iv_values = [float(item.get("implied_volatility", item.get("iv", 0)) or 0) for item in contracts[:20] if item.get("implied_volatility", item.get("iv")) is not None]
+        if iv_values:
+            avg_iv = sum(iv_values) / len(iv_values)
+        overall_weight = float(normalized.get("overall_weight", 0.0) or 0.0)
+        options_pressure_score = round(min(1.0, overall_weight * 0.4 + min(0.3, total_open_interest / 100000) + min(0.3, avg_iv / 2)), 4)
+        return {
+            "options_pressure_score": options_pressure_score,
+            "contract_count": len(contracts),
+            "total_open_interest": round(total_open_interest, 2),
+            "average_iv": round(avg_iv, 4),
+            "overall_weight": overall_weight,
+        }
+
+    def _record_information_event(
+        self,
+        session: WorkflowSession,
+        *,
+        anchor: str,
+        category: str,
+        summary: str,
+        factors: dict,
+        provider: str | None,
+        related_refs: list[str] | None,
+    ) -> None:
+        session.information_events.append(
+            {
+                "event_id": f"info-{len(session.information_events) + 1}",
+                "timestamp": self._now_iso(),
+                "anchor": anchor,
+                "category": category,
+                "summary": summary,
+                "provider": provider,
+                "factors": factors,
+                "related_refs": related_refs or [],
+            }
+        )
+
+    def _build_input_manifest(
+        self,
+        *,
+        selected_universe: list[str],
+        dataset_plan: dict,
+        features: dict,
+        objective_metric: str,
+    ) -> dict:
+        meta = features.get("meta") or {}
+        lineage = features.get("source_lineage") or {}
+        data_quality = features.get("data_quality") or {}
+        return {
+            "objective_metric": objective_metric,
+            "selected_universe": selected_universe,
+            "selected_universe_size": len(selected_universe),
+            "dataset_protocol": dataset_plan.get("protocol"),
+            "walk_forward_windows": len(dataset_plan.get("walk_forward_windows") or []),
+            "data_bundle_id": meta.get("data_bundle_id"),
+            "feature_snapshot_version": meta.get("snapshot_hash"),
+            "available_sections": data_quality.get("available_sections") or [],
+            "provider_coverage": data_quality.get("provider_coverage") or [],
+            "source_lineage": lineage,
+        }
+
+    def _register_data_bundle(self, session: WorkflowSession, manifest: dict) -> None:
+        bundle_id = manifest.get("data_bundle_id")
+        if not bundle_id:
+            return
+        existing = next((item for item in session.data_bundles if item.get("data_bundle_id") == bundle_id), None)
+        if existing is not None:
+            existing["last_used_at"] = self._now_iso()
+            existing["usage_count"] = int(existing.get("usage_count", 1)) + 1
+            return
+        session.data_bundles.append(
+            {
+                "data_bundle_id": bundle_id,
+                "feature_snapshot_version": manifest.get("feature_snapshot_version"),
+                "dataset_protocol": manifest.get("dataset_protocol"),
+                "selected_universe": manifest.get("selected_universe") or [],
+                "selected_universe_size": manifest.get("selected_universe_size"),
+                "available_sections": manifest.get("available_sections") or [],
+                "provider_coverage": manifest.get("provider_coverage") or [],
+                "source_lineage": manifest.get("source_lineage") or {},
+                "created_at": self._now_iso(),
+                "last_used_at": self._now_iso(),
+                "usage_count": 1,
+            }
+        )
+        self._append_history_event(
+            session,
+            "data_bundle_registered",
+            "训练输入数据包已登记。",
+            {
+                "data_bundle_id": bundle_id,
+                "dataset_protocol": manifest.get("dataset_protocol"),
+            },
+        )
 
     def _apply_feedback_evolution(self, session: WorkflowSession, feedback: str, strategy_type: str) -> None:
         if not feedback:
@@ -1139,6 +2379,8 @@ class WorkflowService:
             "strategy_integrity_checker",
             "strategy_stress_checker",
             "programmer_agent",
+            "data_source_expansion_agent",
+            "trading_terminal_integration_agent",
             "workflow_service",
         ]
         diagnostics: list[dict] = []

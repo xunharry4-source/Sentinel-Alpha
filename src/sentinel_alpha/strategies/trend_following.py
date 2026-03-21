@@ -29,6 +29,7 @@ class TrendFollowingAlignedStrategy(TradingStrategy):
                         "Follow persistent trend only when event risk remains bounded.",
                         f"trend_score={context.market.trend_score:.2f}",
                         f"event_risk_score={context.market.event_risk_score:.2f}",
+                        f"feature_snapshot_available={'yes' if context.features else 'no'}",
                     ],
                 )
             ],
@@ -40,5 +41,6 @@ class TrendFollowingAlignedStrategy(TradingStrategy):
             metadata={
                 "style": "trend_following",
                 "selected_universe_size": len(context.selected_universe),
+                "feature_bundle": "enabled" if context.features else "disabled",
             },
         )

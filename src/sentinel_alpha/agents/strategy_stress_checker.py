@@ -26,6 +26,13 @@ class StrategyStressCheckerAgent:
         noise_sensitivity = float(behavior.get("noise_sensitivity", 0.0) or 0.0)
         overtrading_tendency = float(behavior.get("overtrading_tendency", 0.0) or 0.0)
         bottom_fishing_tendency = float(behavior.get("bottom_fishing_tendency", 0.0) or 0.0)
+        recommended_evaluation = ((strategy.get("recommended_variant") or {}).get("evaluation")) or {}
+        dataset_evaluation = recommended_evaluation.get("dataset_evaluation") or {}
+        stability = dataset_evaluation.get("stability") or {}
+        train_metrics = dataset_evaluation.get("train") or {}
+        validation_metrics = dataset_evaluation.get("validation") or {}
+        test_metrics = dataset_evaluation.get("test") or {}
+        walk_forward_results = dataset_evaluation.get("walk_forward") or []
 
         metrics["selected_universe_size"] = universe_size
         metrics["parameter_count"] = parameter_count
@@ -34,6 +41,13 @@ class StrategyStressCheckerAgent:
         metrics["overtrading_tendency"] = round(overtrading_tendency, 4)
         metrics["bottom_fishing_tendency"] = round(bottom_fishing_tendency, 4)
         metrics["strategy_type"] = strategy_type
+        metrics["train_objective_score"] = round(float(train_metrics.get("objective_score", 0.0) or 0.0), 4)
+        metrics["validation_objective_score"] = round(float(validation_metrics.get("objective_score", 0.0) or 0.0), 4)
+        metrics["test_objective_score"] = round(float(test_metrics.get("objective_score", 0.0) or 0.0), 4)
+        metrics["walk_forward_score"] = round(float(stability.get("walk_forward_score", 0.0) or 0.0), 4)
+        metrics["stability_score"] = round(float(stability.get("score", 0.0) or 0.0), 4)
+        metrics["train_test_gap"] = round(float(stability.get("train_test_gap", 0.0) or 0.0), 4)
+        metrics["walk_forward_windows"] = len(walk_forward_results)
 
         if universe_size < 5:
             flags.append("too_small_trade_universe")
@@ -56,6 +70,15 @@ class StrategyStressCheckerAgent:
         if strategy_type == "trend_following_aligned" and compatibility < 0.65:
             flags.append("trend_following_not_stable_under_current_profile")
             required_fix_actions.append("Tighten the trend filter or select a less behavior-sensitive strategy family.")
+        if validation_metrics and test_metrics and float(test_metrics.get("objective_score", 0.0) or 0.0) < 0.55:
+            flags.append("out_of_sample_score_too_low")
+            required_fix_actions.append("Rework the strategy against the test window before approval.")
+        if stability and float(stability.get("train_test_gap", 0.0) or 0.0) > 0.18:
+            flags.append("train_test_gap_too_wide")
+            required_fix_actions.append("Reduce regime-specific tuning and improve generalization across train/test windows.")
+        if stability and float(stability.get("walk_forward_score", 0.0) or 0.0) < 0.58:
+            flags.append("walk_forward_instability")
+            required_fix_actions.append("Improve walk-forward stability before the next iteration.")
 
         score = 1.0
         score -= 0.30 if universe_size < 5 else 0.0
@@ -65,6 +88,9 @@ class StrategyStressCheckerAgent:
         score -= 0.10 if overtrading_tendency > 0.85 else 0.0
         score -= 0.20 if strategy_type == "mean_reversion_aligned" and bottom_fishing_tendency > 0.45 else 0.0
         score -= 0.10 if strategy_type == "trend_following_aligned" and compatibility < 0.65 else 0.0
+        score -= 0.20 if validation_metrics and test_metrics and float(test_metrics.get("objective_score", 0.0) or 0.0) < 0.55 else 0.0
+        score -= 0.20 if stability and float(stability.get("train_test_gap", 0.0) or 0.0) > 0.18 else 0.0
+        score -= 0.15 if stability and float(stability.get("walk_forward_score", 0.0) or 0.0) < 0.58 else 0.0
         score = max(0.0, round(score, 2))
 
         status = "pass"
@@ -75,6 +101,9 @@ class StrategyStressCheckerAgent:
                 "low_behavioral_compatibility",
                 "parameter_density_too_high",
                 "mean_reversion_conflicts_with_bottom_fishing_profile",
+                "out_of_sample_score_too_low",
+                "train_test_gap_too_wide",
+                "walk_forward_instability",
             )
         ):
             status = "fail"

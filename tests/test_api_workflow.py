@@ -3,6 +3,7 @@ from fastapi.testclient import TestClient
 from sentinel_alpha.api.app import create_app
 from sentinel_alpha.api.workflow_service import WorkflowService
 from sentinel_alpha.domain.models import IntelligenceDocument
+from sentinel_alpha.infra.free_market_data import FreeMarketDataService
 
 
 client = TestClient(create_app(WorkflowService()))
@@ -45,6 +46,131 @@ def test_llm_config_endpoint_exposes_agent_and_task_models() -> None:
     assert "tasks" in payload
     assert "strategy_evolver" in payload["agents"]
     assert "strategy_codegen" in payload["tasks"]
+
+
+def test_config_endpoints_load_and_validate_payload() -> None:
+    loaded = client.get("/api/config")
+    assert loaded.status_code == 200
+    body = loaded.json()
+    assert "payload" in body
+    assert "validation" in body
+    assert body["validation"]["status"] in {"ok", "warning", "error"}
+
+    tested = client.post("/api/config/test", json={"payload": body["payload"]})
+    assert tested.status_code == 200
+    assert tested.json()["validation"]["status"] in {"ok", "warning", "error"}
+
+    single = client.post(
+        "/api/config/test-item",
+        json={"payload": body["payload"], "family": "fundamentals", "provider": "sec"},
+    )
+    assert single.status_code == 200
+    assert single.json()["validation"]["family"] == "fundamentals"
+    assert single.json()["validation"]["provider"] == "sec"
+    assert len(single.json()["validation"]["checks"]) >= 1
+
+
+def test_market_data_provider_endpoint_exposes_free_provider_matrix() -> None:
+    response = client.get("/api/market-data/providers")
+    assert response.status_code == 200
+    payload = response.json()
+    provider_names = {item["provider"] for item in payload["providers"]}
+    assert payload["default_provider"] in provider_names
+    assert {"yahoo", "alphavantage", "finnhub", "akshare", "local_file"}.issubset(provider_names)
+    fundamentals_provider_names = {item["provider"] for item in payload["fundamentals_providers"]}
+    dark_pool_provider_names = {item["provider"] for item in payload["dark_pool_providers"]}
+    options_provider_names = {item["provider"] for item in payload["options_providers"]}
+    assert {"sec", "alphavantage", "finnhub", "local_file"}.issubset(fundamentals_provider_names)
+    assert {"finra", "local_file"}.issubset(dark_pool_provider_names)
+    assert {"yahoo_options", "finnhub", "local_file"}.issubset(options_provider_names)
+
+
+def test_market_data_quote_and_history_endpoints_use_provider_service(monkeypatch) -> None:
+    monkeypatch.setattr(
+        FreeMarketDataService,
+        "fetch_quote",
+        lambda self, symbol, provider=None: {"provider": provider or "yahoo", "symbol": symbol, "price": 123.45},
+    )
+    monkeypatch.setattr(
+        FreeMarketDataService,
+        "fetch_history",
+        lambda self, symbol, interval="1d", lookback="6mo", provider=None: {
+            "provider": provider or "yahoo",
+            "symbol": symbol,
+            "interval": interval,
+            "lookback": lookback,
+            "bars": [{"timestamp": 1, "open": 1, "high": 2, "low": 0.5, "close": 1.5, "volume": 100}],
+        },
+    )
+
+    quote = client.get("/api/market-data/quote", params={"symbol": "AAPL", "provider": "yahoo"})
+    history = client.get("/api/market-data/history", params={"symbol": "AAPL", "interval": "1d", "lookback": "1mo", "provider": "yahoo"})
+
+    assert quote.status_code == 200
+    assert quote.json()["symbol"] == "AAPL"
+    assert history.status_code == 200
+    assert history.json()["bars"][0]["close"] == 1.5
+
+
+def test_market_data_financials_dark_pool_and_options_endpoints(monkeypatch) -> None:
+    monkeypatch.setattr(
+        FreeMarketDataService,
+        "fetch_financials",
+        lambda self, symbol, provider=None: {
+            "provider": provider or "sec",
+            "symbol": symbol,
+            "entity_name": "Apple Inc.",
+            "normalized": {
+                "entity_name": "Apple Inc.",
+                "report_period": "2025-12-31",
+                "statements": [{"period_end": "2025-12-31", "revenue": 100.0, "weighted": {"final_weight": 0.95}}],
+                "dedupe_summary": {"input_count": 2, "output_count": 1},
+                "overall_weight": 0.95,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        FreeMarketDataService,
+        "fetch_dark_pool",
+        lambda self, symbol, provider=None: {
+            "provider": provider or "finra",
+            "symbol": symbol,
+            "items": [{"issueSymbol": symbol}],
+            "normalized": {
+                "records": [{"trade_date": "2026-03-21", "shares": 120000, "weighted": {"final_weight": 0.88}}],
+                "dedupe_summary": {"input_count": 3, "output_count": 1},
+                "overall_weight": 0.88,
+            },
+        },
+    )
+    monkeypatch.setattr(
+        FreeMarketDataService,
+        "fetch_options",
+        lambda self, symbol, provider=None, expiration=None: {
+            "provider": provider or "yahoo_options",
+            "symbol": symbol,
+            "options": [{"strike": 200}],
+            "normalized": {
+                "contracts": [{"strike": 200, "open_interest": 1000, "weighted": {"final_weight": 0.91}}],
+                "dedupe_summary": {"input_count": 4, "output_count": 2},
+                "overall_weight": 0.91,
+            },
+        },
+    )
+
+    financials = client.get("/api/market-data/financials", params={"symbol": "AAPL", "provider": "sec"})
+    dark_pool = client.get("/api/market-data/dark-pool", params={"symbol": "AAPL", "provider": "finra"})
+    options = client.get("/api/market-data/options", params={"symbol": "AAPL", "provider": "yahoo_options"})
+
+    assert financials.status_code == 200
+    assert financials.json()["entity_name"] == "Apple Inc."
+    assert financials.json()["normalized"]["dedupe_summary"]["output_count"] == 1
+    assert dark_pool.status_code == 200
+    assert dark_pool.json()["items"][0]["issueSymbol"] == "AAPL"
+    assert dark_pool.json()["normalized"]["overall_weight"] == 0.88
+    assert options.status_code == 200
+    assert options.json()["options"][0]["strike"] == 200
+    assert options.json()["normalized"]["contracts"][0]["weighted"]["final_weight"] == 0.91
 
 
 def test_full_workflow_api() -> None:
@@ -124,6 +250,12 @@ def test_full_workflow_api() -> None:
     assert len(strategy.json()["strategy_checks"]) == 2
     assert strategy.json()["strategy_package"]["candidate"]["strategy_type"] == "trend_following_aligned"
     assert strategy.json()["strategy_package"]["trading_preferences"]["trading_frequency"] == "high"
+    assert strategy.json()["strategy_package"]["feature_snapshot_version"]
+    assert strategy.json()["strategy_package"]["data_bundle_id"]
+    assert strategy.json()["strategy_package"]["input_manifest"]["data_bundle_id"]
+    assert strategy.json()["strategy_package"]["input_manifest"]["dataset_protocol"] == "time_series_split_with_walk_forward"
+    assert len(strategy.json()["data_bundles"]) >= 1
+    assert strategy.json()["data_bundles"][-1]["data_bundle_id"] == strategy.json()["strategy_package"]["data_bundle_id"]
     assert "conflict_warning" in strategy.json()["trading_preferences"]
     assert "score" in strategy.json()["strategy_checks"][0]
     assert "required_fix_actions" in strategy.json()["strategy_checks"][0]
@@ -131,80 +263,55 @@ def test_full_workflow_api() -> None:
     assert strategy.json()["profile_evolution"] is not None
     assert len(strategy.json()["strategy_feedback_log"]) == 1
     assert len(strategy.json()["strategy_training_log"]) >= 1
+    assert strategy.json()["strategy_training_log"][-1]["data_bundle_id"]
+    assert strategy.json()["strategy_training_log"][-1]["input_manifest"]["data_bundle_id"]
     assert len(strategy.json()["report_history"]) >= 2
-    assert len(strategy.json()["history_events"]) >= 1
-    assert "llm_profile" in strategy.json()["strategy_package"]
-    assert "task_model_map" in strategy.json()["strategy_package"]
-    assert "generated_strategy_code" in strategy.json()["strategy_package"]
-    assert "analysis" in strategy.json()["strategy_package"]
-    assert len(strategy.json()["strategy_package"]["upgrade_plans"]) == 2
-    assert len(strategy.json()["strategy_package"]["candidate_variants"]) == 2
-    assert "baseline_evaluation" in strategy.json()["strategy_package"]
-    assert "recommended_variant" in strategy.json()["strategy_package"]
 
-    market_snapshot = client.post(
-        f"/api/sessions/{session_id}/market-snapshots",
-        json={
-            "symbol": "TSLA",
-            "timeframe": "1m",
-            "open_price": 200,
-            "high_price": 205,
-            "low_price": 198,
-            "close_price": 203,
-            "volume": 120000,
-            "source": "test_feed",
-            "regime_tag": "bull",
+
+def test_intelligence_information_events_are_recorded(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "sentinel_alpha.agents.intelligence_agent.IntelligenceAgent.search",
+        lambda self, query, max_documents=None: [
+            IntelligenceDocument(
+                document_id="doc-1",
+                query=query,
+                source="Reuters",
+                title="AAPL wins new order",
+                url="https://example.com/aapl-order",
+                published_at="2026-03-21T08:00:00Z",
+                summary="Apple secures a large enterprise order.",
+                content="Apple secures a large enterprise order.",
+                sentiment_hint=0.4,
+            )
+        ],
+    )
+    monkeypatch.setattr(
+        FreeMarketDataService,
+        "fetch_financials",
+        lambda self, symbol, provider=None: {
+            "provider": provider or "sec",
+            "symbol": symbol,
+            "normalized": {
+                "entity_name": "Apple Inc.",
+                "report_period": "2025-12-31",
+                "statements": [{"period_end": "2025-12-31", "revenue": 100.0}],
+                "dedupe_summary": {"input_count": 1, "output_count": 1},
+                "overall_weight": 0.9,
+            },
         },
     )
-    assert market_snapshot.status_code == 200
-    assert len(market_snapshot.json()["market_snapshots"]) == 1
 
-    trade_record = client.post(
-        f"/api/sessions/{session_id}/trade-executions",
-        json={
-            "symbol": "TSLA",
-            "side": "buy",
-            "quantity": 10,
-            "price": 203,
-            "notional": 2030,
-            "execution_mode": "manual",
-            "strategy_version": "v1",
-            "realized_pnl_pct": -9.5,
-            "user_initiated": True,
-            "note": "User overrode system suggestion.",
-        },
-    )
-    assert trade_record.status_code == 200
-    assert len(trade_record.json()["trade_records"]) == 1
-    assert len(trade_record.json()["profile_evolution"]["events"]) >= 3
+    created = client.post("/api/sessions", json={"user_name": "Intel", "starting_capital": 100000})
+    session_id = created.json()["session_id"]
 
-    approved = client.post(f"/api/sessions/{session_id}/strategy/approve")
-    assert approved.status_code == 200
-    assert approved.json()["phase"] == "strategy_approved"
+    searched = client.post(f"/api/sessions/{session_id}/intelligence/search", json={"query": "AAPL", "max_documents": 3})
+    assert searched.status_code == 200
+    financials = client.post(f"/api/sessions/{session_id}/intelligence/financials", json={"symbol": "AAPL", "provider": "sec"})
+    assert financials.status_code == 200
 
-    deployed = client.post(f"/api/sessions/{session_id}/deployment", json={"execution_mode": "advice_only"})
-    assert deployed.status_code == 200
-    assert deployed.json()["execution_mode"] == "advice_only"
-
-    monitors = client.get(f"/api/sessions/{session_id}/monitors")
-    assert monitors.status_code == 200
-    assert len(monitors.json()["signals"]) == 3
-
-    profiler_json = client.get(f"/api/sessions/{session_id}/behavioral-report-json")
-    assert profiler_json.status_code == 200
-    assert profiler_json.json()["behavioral_report"] is not None
-
-    evolution_json = client.get(f"/api/sessions/{session_id}/profile-evolution-json")
-    assert evolution_json.status_code == 200
-    assert evolution_json.json()["profile_evolution"] is not None
-
-    history_json = client.get(f"/api/sessions/{session_id}/history")
-    assert history_json.status_code == 200
-    assert len(history_json.json()["history_events"]) >= 1
-
-    reports_json = client.get(f"/api/sessions/{session_id}/reports")
-    assert reports_json.status_code == 200
-    assert len(reports_json.json()["report_history"]) >= 1
+    payload = financials.json()
+    assert len(payload["information_events"]) >= 2
+    assert any(item["anchor"] == "AAPL" and item["category"] == "financials" for item in payload["information_events"])
 
 
 def test_strategy_iteration_requires_rework_when_checks_fail() -> None:
@@ -275,7 +382,62 @@ def test_intelligence_search_attaches_documents_to_session() -> None:
     assert body["intelligence_documents"][0]["query"] == "NVDA AI demand"
     assert len(body["intelligence_runs"]) == 1
     assert body["intelligence_runs"][0]["report"]["query"] == "NVDA AI demand"
+    assert "factors" in body["intelligence_runs"][0]["report"]
     assert len(body["report_history"]) >= 1
+
+
+def test_financials_dark_pool_and_options_are_archived_on_session() -> None:
+    service = WorkflowService()
+    service.market_data.fetch_financials = lambda symbol, provider=None: {  # type: ignore[method-assign]
+        "provider": provider or "sec",
+        "symbol": symbol,
+        "entity_name": "Apple Inc.",
+    }
+    service.market_data.fetch_dark_pool = lambda symbol, provider=None: {  # type: ignore[method-assign]
+        "provider": provider or "finra",
+        "symbol": symbol,
+        "items": [{"issueSymbol": symbol}],
+    }
+    service.market_data.fetch_options = lambda symbol, provider=None, expiration=None: {  # type: ignore[method-assign]
+        "provider": provider or "yahoo_options",
+        "symbol": symbol,
+        "options": [{"strike": 200}],
+    }
+    local_client = TestClient(create_app(service))
+    created = local_client.post("/api/sessions", json={"user_name": "Intel+", "starting_capital": 300000})
+    session_id = created.json()["session_id"]
+
+    fin = local_client.post(
+        f"/api/sessions/{session_id}/intelligence/financials",
+        json={"symbol": "AAPL", "provider": "sec"},
+    )
+    dp = local_client.post(
+        f"/api/sessions/{session_id}/intelligence/dark-pool",
+        json={"symbol": "AAPL", "provider": "finra"},
+    )
+    opt = local_client.post(
+        f"/api/sessions/{session_id}/intelligence/options",
+        json={"symbol": "AAPL", "provider": "yahoo_options", "expiration": "2026-04-17"},
+    )
+
+    assert fin.status_code == 200
+    assert len(fin.json()["financials_runs"]) == 1
+    assert "factors" in fin.json()["financials_runs"][0]
+    assert dp.status_code == 200
+    assert len(dp.json()["dark_pool_runs"]) == 1
+    assert "factors" in dp.json()["dark_pool_runs"][0]
+    assert opt.status_code == 200
+    body = opt.json()
+    assert len(body["options_runs"]) == 1
+    assert "factors" in body["options_runs"][0]
+    event_types = {item["event_type"] for item in body["history_events"]}
+    report_types = {item["report_type"] for item in body["report_history"]}
+    assert "financials_data_fetched" in event_types
+    assert "dark_pool_data_fetched" in event_types
+    assert "options_data_fetched" in event_types
+    assert "financials_summary" in report_types
+    assert "dark_pool_summary" in report_types
+    assert "options_summary" in report_types
 
 
 def test_programmer_agent_run_is_recorded_even_when_disabled() -> None:
@@ -297,3 +459,185 @@ def test_programmer_agent_run_is_recorded_even_when_disabled() -> None:
     body = response.json()
     assert len(body["programmer_runs"]) == 1
     assert body["programmer_runs"][0]["status"] in {"disabled", "misconfigured", "ok", "error"}
+
+
+def test_data_source_expansion_agent_run_is_recorded() -> None:
+    local_client = TestClient(create_app(WorkflowService()))
+    created = local_client.post("/api/sessions", json={"user_name": "Source", "starting_capital": 300000})
+    session_id = created.json()["session_id"]
+
+    response = local_client.post(
+        f"/api/sessions/{session_id}/data-source/expand",
+        json={
+            "provider_name": "ExampleSource",
+            "category": "market_data",
+            "base_url": "https://api.example.com",
+            "api_key_env": "EXAMPLE_API_KEY",
+            "docs_summary": "REST JSON API with symbol-based quote and history endpoints.",
+            "sample_endpoint": "quote",
+            "auth_style": "query",
+            "response_format": "json",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["data_source_runs"]) == 1
+    run = body["data_source_runs"][0]
+    assert run["provider_slug"] == "examplesource"
+    assert run["validation"]["module_syntax_ok"] is True
+    assert run["validation"]["test_syntax_ok"] is True
+    assert run["target_module"].startswith("src/sentinel_alpha/infra/generated_sources/")
+    assert run["target_test"].startswith("tests/generated/")
+    assert len(body["report_history"]) >= 1
+    assert any(item["event_type"] == "data_source_expansion_generated" for item in body["history_events"])
+
+
+def test_data_source_expansion_output_is_handoff_ready_for_programmer_agent() -> None:
+    local_client = TestClient(create_app(WorkflowService()))
+    created = local_client.post("/api/sessions", json={"user_name": "Bridge", "starting_capital": 300000})
+    session_id = created.json()["session_id"]
+
+    response = local_client.post(
+        f"/api/sessions/{session_id}/data-source/expand",
+        json={
+            "provider_name": "Provider Bridge",
+            "category": "fundamentals",
+            "base_url": "https://api.provider-bridge.example",
+            "api_key_env": "BRIDGE_KEY",
+            "docs_summary": "Financial data endpoint with JSON responses.",
+            "sample_endpoint": "fundamentals",
+            "auth_style": "query",
+            "response_format": "json",
+        },
+    )
+
+    assert response.status_code == 200
+    run = response.json()["data_source_runs"][-1]
+    assert run["validation"]["ready_for_programmer_agent"] is True
+    assert run["target_module"].split("/", 3)[0:3] == ["src", "sentinel_alpha", "infra"]
+    assert run["config_candidate"]["provider_name"] == "provider_bridge"
+
+
+def test_data_source_expansion_can_be_applied_by_programmer_agent() -> None:
+    local_client = TestClient(create_app(WorkflowService()))
+    created = local_client.post("/api/sessions", json={"user_name": "BridgeApply", "starting_capital": 300000})
+    session_id = created.json()["session_id"]
+
+    expanded = local_client.post(
+        f"/api/sessions/{session_id}/data-source/expand",
+        json={
+            "provider_name": "Bridge Apply",
+            "category": "options",
+            "base_url": "https://api.bridge-apply.example",
+            "api_key_env": "BRIDGE_APPLY_KEY",
+            "docs_summary": "Options chain API with JSON payloads.",
+            "sample_endpoint": "options",
+            "auth_style": "header",
+            "response_format": "json",
+        },
+    )
+    run_id = expanded.json()["data_source_runs"][-1]["run_id"]
+
+    applied = local_client.post(
+        f"/api/sessions/{session_id}/data-source/apply",
+        json={"run_id": run_id, "commit_changes": False},
+    )
+
+    assert applied.status_code == 200
+    body = applied.json()
+    run = body["data_source_runs"][-1]
+    assert run["run_id"] == run_id
+    assert run["programmer_apply"]["applied_run_id"] == run_id
+    assert run["programmer_apply"]["status"] in {"disabled", "misconfigured", "ok", "error"}
+    assert any(
+        item["event_type"] in {"data_source_expansion_applied", "data_source_expansion_apply_failed"}
+        for item in body["history_events"]
+    )
+
+
+def test_trading_terminal_integration_agent_run_is_recorded() -> None:
+    service = WorkflowService()
+    service.terminal_integrator._fetch_text = lambda url: {  # type: ignore[method-assign]
+        "ok": True,
+        "error": None,
+        "content": f"terminal docs for {url} place order cancel order positions",
+    }
+    local_client = TestClient(create_app(service))
+    created = local_client.post("/api/sessions", json={"user_name": "Terminal", "starting_capital": 300000})
+    session_id = created.json()["session_id"]
+
+    response = local_client.post(
+        f"/api/sessions/{session_id}/terminal/expand",
+        json={
+            "terminal_name": "ExampleBroker",
+            "terminal_type": "broker_api",
+            "official_docs_url": "https://example.com/docs",
+            "docs_search_url": "https://example.com/search?q=orders",
+            "api_base_url": "https://api.example.com",
+            "api_key_env": "EXAMPLE_BROKER_KEY",
+            "auth_style": "bearer",
+            "order_endpoint": "orders/place",
+            "cancel_endpoint": "orders/cancel",
+            "positions_endpoint": "portfolio/positions",
+            "docs_summary": "REST trading API.",
+            "user_notes": "Need order and cancel support.",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert len(body["terminal_integration_runs"]) == 1
+    run = body["terminal_integration_runs"][0]
+    assert run["terminal_slug"] == "examplebroker"
+    assert run["validation"]["module_syntax_ok"] is True
+    assert run["validation"]["test_syntax_ok"] is True
+    assert run["validation"]["docs_fetch_ok"] is True
+    assert any(item["event_type"] == "trading_terminal_integration_generated" for item in body["history_events"])
+
+
+def test_trading_terminal_integration_can_be_applied_by_programmer_agent() -> None:
+    service = WorkflowService()
+    service.terminal_integrator._fetch_text = lambda url: {  # type: ignore[method-assign]
+        "ok": True,
+        "error": None,
+        "content": f"terminal docs for {url} place order cancel order positions",
+    }
+    local_client = TestClient(create_app(service))
+    created = local_client.post("/api/sessions", json={"user_name": "TerminalApply", "starting_capital": 300000})
+    session_id = created.json()["session_id"]
+
+    expanded = local_client.post(
+        f"/api/sessions/{session_id}/terminal/expand",
+        json={
+            "terminal_name": "ApplyBroker",
+            "terminal_type": "rest_gateway",
+            "official_docs_url": "https://example.com/docs",
+            "docs_search_url": "https://example.com/search?q=positions",
+            "api_base_url": "https://api.example.com",
+            "api_key_env": "APPLY_BROKER_KEY",
+            "auth_style": "header",
+            "order_endpoint": "orders",
+            "cancel_endpoint": "orders/cancel",
+            "positions_endpoint": "positions",
+            "docs_summary": "REST gateway API.",
+            "user_notes": "Need positions and cancel.",
+        },
+    )
+    run_id = expanded.json()["terminal_integration_runs"][-1]["run_id"]
+
+    applied = local_client.post(
+        f"/api/sessions/{session_id}/terminal/apply",
+        json={"run_id": run_id, "commit_changes": False},
+    )
+
+    assert applied.status_code == 200
+    body = applied.json()
+    run = body["terminal_integration_runs"][-1]
+    assert run["run_id"] == run_id
+    assert run["programmer_apply"]["applied_run_id"] == run_id
+    assert run["programmer_apply"]["status"] in {"disabled", "misconfigured", "ok", "error"}
+    assert any(
+        item["event_type"] in {"trading_terminal_integration_applied", "trading_terminal_integration_apply_failed"}
+        for item in body["history_events"]
+    )

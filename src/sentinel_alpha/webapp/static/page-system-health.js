@@ -47,8 +47,29 @@ function renderTokenUsage(usage) {
     "token-usage-list",
     totals
       .sort((a, b) => Number(b.calls || 0) - Number(a.calls || 0))
-      .map((item) => `${item.task} / ${item.provider}/${item.model} / calls=${item.calls} / in=${item.input_tokens} / out=${item.output_tokens}`),
+      .map((item) => `${item.task} / ${item.provider}/${item.model} / calls=${item.calls} / cache_hits=${item.cache_hits || 0} / in=${item.input_tokens} / out=${item.output_tokens}`),
     "当前还没有 token 使用记录。"
+  );
+}
+
+function renderPerformance(performance) {
+  document.querySelector("#perf-mode").textContent = performance?.mode || "-";
+  document.querySelector("#perf-dataset-hits").textContent = String(performance?.dataset_plan_cache?.hits || 0);
+  document.querySelector("#perf-context-hits").textContent = String(performance?.iteration_context_cache?.hits || 0);
+  document.querySelector("#perf-llm-hits").textContent = String(performance?.llm_cache?.hits || 0);
+  document.querySelector("#perf-eval-hits").textContent = String(performance?.candidate_evaluation_cache?.hits || 0);
+  document.querySelector("#perf-intel-hits").textContent = String(performance?.intelligence_cache?.hits || 0);
+  renderList(
+    "performance-summary-list",
+    [
+      `dataset_plan cache: ${performance?.dataset_plan_cache?.entries || 0}/${performance?.dataset_plan_cache?.max_entries || 0} / hits=${performance?.dataset_plan_cache?.hits || 0} / misses=${performance?.dataset_plan_cache?.misses || 0}`,
+      `iteration_context cache: ${performance?.iteration_context_cache?.entries || 0}/${performance?.iteration_context_cache?.max_entries || 0} / hits=${performance?.iteration_context_cache?.hits || 0} / misses=${performance?.iteration_context_cache?.misses || 0}`,
+      `candidate_evaluation cache: ${performance?.candidate_evaluation_cache?.entries || 0}/${performance?.candidate_evaluation_cache?.max_entries || 0} / hits=${performance?.candidate_evaluation_cache?.hits || 0} / misses=${performance?.candidate_evaluation_cache?.misses || 0}`,
+      `intelligence cache: ${performance?.intelligence_cache?.entries || 0}/${performance?.intelligence_cache?.max_entries || 0} / hits=${performance?.intelligence_cache?.hits || 0} / misses=${performance?.intelligence_cache?.misses || 0}`,
+      `market_data cache: ${performance?.market_data_cache?.entries || 0}/${performance?.market_data_cache?.max_entries || 0} / hits=${performance?.market_data_cache?.hits || 0} / misses=${performance?.market_data_cache?.misses || 0}`,
+      `llm cache: ${performance?.llm_cache?.entries || 0}/${performance?.llm_cache?.max_entries || 0} / hits=${performance?.llm_cache?.hits || 0} / misses=${performance?.llm_cache?.misses || 0}`,
+    ],
+    "当前还没有性能摘要。"
   );
 }
 
@@ -86,6 +107,7 @@ async function refreshSystemHealth() {
     renderCards("system-health-grid", payload.modules || [], "module");
     renderCards("library-health-grid", payload.libraries || [], "module");
     renderCards("agent-health-grid", payload.agents || [], "agent");
+    renderPerformance(payload.performance || {});
     renderErrors(payload.recent_errors || []);
     renderAgentLogs(payload.recent_agent_logs || []);
     renderTokenUsage(payload.token_usage || {});
@@ -96,6 +118,7 @@ async function refreshSystemHealth() {
     renderCards("system-health-grid", [], "module");
     renderCards("library-health-grid", [], "module");
     renderCards("agent-health-grid", [], "agent");
+    renderPerformance({});
     renderErrors([]);
     renderAgentLogs([]);
     renderTokenUsage({});

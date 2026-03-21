@@ -183,3 +183,81 @@ class IntelligenceDocument:
     summary: str
     content: str
     sentiment_hint: float = 0.0
+
+
+@dataclass(slots=True)
+class WeightedRecord:
+    dedupe_key: str
+    provider_weight: float
+    recency_weight: float
+    completeness_weight: float
+    final_weight: float
+
+
+@dataclass(slots=True)
+class FinancialStatementRecord:
+    statement_type: str
+    period_end: str
+    revenue: float | None = None
+    net_income: float | None = None
+    eps: float | None = None
+    total_assets: float | None = None
+    total_liabilities: float | None = None
+    operating_cash_flow: float | None = None
+    free_cash_flow: float | None = None
+    weighted: WeightedRecord | None = None
+
+
+@dataclass(slots=True)
+class FinancialsSnapshot:
+    provider: str
+    symbol: str
+    entity_name: str | None
+    report_period: str | None
+    statements: list[FinancialStatementRecord] = field(default_factory=list)
+    dedupe_summary: dict[str, int] = field(default_factory=dict)
+    overall_weight: float = 0.0
+
+
+@dataclass(slots=True)
+class DarkPoolRecord:
+    trade_date: str
+    venue: str
+    shares: float | None = None
+    notional: float | None = None
+    trade_count: int | None = None
+    weighted: WeightedRecord | None = None
+
+
+@dataclass(slots=True)
+class DarkPoolSnapshot:
+    provider: str
+    symbol: str
+    records: list[DarkPoolRecord] = field(default_factory=list)
+    dedupe_summary: dict[str, int] = field(default_factory=dict)
+    overall_weight: float = 0.0
+
+
+@dataclass(slots=True)
+class OptionContractRecord:
+    contract_symbol: str
+    expiration: str
+    strike: float | None
+    option_type: str
+    bid: float | None = None
+    ask: float | None = None
+    last: float | None = None
+    volume: float | None = None
+    open_interest: float | None = None
+    implied_volatility: float | None = None
+    weighted: WeightedRecord | None = None
+
+
+@dataclass(slots=True)
+class OptionsSnapshot:
+    provider: str
+    symbol: str
+    expiration_dates: list[str] = field(default_factory=list)
+    contracts: list[OptionContractRecord] = field(default_factory=list)
+    dedupe_summary: dict[str, int] = field(default_factory=dict)
+    overall_weight: float = 0.0

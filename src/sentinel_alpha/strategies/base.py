@@ -14,6 +14,7 @@ class StrategyContext:
     risk_policy: RiskPolicy
     selected_universe: list[str]
     feedback: str | None = None
+    features: dict = field(default_factory=dict)
 
 
 @dataclass(slots=True)
@@ -39,4 +40,3 @@ class TradingStrategy(Protocol):
 
     def build_candidate(self, context: StrategyContext) -> StrategyCandidate:
         """Create a strategy candidate from the shared strategy context."""
-

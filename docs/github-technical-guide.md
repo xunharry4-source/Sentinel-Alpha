@@ -18,6 +18,12 @@ Canonical logo asset:
 
 - `assets/logo.jpg`
 
+## License
+
+This repository is licensed under the Apache License 2.0.
+
+- [LICENSE](/Users/harry/Documents/git/Sentinel-Alpha/LICENSE)
+
 ## Core Product Flow
 
 The implemented product flow is:
@@ -31,12 +37,43 @@ The implemented product flow is:
 7. submit trade universe inputs
 8. iterate strategy candidates with user feedback
 9. generate strategy code artifacts and archive each iteration
-10. run mandatory integrity and stress checks
-11. re-iterate automatically or manually if checks fail
-12. optionally send code-change instructions to `Programmer Agent`
-13. approve strategy
-14. switch to autonomous or advice-only mode
-15. continue monitoring and profile evolution
+10. choose the current best strategy version under the comparison protocol
+11. run mandatory integrity and stress checks only on that selected best version
+12. re-iterate automatically or manually if checks fail
+13. optionally send code-change instructions to `Programmer Agent`
+14. approve strategy
+15. switch to autonomous or advice-only mode
+16. continue monitoring and profile evolution
+
+## Platform Reuse Rule
+
+`Sentinel-Alpha` should behave as a reusable strategy platform rather than a one-off strategy script.
+
+The intended rule is:
+
+- future strategy work should usually modify strategy logic only
+- the surrounding workflow should remain stable platform infrastructure
+
+Stable platform layers:
+
+- onboarding
+- simulation and profiling
+- universe intake
+- objective selection
+- dataset protocol
+- integrity checks
+- stress and overfit checks
+- approval flow
+- monitoring
+- history and report archival
+
+Typical strategy-only change scope:
+
+- signal logic
+- feature logic
+- candidate code generation
+- parameters
+- prompts
 
 ## Repository Structure
 
@@ -216,6 +253,24 @@ If any required check fails, the workflow moves into `strategy_rework_required` 
 
 Strategy training is not one-shot anymore.
 
+The strategy evaluation protocol is also no longer ad hoc.
+
+Each iteration now carries a canonical dataset plan:
+
+- `train`
+- `validation`
+- `test`
+- `walk_forward_windows`
+
+`baseline`, `variant A`, and `variant B` are evaluated under the same protocol, and the workflow preserves:
+
+- train objective score
+- validation objective score
+- test objective score
+- walk-forward score
+- stability score
+- train-test gap
+
 The workflow now supports:
 
 - `guided` iteration mode
@@ -231,6 +286,9 @@ Each iteration now emits:
 - generated strategy code artifact
 - LLM route metadata for the current version
 - archived strategy iteration report
+- dataset plan
+- evaluation protocol
+- split-level evaluation metrics
 
 The strategy page now exposes a strategy experiment surface rather than a single latest-result panel:
 

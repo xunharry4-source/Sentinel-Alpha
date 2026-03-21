@@ -252,6 +252,42 @@ class PersistentWorkflowService(WorkflowService):
         )
         return session
 
+    def fetch_financials_data(self, session_id: UUID, symbol: str, provider: str | None = None) -> WorkflowSession:
+        session = super().fetch_financials_data(session_id, symbol, provider)
+        self.workflow_store.save_report_snapshot(session_id, session.report_history[-1])
+        self.workflow_store.save_history_event(session_id, session.history_events[-1])
+        self.runtime_bus.publish_agent_event(
+            "workflow.financials.fetched",
+            {"session_id": str(session_id), "symbol": symbol, "provider": session.financials_runs[-1].get("provider")},
+        )
+        return session
+
+    def fetch_dark_pool_data(self, session_id: UUID, symbol: str, provider: str | None = None) -> WorkflowSession:
+        session = super().fetch_dark_pool_data(session_id, symbol, provider)
+        self.workflow_store.save_report_snapshot(session_id, session.report_history[-1])
+        self.workflow_store.save_history_event(session_id, session.history_events[-1])
+        self.runtime_bus.publish_agent_event(
+            "workflow.dark_pool.fetched",
+            {"session_id": str(session_id), "symbol": symbol, "provider": session.dark_pool_runs[-1].get("provider")},
+        )
+        return session
+
+    def fetch_options_data(
+        self,
+        session_id: UUID,
+        symbol: str,
+        provider: str | None = None,
+        expiration: str | None = None,
+    ) -> WorkflowSession:
+        session = super().fetch_options_data(session_id, symbol, provider, expiration)
+        self.workflow_store.save_report_snapshot(session_id, session.report_history[-1])
+        self.workflow_store.save_history_event(session_id, session.history_events[-1])
+        self.runtime_bus.publish_agent_event(
+            "workflow.options.fetched",
+            {"session_id": str(session_id), "symbol": symbol, "provider": session.options_runs[-1].get("provider")},
+        )
+        return session
+
     def append_information_events(self, session_id: UUID, events: list[dict]) -> WorkflowSession:
         session = super().append_information_events(session_id, events)
         self.workflow_store.save_information_events(session_id, events)
@@ -277,6 +313,126 @@ class PersistentWorkflowService(WorkflowService):
             "workflow.programmer.run",
             {
                 "session_id": str(session_id),
+                "status": session.programmer_runs[-1].get("status"),
+                "commit_hash": session.programmer_runs[-1].get("commit_hash"),
+            },
+        )
+        return session
+
+    def expand_data_source(
+        self,
+        session_id: UUID,
+        provider_name: str,
+        category: str,
+        base_url: str,
+        api_key_env: str | None,
+        docs_summary: str,
+        sample_endpoint: str | None = None,
+        auth_style: str = "header",
+        response_format: str = "json",
+    ) -> WorkflowSession:
+        session = super().expand_data_source(
+            session_id=session_id,
+            provider_name=provider_name,
+            category=category,
+            base_url=base_url,
+            api_key_env=api_key_env,
+            docs_summary=docs_summary,
+            sample_endpoint=sample_endpoint,
+            auth_style=auth_style,
+            response_format=response_format,
+        )
+        self.workflow_store.save_report_snapshot(session_id, session.report_history[-1])
+        self.workflow_store.save_history_event(session_id, session.history_events[-1])
+        self.runtime_bus.publish_agent_event(
+            "workflow.data_source.expanded",
+            {
+                "session_id": str(session_id),
+                "provider_name": provider_name,
+                "category": category,
+                "target_module": session.data_source_runs[-1].get("target_module"),
+            },
+        )
+        return session
+
+    def apply_data_source_expansion(
+        self,
+        session_id: UUID,
+        run_id: str | None = None,
+        commit_changes: bool = True,
+    ) -> WorkflowSession:
+        session = super().apply_data_source_expansion(session_id, run_id, commit_changes)
+        self.workflow_store.save_report_snapshot(session_id, session.report_history[-1])
+        self.workflow_store.save_history_event(session_id, session.history_events[-1])
+        self.runtime_bus.publish_agent_event(
+            "workflow.data_source.applied",
+            {
+                "session_id": str(session_id),
+                "run_id": session.programmer_runs[-1].get("applied_run_id"),
+                "status": session.programmer_runs[-1].get("status"),
+                "commit_hash": session.programmer_runs[-1].get("commit_hash"),
+            },
+        )
+        return session
+
+    def expand_trading_terminal(
+        self,
+        session_id: UUID,
+        terminal_name: str,
+        terminal_type: str,
+        official_docs_url: str,
+        docs_search_url: str | None,
+        api_base_url: str,
+        api_key_env: str | None,
+        auth_style: str,
+        order_endpoint: str,
+        cancel_endpoint: str,
+        positions_endpoint: str,
+        docs_summary: str,
+        user_notes: str | None = None,
+    ) -> WorkflowSession:
+        session = super().expand_trading_terminal(
+            session_id=session_id,
+            terminal_name=terminal_name,
+            terminal_type=terminal_type,
+            official_docs_url=official_docs_url,
+            docs_search_url=docs_search_url,
+            api_base_url=api_base_url,
+            api_key_env=api_key_env,
+            auth_style=auth_style,
+            order_endpoint=order_endpoint,
+            cancel_endpoint=cancel_endpoint,
+            positions_endpoint=positions_endpoint,
+            docs_summary=docs_summary,
+            user_notes=user_notes,
+        )
+        self.workflow_store.save_report_snapshot(session_id, session.report_history[-1])
+        self.workflow_store.save_history_event(session_id, session.history_events[-1])
+        self.runtime_bus.publish_agent_event(
+            "workflow.terminal_integration.expanded",
+            {
+                "session_id": str(session_id),
+                "terminal_name": terminal_name,
+                "terminal_type": terminal_type,
+                "target_module": session.terminal_integration_runs[-1].get("target_module"),
+            },
+        )
+        return session
+
+    def apply_trading_terminal_integration(
+        self,
+        session_id: UUID,
+        run_id: str | None = None,
+        commit_changes: bool = True,
+    ) -> WorkflowSession:
+        session = super().apply_trading_terminal_integration(session_id, run_id, commit_changes)
+        self.workflow_store.save_report_snapshot(session_id, session.report_history[-1])
+        self.workflow_store.save_history_event(session_id, session.history_events[-1])
+        self.runtime_bus.publish_agent_event(
+            "workflow.terminal_integration.applied",
+            {
+                "session_id": str(session_id),
+                "run_id": session.programmer_runs[-1].get("applied_run_id"),
                 "status": session.programmer_runs[-1].get("status"),
                 "commit_hash": session.programmer_runs[-1].get("commit_hash"),
             },

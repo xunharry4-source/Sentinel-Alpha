@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Literal
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -78,6 +79,12 @@ class IntelligenceSearchRequest(BaseModel):
     max_documents: int | None = Field(default=None, ge=1, le=20)
 
 
+class MarketDataLookupRequest(BaseModel):
+    symbol: str
+    provider: str | None = None
+    expiration: str | None = None
+
+
 class InformationEventIn(BaseModel):
     channel: Literal["focus", "news", "chat", "discussion"]
     source: str
@@ -104,6 +111,52 @@ class ProgrammerTaskRequest(BaseModel):
     target_files: list[str] = Field(default_factory=list)
     context: str | None = None
     commit_changes: bool = True
+
+
+class DataSourceExpansionRequestIn(BaseModel):
+    provider_name: str
+    category: Literal["market_data", "fundamentals", "dark_pool", "options"]
+    base_url: str
+    api_key_env: str | None = None
+    docs_summary: str
+    sample_endpoint: str | None = None
+    auth_style: Literal["header", "query", "bearer"] = "header"
+    response_format: Literal["json", "csv", "xml"] = "json"
+
+
+class DataSourceApplyRequest(BaseModel):
+    run_id: str | None = None
+    commit_changes: bool = True
+
+
+class TradingTerminalIntegrationRequestIn(BaseModel):
+    terminal_name: str
+    terminal_type: Literal["broker_api", "desktop_terminal", "rest_gateway", "fix_gateway", "local_sdk"] = "broker_api"
+    official_docs_url: str
+    docs_search_url: str | None = None
+    api_base_url: str
+    api_key_env: str | None = None
+    auth_style: Literal["header", "query", "bearer"] = "header"
+    order_endpoint: str
+    cancel_endpoint: str
+    positions_endpoint: str
+    docs_summary: str
+    user_notes: str | None = None
+
+
+class TradingTerminalApplyRequest(BaseModel):
+    run_id: str | None = None
+    commit_changes: bool = True
+
+
+class ConfigUpdateRequest(BaseModel):
+    payload: dict[str, Any]
+
+
+class ConfigSingleTestRequest(BaseModel):
+    payload: dict[str, Any] | None = None
+    family: Literal["market_data", "fundamentals", "dark_pool", "options_data", "llm", "programmer_agent"]
+    provider: str | None = None
 
 
 class MonitorSignal(BaseModel):
@@ -145,8 +198,15 @@ class SessionSnapshot(BaseModel):
     strategy_training_log: list[dict]
     intelligence_documents: list[dict]
     information_events: list[dict]
+    data_bundles: list[dict]
     history_events: list[dict]
     report_history: list[dict]
     intelligence_runs: list[dict]
     programmer_runs: list[dict]
+    data_source_runs: list[dict]
+    terminal_integration_runs: list[dict]
+    financials_runs: list[dict]
+    dark_pool_runs: list[dict]
+    options_runs: list[dict]
+    token_usage: dict | None = None
     monitors: list[MonitorSignal]
