@@ -99,6 +99,14 @@
           <button id="apply-strategy-recommendation">应用策略推荐</button>
           <button id="iterate-strategy">生成下一版策略</button>
         </div>
+        <div class="action-buttons secondary compact-actions">
+          <button id="apply-repair-feedback">回填修复反馈</button>
+          <button id="apply-repair-programmer">回填修复指令</button>
+        </div>
+        <div class="action-buttons secondary compact-actions">
+          <button id="apply-repair-and-iterate">回填并开始下一轮训练</button>
+          <button id="apply-repair-and-programmer">回填并执行 Programmer Agent</button>
+        </div>
         <div class="action-buttons secondary">
           <button id="approve-strategy">确认当前策略</button>
         </div>
@@ -121,10 +129,48 @@
         </ul>
       </article>
       <article class="panel">
+        <p class="eyebrow">Release Snapshot</p>
+        <h3>研究发布摘要</h3>
+        <section id="strategy-release-grid" class="check-grid">
+          <article class="check-card"><strong>还没有研究发布摘要。</strong></article>
+        </section>
+        <ul id="strategy-release-list" class="result-list">
+          <li>还没有研究发布摘要。</li>
+        </ul>
+      </article>
+      <article class="panel">
         <p class="eyebrow">Analysis</p>
         <h3>问题分析</h3>
         <ul id="strategy-analysis-list" class="result-list">
           <li>还没有分析结果。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Research Summary</p>
+        <h3>研究结论</h3>
+        <ul id="strategy-research-summary-list" class="result-list">
+          <li>还没有研究摘要。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Research Trend</p>
+        <h3>研究趋势摘要</h3>
+        <ul id="strategy-research-trend-list" class="result-list">
+          <li>还没有研究趋势摘要。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Repair Trend</p>
+        <h3>修复趋势摘要</h3>
+        <ul id="strategy-repair-trend-list" class="result-list">
+          <li>还没有修复趋势摘要。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Research Health</p>
+        <h3>研究健康结论</h3>
+        <ul id="strategy-research-health-list" class="result-list">
+          <li>还没有研究健康结论。</li>
         </ul>
       </article>
       <article class="panel">
@@ -268,6 +314,36 @@
         </ul>
       </article>
       <article class="panel">
+        <p class="eyebrow">Check Trends</p>
+        <h3>检查失败趋势</h3>
+        <section id="strategy-check-trend-grid" class="check-grid">
+          <article class="check-card"><strong>还没有检查趋势。</strong></article>
+        </section>
+        <ul id="strategy-check-trend-list" class="result-list">
+          <li>还没有检查趋势。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Research / Code Loop</p>
+        <h3>研究与编程联动</h3>
+        <section id="strategy-code-loop-grid" class="check-grid">
+          <article class="check-card"><strong>还没有联动趋势。</strong></article>
+        </section>
+        <ul id="strategy-code-loop-list" class="result-list">
+          <li>还没有联动趋势。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Repair Routing</p>
+        <h3>修复建议路由</h3>
+        <section id="strategy-repair-route-grid" class="check-grid">
+          <article class="check-card"><strong>还没有修复路由建议。</strong></article>
+        </section>
+        <ul id="strategy-repair-route-list" class="result-list">
+          <li>还没有修复路由建议。</li>
+        </ul>
+      </article>
+      <article class="panel">
         <p class="eyebrow">Feedback</p>
         <h3>训练反馈记录</h3>
         <ul id="feedback-list" class="result-list">
@@ -323,6 +399,41 @@
         <ul id="strategy-compare-list" class="result-list">
           <li>还没有版本对比结果。</li>
         </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Research Compare</p>
+        <h3>研究归档对比与导出</h3>
+        <div class="trade-config">
+          <label class="config-field">
+            <span>研究版本 A</span>
+            <select id="strategy-research-compare-a"></select>
+          </label>
+          <label class="config-field">
+            <span>研究版本 B</span>
+            <select id="strategy-research-compare-b"></select>
+          </label>
+        </div>
+        <div class="action-buttons secondary compact-actions">
+          <button id="run-strategy-research-compare">对比研究归档</button>
+        </div>
+        <ul id="strategy-research-compare-list" class="result-list">
+          <li>还没有研究归档对比结果。</li>
+        </ul>
+        <pre id="strategy-research-export" class="json-panel">{}</pre>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Research Detail</p>
+        <h3>研究归档详情</h3>
+        <div class="trade-config">
+          <label class="config-field">
+            <span>查看版本</span>
+            <select id="strategy-research-detail-version"></select>
+          </label>
+        </div>
+        <ul id="strategy-research-detail-list" class="result-list">
+          <li>还没有研究归档详情。</li>
+        </ul>
+        <pre id="strategy-research-detail-export" class="json-panel">{}</pre>
       </article>
       <article class="panel">
         <p class="eyebrow">Version Code</p>

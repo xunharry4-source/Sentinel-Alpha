@@ -82,6 +82,19 @@
     </section>
 
     <section class="panel">
+      <p class="eyebrow">Fix Routing</p>
+      <h2>测试失败后跳转</h2>
+      <div class="button-row">
+        <button id="jump-config-to-providers">跳到 Provider 配置</button>
+        <button id="jump-config-to-strategy">跳到策略修复</button>
+        <button id="jump-config-to-health">跳到系统健康</button>
+      </div>
+      <ul id="config-fix-routing-list" class="result-list">
+        <li>等待配置测试结果。</li>
+      </ul>
+    </section>
+
+    <section class="panel">
       <p class="eyebrow">Generated Source Candidates</p>
       <h2>数据源扩充候选项</h2>
       <p class="profiler-note">这里会自动展示“数据源扩充页”生成的适配器候选，可一键挂入配置，或直接设为该分类默认 Provider。</p>
@@ -89,6 +102,26 @@
         <article class="candidate-card">
           <strong>当前还没有候选项。</strong>
           <p>请先到数据源扩充页生成至少一个适配器方案。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="panel">
+      <p class="eyebrow">Terminal Integration</p>
+      <h2>终端接入健康摘要</h2>
+      <ul id="config-terminal-health-list" class="result-list">
+        <li>当前还没有终端接入健康摘要。</li>
+      </ul>
+    </section>
+
+    <section class="panel">
+      <p class="eyebrow">Generated Terminal Candidates</p>
+      <h2>终端接入候选项</h2>
+      <p class="profiler-note">这里会自动展示“交易终端接入页”生成的终端配置候选，可一键挂入配置，作为后续终端适配与测试的基线。</p>
+      <div id="config-terminal-candidates" class="candidate-grid">
+        <article class="candidate-card">
+          <strong>当前还没有终端候选项。</strong>
+          <p>请先到交易终端接入页生成至少一个终端方案。</p>
         </article>
       </div>
     </section>

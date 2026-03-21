@@ -34,6 +34,7 @@ def test_feature_pipeline_merges_behavior_market_and_intelligence_layers() -> No
                 "close_price": 192.5,
                 "volume": 1234567,
                 "regime_tag": "bull",
+                "timestamp": "2026-03-21T10:00:00Z",
             }
         ],
         intelligence_runs=[
@@ -41,12 +42,13 @@ def test_feature_pipeline_merges_behavior_market_and_intelligence_layers() -> No
                 "run_id": "intel-3",
                 "query": "AAPL",
                 "document_count": 5,
+                "generated_at": "2026-03-21T11:00:00Z",
                 "report": {"factors": {"credibility_score": 0.64, "contradiction_score": 0.25}},
             }
         ],
-        financials_runs=[{"run_id": "financials-2", "symbol": "AAPL", "provider": "sec", "factors": {"quality_score": 0.81}}],
-        dark_pool_runs=[{"run_id": "dark-pool-2", "symbol": "AAPL", "provider": "finra", "factors": {"accumulation_score": 0.62}}],
-        options_runs=[{"run_id": "options-2", "symbol": "AAPL", "provider": "yahoo_options", "expiration": "2026-04-17", "factors": {"options_pressure_score": 0.57}}],
+        financials_runs=[{"run_id": "financials-2", "symbol": "AAPL", "provider": "sec", "generated_at": "2026-03-20T12:00:00Z", "factors": {"quality_score": 0.81}}],
+        dark_pool_runs=[{"run_id": "dark-pool-2", "symbol": "AAPL", "provider": "finra", "generated_at": "2026-03-21T09:30:00Z", "factors": {"accumulation_score": 0.62}}],
+        options_runs=[{"run_id": "options-2", "symbol": "AAPL", "provider": "yahoo_options", "expiration": "2026-04-17", "generated_at": "2026-03-21T09:45:00Z", "factors": {"options_pressure_score": 0.57}}],
     )
 
     assert features["behavioral"]["noise_sensitivity"] == 0.72
@@ -59,6 +61,11 @@ def test_feature_pipeline_merges_behavior_market_and_intelligence_layers() -> No
     assert features["data_quality"]["section_coverage_score"] == 1.0
     assert "behavioral" in features["data_quality"]["available_sections"]
     assert features["data_quality"]["provider_count"] == 3
+    assert features["data_quality"]["freshness"]["known_timestamp_count"] == 5
+    assert features["data_quality"]["freshness"]["max_gap_hours"] > 0
+    assert isinstance(features["data_quality"]["alignment_warnings"], list)
+    assert features["data_quality"]["quality_grade"] in {"healthy", "warning", "degraded"}
+    assert features["data_quality"]["training_readiness"]["status"] in {"ready", "caution", "blocked"}
     assert features["meta"]["snapshot_version"] == "feature_snapshot_v1"
     assert features["meta"]["snapshot_hash"]
     assert features["meta"]["data_bundle_id"].startswith("bundle-")

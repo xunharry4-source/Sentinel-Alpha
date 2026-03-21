@@ -1,4 +1,16 @@
 const STRATEGY_LOG_PREFIX = "sentinel-alpha:strategy-log:";
+const STRATEGY_FOCUS_KEY = "sentinel-alpha:strategy-focus-target";
+
+function focusPanel(selector) {
+  const panel = document.querySelector(selector);
+  if (!panel) return;
+  panel.classList.remove("panel-focus");
+  // Force reflow so repeated focus still replays the effect.
+  void panel.offsetWidth;
+  panel.classList.add("panel-focus");
+  panel.scrollIntoView({ behavior: "smooth", block: "start" });
+  window.setTimeout(() => panel.classList.remove("panel-focus"), 1800);
+}
 
 function strategyLogKey(sessionId) {
   return `${STRATEGY_LOG_PREFIX}${sessionId || "anonymous"}`;
@@ -58,6 +70,47 @@ function getStrategyArchiveEntries(snapshot) {
     .filter((item) => item.versionLabel !== "unknown");
 }
 
+function getStrategyResearchCompareEntries(snapshot) {
+  const entries = [];
+  const currentPkg = snapshot?.strategy_package || {};
+  const currentResearch = currentPkg.research_summary || {};
+  if (currentPkg.version_label && Object.keys(currentResearch).length) {
+    entries.push({
+      id: "current",
+      title: "当前实验版本",
+      createdAt: snapshot?.updated_at || snapshot?.last_updated || "current",
+      version: currentPkg.version_label,
+      pkg: currentPkg,
+      research: currentResearch,
+      isCurrent: true,
+    });
+  }
+  const archived = (snapshot?.report_history || [])
+    .filter((item) => item.report_type === "strategy_iteration")
+    .map((item) => {
+      const pkg = item.body?.strategy_package || {};
+      const exportManifest = item.body?.research_export || {};
+      const research = exportManifest.research_summary || pkg.research_summary || item.body?.training_log_entry?.research_summary || {};
+      return {
+        id: item.report_id,
+        title: item.title,
+        createdAt: item.created_at,
+        version: pkg.version_label || "unknown",
+        pkg,
+        research,
+        exportManifest,
+        isCurrent: false,
+      };
+    })
+    .filter((item) => item.version !== "unknown");
+  for (const item of archived) {
+    if (!entries.some((entry) => entry.version === item.version && entry.isCurrent === item.isCurrent)) {
+      entries.push(item);
+    }
+  }
+  return entries;
+}
+
 function populateVersionSelectors(snapshot) {
   const entries = getStrategyArchiveEntries(snapshot);
   const selectors = [
@@ -87,6 +140,44 @@ function populateVersionSelectors(snapshot) {
   }
 }
 
+function populateResearchArchiveSelectors(snapshot) {
+  const entries = getStrategyResearchCompareEntries(snapshot);
+  const selectors = [
+    document.querySelector("#strategy-research-compare-a"),
+    document.querySelector("#strategy-research-compare-b"),
+    document.querySelector("#strategy-research-detail-version"),
+  ];
+  for (const select of selectors) {
+    if (!select) continue;
+    const currentValue = select.value;
+    select.innerHTML = entries.length
+      ? entries.map((item) => `<option value="${item.isCurrent ? `current:${item.version}` : item.version}">${item.isCurrent ? `[当前] ` : ""}${item.version}</option>`).join("")
+      : `<option value="">暂无版本</option>`;
+    if ([...select.options].some((option) => option.value === currentValue)) {
+      select.value = currentValue;
+    }
+  }
+  if (entries.length >= 2) {
+    if (!document.querySelector("#strategy-research-compare-a")?.value) {
+      document.querySelector("#strategy-research-compare-a").value = entries[0].isCurrent ? `current:${entries[0].version}` : entries[0].version;
+    }
+    if (!document.querySelector("#strategy-research-compare-b")?.value) {
+      document.querySelector("#strategy-research-compare-b").value = entries[1].isCurrent ? `current:${entries[1].version}` : entries[1].version;
+    }
+  } else if (entries.length === 1) {
+    const onlyValue = entries[0].isCurrent ? `current:${entries[0].version}` : entries[0].version;
+    if (!document.querySelector("#strategy-research-compare-a")?.value) {
+      document.querySelector("#strategy-research-compare-a").value = onlyValue;
+    }
+    if (!document.querySelector("#strategy-research-compare-b")?.value) {
+      document.querySelector("#strategy-research-compare-b").value = onlyValue;
+    }
+  }
+  if (entries.length && !document.querySelector("#strategy-research-detail-version")?.value) {
+    document.querySelector("#strategy-research-detail-version").value = entries[0].isCurrent ? `current:${entries[0].version}` : entries[0].version;
+  }
+}
+
 function renderStrategyStatus(snapshot) {
   const pkg = snapshot?.strategy_package;
   if (!pkg) {
@@ -107,6 +198,62 @@ function renderStrategyStatus(snapshot) {
       `当前标的池: ${(pkg.selected_universe || []).join(", ") || "无"}`,
     ],
     "当前还没有训练状态。"
+  );
+}
+
+function renderReleaseSnapshot(snapshot) {
+  const pkg = snapshot?.strategy_package || {};
+  const research = pkg.research_summary || {};
+  const checkTarget = research.check_target_summary || {};
+  const gate = research.final_release_gate_summary || {};
+  const quality = pkg.input_manifest?.data_quality || {};
+  const bundle = pkg.data_bundle_id || pkg.input_manifest?.data_bundle_id || "unknown";
+  const evaluationSource = checkTarget.evaluation_source || "unknown";
+  const gateStatus = gate.gate_status || "unknown";
+  const qualityGrade = quality.quality_grade || "unknown";
+  const trainingReadiness = quality.training_readiness?.status || "unknown";
+  const winner = research.winner_selection_summary?.winner_variant_id || "unknown";
+  const grid = document.querySelector("#strategy-release-grid");
+  if (grid) {
+    if (!pkg.version_label) {
+      grid.innerHTML = `<article class="check-card"><strong>还没有研究发布摘要。</strong></article>`;
+    } else {
+      const gateClass = gateStatus === "passed" ? "check-pass" : gateStatus === "blocked" ? "check-fail" : "check-warning";
+      const gateChip = gateStatus === "passed" ? "success-chip" : gateStatus === "blocked" ? "danger-chip" : "warn-chip";
+      const qualityClass = qualityGrade === "healthy" ? "check-pass" : qualityGrade === "degraded" ? "check-fail" : "check-warning";
+      const qualityChip = qualityGrade === "healthy" ? "success-chip" : qualityGrade === "degraded" ? "danger-chip" : "warn-chip";
+      grid.innerHTML = `
+        <article class="check-card ${gateClass}">
+          <div class="check-head">
+            <strong>Gate</strong>
+            <span class="status-chip ${gateChip}">${gateStatus}</span>
+          </div>
+          <p class="check-summary">winner=${winner} / eval_source=${evaluationSource}</p>
+        </article>
+        <article class="check-card ${qualityClass}">
+          <div class="check-head">
+            <strong>Input Quality</strong>
+            <span class="status-chip ${qualityChip}">${qualityGrade}</span>
+          </div>
+          <p class="check-summary">training=${trainingReadiness} / bundle=${bundle}</p>
+        </article>
+      `;
+    }
+  }
+  renderList(
+    "strategy-release-list",
+    pkg.version_label
+      ? [
+          `version / ${pkg.version_label}`,
+          `winner / ${winner}`,
+          `gate / ${gateStatus}`,
+          `evaluation_source / ${evaluationSource}`,
+          `bundle / ${bundle}`,
+          `quality / ${qualityGrade} / training=${trainingReadiness}`,
+          `gate_reason / ${gate.reason || "无"}`,
+        ]
+      : [],
+    "还没有研究发布摘要。"
   );
 }
 
@@ -132,6 +279,527 @@ function renderStrategyAnalysis(snapshot) {
   );
 }
 
+function renderResearchSummary(snapshot) {
+  const summary = snapshot?.strategy_package?.research_summary;
+  if (!summary) {
+    renderList("strategy-research-summary-list", [], "还没有研究摘要。");
+    return;
+  }
+  const winner = summary.winner_selection_summary || {};
+  const checkTarget = summary.check_target_summary || {};
+  const robustness = summary.robustness_summary || {};
+  const rejections = summary.rejection_summary || [];
+  const releaseGate = summary.final_release_gate_summary || {};
+  const checkFailures = summary.check_failure_summary || [];
+  const nextFocus = summary.next_iteration_focus || [];
+  const rankings = summary.candidate_rankings || [];
+  const evaluationSnapshot = summary.evaluation_snapshot || {};
+  const evaluationHighlights = summary.evaluation_highlights || [];
+  renderList(
+    "strategy-research-summary-list",
+    [
+      `研究摘要: ${summary.research_summary || "无"}`,
+      `选择规则: ${summary.selection_rule || "无"}`,
+      `目标函数: ${summary.objective_metric || "unknown"} / 协议=${summary.dataset_protocol || "unknown"} / 候选数=${summary.candidate_count ?? 0}`,
+      `最优版本: ${winner.winner_variant_id || "unknown"} / version=${winner.winner_version || "unknown"} / test=${winner.winner_test_objective_score ?? "unknown"} / validation=${winner.winner_validation_objective_score ?? "unknown"} / stability=${winner.winner_stability_score ?? "unknown"}`,
+      `胜出原因: ${winner.reason || "无"} / 相对基准 test 差值=${winner.winner_advantage_vs_baseline ?? "unknown"}`,
+      `送检目标: ${checkTarget.variant_id || "unknown"} / source=${checkTarget.source || "unknown"} / eval_source=${checkTarget.evaluation_source || "unknown"} / test=${checkTarget.test_objective_score ?? "unknown"} / stability=${checkTarget.stability_score ?? "unknown"}`,
+      `送检理由: ${checkTarget.reason || "无"}`,
+      `稳健性结论: grade=${robustness.grade || "unknown"} / stability=${robustness.stability_score ?? "unknown"} / gap=${robustness.train_test_gap ?? "unknown"} / ${robustness.note || "无"}`,
+      `评估快照: source=${evaluationSnapshot.evaluation_source || "unknown"} / wf_windows=${evaluationSnapshot.walk_forward_windows ?? 0} / wf_score=${evaluationSnapshot.walk_forward_score ?? "unknown"} / gap=${evaluationSnapshot.train_test_gap ?? "unknown"}`,
+      `Train/Validation/Test: ${evaluationSnapshot.train?.objective_score ?? "unknown"} / ${evaluationSnapshot.validation?.objective_score ?? "unknown"} / ${evaluationSnapshot.test?.objective_score ?? "unknown"}`,
+      `发布门: status=${releaseGate.gate_status || "unknown"} / release_ready=${releaseGate.release_ready === true ? "yes" : releaseGate.release_ready === false ? "no" : "unknown"} / failed=${releaseGate.failed_check_count ?? 0} / passed=${releaseGate.passed_check_count ?? 0}`,
+      `门控结论: ${releaseGate.reason || "无"}`,
+      ...evaluationHighlights.map((item) => `评估结论: ${item}`),
+      ...rankings.map((item) => `排名 ${item.rank}: ${item.name} / version=${item.version || "unknown"} / test=${item.test_objective_score ?? "unknown"} / validation=${item.validation_objective_score ?? "unknown"} / stability=${item.stability_score ?? "unknown"}${item.focus ? ` / focus=${item.focus}` : ""}`),
+      ...rejections.map((item) => `淘汰 ${item.name}: ${item.reason} / test=${item.test_objective_score ?? "unknown"} / validation=${item.validation_objective_score ?? "unknown"} / stability=${item.stability_score ?? "unknown"} / gap=${item.train_test_gap ?? "unknown"}`),
+      ...checkFailures.map((item) => `检查失败 ${item.check_type}: ${item.summary || "无"} / score=${item.score ?? "unknown"} / 修复=${(item.required_fix_actions || []).join("；") || "无"}`),
+      ...(nextFocus.length ? [`下一轮重点: ${nextFocus.join("；")}`] : []),
+    ],
+    "还没有研究摘要。"
+  );
+}
+
+function renderResearchTrendSummary(snapshot) {
+  const logs = (snapshot?.strategy_training_log || []).slice().reverse().slice(0, 5);
+  if (!logs.length) {
+    renderList("strategy-research-trend-list", [], "还没有研究趋势摘要。");
+    return;
+  }
+  const latest = logs[0] || {};
+  const previous = logs[1] || null;
+  const latestResearch = latest.research_summary || {};
+  const previousResearch = previous?.research_summary || {};
+  const latestEval = latestResearch.evaluation_snapshot || {};
+  const previousEval = previousResearch.evaluation_snapshot || {};
+  const latestGate = latestResearch.final_release_gate_summary?.gate_status || "unknown";
+  const previousGate = previousResearch.final_release_gate_summary?.gate_status || "unknown";
+  const latestTest = Number(latestEval.test?.objective_score ?? NaN);
+  const previousTest = Number(previousEval.test?.objective_score ?? NaN);
+  const latestWalk = Number(latestEval.walk_forward_score ?? NaN);
+  const previousWalk = Number(previousEval.walk_forward_score ?? NaN);
+  const latestGap = Number(latestEval.train_test_gap ?? NaN);
+  const previousGap = Number(previousEval.train_test_gap ?? NaN);
+  const trendText = (latestValue, previousValue, lowerIsBetter = false) => {
+    if (!Number.isFinite(latestValue) || !Number.isFinite(previousValue)) return "unknown";
+    if (latestValue === previousValue) return "flat";
+    const improved = lowerIsBetter ? latestValue < previousValue : latestValue > previousValue;
+    return improved ? "improving" : "degrading";
+  };
+  renderList(
+    "strategy-research-trend-list",
+    [
+      `最近轮次 / ${logs.map((item) => `v${item.iteration_no || "-"}`).join(" -> ")}`,
+      `gate 趋势 / ${previous ? `${previousGate} -> ${latestGate}` : latestGate}`,
+      `test 趋势 / ${trendText(latestTest, previousTest)} / ${Number.isFinite(previousTest) ? previousTest : "unknown"} -> ${Number.isFinite(latestTest) ? latestTest : "unknown"}`,
+      `walk_forward 趋势 / ${trendText(latestWalk, previousWalk)} / ${Number.isFinite(previousWalk) ? previousWalk : "unknown"} -> ${Number.isFinite(latestWalk) ? latestWalk : "unknown"}`,
+      `gap 趋势 / ${trendText(latestGap, previousGap, true)} / ${Number.isFinite(previousGap) ? previousGap : "unknown"} -> ${Number.isFinite(latestGap) ? latestGap : "unknown"}`,
+      `当前 focus / ${(latestResearch.next_iteration_focus || []).join("；") || "无"}`,
+    ],
+    "还没有研究趋势摘要。"
+  );
+}
+
+function renderRepairTrendSummary(snapshot) {
+  const logs = (snapshot?.strategy_training_log || []).slice().reverse().slice(0, 5);
+  if (!logs.length) {
+    renderList("strategy-repair-trend-list", [], "还没有修复趋势摘要。");
+    return;
+  }
+  const routeLabel = (route) => route?.lane || "无";
+  const routePriority = (route) => route?.priority || "unknown";
+  const routeSource = (route) => route?.source || "unknown";
+  const latest = logs[0] || {};
+  const previous = logs[1] || null;
+  const latestRoute = (latest.repair_route_summary || [])[0] || null;
+  const previousRoute = (previous?.repair_route_summary || [])[0] || null;
+  const counts = {};
+  for (const item of logs) {
+    const route = (item.repair_route_summary || [])[0];
+    const key = route?.lane || "无";
+    counts[key] = (counts[key] || 0) + 1;
+  }
+  const routeSet = new Set(logs.map((item) => routeLabel((item.repair_route_summary || [])[0])));
+  const prioritySet = new Set(logs.map((item) => routePriority((item.repair_route_summary || [])[0])));
+  const sourceSet = new Set(logs.map((item) => routeSource((item.repair_route_summary || [])[0])));
+  let convergence = "flat";
+  let convergenceNote = "最近修复路线变化有限，整体处于持平状态。";
+  if (logs.length >= 3) {
+    if (routeSet.size === 1 && prioritySet.size <= 2 && sourceSet.size <= 2) {
+      convergence = "converging";
+      convergenceNote = "最近几轮主修复路线基本稳定，说明修复目标正在收敛。";
+    } else if (routeSet.size >= 3 || sourceSet.size >= 3) {
+      convergence = "diverging";
+      convergenceNote = "最近几轮主修复路线变化较大，说明问题还在发散或尚未收敛。";
+    }
+  }
+  renderList(
+    "strategy-repair-trend-list",
+    [
+      `最近轮次 / ${logs.map((item) => `v${item.iteration_no || "-"}`).join(" -> ")}`,
+      `主修复路线 / ${previous ? `${routeLabel(previousRoute)} -> ${routeLabel(latestRoute)}` : routeLabel(latestRoute)}`,
+      `优先级变化 / ${previous ? `${routePriority(previousRoute)} -> ${routePriority(latestRoute)}` : routePriority(latestRoute)}`,
+      `来源变化 / ${previous ? `${routeSource(previousRoute)} -> ${routeSource(latestRoute)}` : routeSource(latestRoute)}`,
+      `收敛结论 / ${convergence} / ${convergenceNote}`,
+      `最近主路线分布 / ${Object.entries(counts).map(([name, count]) => `${name}=${count}`).join(" / ") || "无"}`,
+      `当前动作 / ${((latestRoute?.actions || []).slice(0, 3)).join("；") || "无"}`,
+    ],
+    "还没有修复趋势摘要。"
+  );
+}
+
+function renderResearchHealthSummary(snapshot) {
+  const logs = snapshot?.strategy_training_log || [];
+  if (!logs.length) {
+    renderList("strategy-research-health-list", [], "还没有研究健康结论。");
+    return;
+  }
+  const latest = logs[logs.length - 1] || {};
+  const previous = logs.length > 1 ? logs[logs.length - 2] : null;
+  const research = latest.research_summary || {};
+  const prevResearch = previous?.research_summary || {};
+  const gate = research.final_release_gate_summary?.gate_status || "unknown";
+  const robustness = research.robustness_summary?.grade || "unknown";
+  const evalSnap = research.evaluation_snapshot || {};
+  const prevEval = prevResearch.evaluation_snapshot || {};
+  const test = Number(evalSnap.test?.objective_score ?? NaN);
+  const prevTest = Number(prevEval.test?.objective_score ?? NaN);
+  const walk = Number(evalSnap.walk_forward_score ?? NaN);
+  const prevWalk = Number(prevEval.walk_forward_score ?? NaN);
+  const gap = Number(evalSnap.train_test_gap ?? NaN);
+  const prevGap = Number(prevEval.train_test_gap ?? NaN);
+  let status = "warning";
+  let note = "研究仍需持续观察。";
+  if (gate === "passed" && robustness === "strong") {
+    status = "healthy";
+    note = "当前研究结果稳定，发布门已通过。";
+  } else if (gate === "blocked" || robustness === "fragile") {
+    status = "fragile";
+    note = "当前研究结果脆弱，仍被检查门阻塞或稳健性不足。";
+  }
+  const trendNotes = [];
+  if (Number.isFinite(test) && Number.isFinite(prevTest)) {
+    trendNotes.push(`test ${test > prevTest ? "improving" : test < prevTest ? "degrading" : "flat"} (${prevTest} -> ${test})`);
+  }
+  if (Number.isFinite(walk) && Number.isFinite(prevWalk)) {
+    trendNotes.push(`walk_forward ${walk > prevWalk ? "improving" : walk < prevWalk ? "degrading" : "flat"} (${prevWalk} -> ${walk})`);
+  }
+  if (Number.isFinite(gap) && Number.isFinite(prevGap)) {
+    trendNotes.push(`gap ${gap < prevGap ? "improving" : gap > prevGap ? "degrading" : "flat"} (${prevGap} -> ${gap})`);
+  }
+  renderList(
+    "strategy-research-health-list",
+    [
+      `status / ${status}`,
+      `gate / ${gate}`,
+      `robustness / ${robustness}`,
+      `note / ${note}`,
+      ...(trendNotes.length ? trendNotes.map((item) => `trend / ${item}`) : ["trend / 当前还没有足够历史用于趋势判断。"]),
+      `focus / ${(research.next_iteration_focus || []).join("；") || "无"}`,
+    ],
+    "还没有研究健康结论。"
+  );
+}
+
+function renderCheckFailureTrend(snapshot) {
+  const logs = snapshot?.strategy_training_log || [];
+  const counts = {};
+  const gateCounts = { passed: 0, blocked: 0 };
+  for (const item of logs) {
+    const failedChecks = item.failed_checks || [];
+    for (const checkType of failedChecks) {
+      counts[checkType] = (counts[checkType] || 0) + 1;
+    }
+    const gateStatus = item.research_summary?.final_release_gate_summary?.gate_status;
+    if (gateStatus && gateStatus in gateCounts) {
+      gateCounts[gateStatus] += 1;
+    }
+  }
+  const grid = document.querySelector("#strategy-check-trend-grid");
+  const entries = Object.entries(counts).sort((a, b) => Number(b[1]) - Number(a[1]));
+  if (grid) {
+    if (!entries.length && !logs.length) {
+      grid.innerHTML = `<article class="check-card"><strong>还没有检查趋势。</strong></article>`;
+    } else {
+      const checkCards = entries.map(([name, count]) => `
+        <article class="check-card check-warning">
+          <div class="check-head">
+            <strong>${name}</strong>
+            <span class="status-chip warn-chip">${count}</span>
+          </div>
+          <p class="check-summary">最近迭代中，${name} 失败共出现 ${count} 次。</p>
+        </article>
+      `).join("");
+      const gateCards = `
+        <article class="check-card ${gateCounts.blocked > 0 ? "check-warning" : "check-pass"}">
+          <div class="check-head">
+            <strong>release_gate</strong>
+            <span class="status-chip ${gateCounts.blocked > 0 ? "warn-chip" : "success-chip"}">${gateCounts.blocked > 0 ? "blocked" : "passed"}</span>
+          </div>
+          <p class="check-summary">passed=${gateCounts.passed} / blocked=${gateCounts.blocked}</p>
+        </article>
+      `;
+      grid.innerHTML = gateCards + (checkCards || "");
+    }
+  }
+  const recent = logs
+    .slice()
+    .reverse()
+    .slice(0, 8)
+    .map((item) => {
+      const gateStatus = item.research_summary?.final_release_gate_summary?.gate_status || "unknown";
+      const failedChecks = (item.failed_checks || []).join(", ") || "无";
+      const nextFocus = (item.research_summary?.next_iteration_focus || []).join("；") || "无";
+      return `${item.timestamp} / 第${item.iteration_no || "-"}版 / status=${item.status || "unknown"} / gate=${gateStatus} / failed=${failedChecks} / next=${nextFocus}`;
+    });
+  const summary = [
+    `release_gate / passed=${gateCounts.passed} / blocked=${gateCounts.blocked}`,
+    ...entries.map(([name, count]) => `${name}: ${count}`),
+    ...recent,
+  ];
+  renderList("strategy-check-trend-list", summary, "还没有检查趋势。");
+}
+
+function renderResearchCodeLoop(snapshot) {
+  const logs = snapshot?.strategy_training_log || [];
+  const runs = snapshot?.programmer_runs || [];
+  const recentStrategy = logs.slice().reverse().slice(0, 6);
+  const recentProgrammer = runs.slice().reverse().slice(0, 6);
+  const strategyCounts = {};
+  const programmerCounts = {};
+  for (const item of recentStrategy) {
+    for (const checkType of item.failed_checks || []) {
+      strategyCounts[checkType] = (strategyCounts[checkType] || 0) + 1;
+    }
+  }
+  for (const run of recentProgrammer) {
+    const kind = run.failure_type || (run.status === "ok" ? "success" : run.status || "unknown");
+    programmerCounts[kind] = (programmerCounts[kind] || 0) + 1;
+  }
+  const observations = [];
+  if ((strategyCounts.integrity || 0) > 0 && (programmerCounts.compile_failure || 0) > 0) {
+    observations.push("完整性失败与 compile_failure 同时偏高，先检查策略代码结构、命名和实现约束。");
+  }
+  if ((strategyCounts.stress_overfit || 0) > 0 && (programmerCounts.test_failure || 0) > 0) {
+    observations.push("过拟合/压力失败与 test_failure 同时偏高，优先修正策略行为和评估预期不一致的问题。");
+  }
+  if (!observations.length && recentStrategy.length && recentProgrammer.length) {
+    observations.push("最近几轮研究失败与代码失败没有明显单一对应，说明问题更可能来自候选逻辑而非单次实现错误。");
+  }
+  const grid = document.querySelector("#strategy-code-loop-grid");
+  if (grid) {
+    const cards = [];
+    cards.push(`
+      <article class="check-card">
+        <div class="check-head">
+          <strong>Strategy Side</strong>
+          <span class="status-chip outline-chip">${recentStrategy.length}</span>
+        </div>
+        <p class="check-summary">最近 ${recentStrategy.length} 轮策略训练失败分布。</p>
+        <p>${Object.entries(strategyCounts).map(([name, count]) => `${name}=${count}`).join(" / ") || "无明显失败"}</p>
+      </article>
+    `);
+    cards.push(`
+      <article class="check-card">
+        <div class="check-head">
+          <strong>Programmer Side</strong>
+          <span class="status-chip outline-chip">${recentProgrammer.length}</span>
+        </div>
+        <p class="check-summary">最近 ${recentProgrammer.length} 次代码修改失败分布。</p>
+        <p>${Object.entries(programmerCounts).map(([name, count]) => `${name}=${count}`).join(" / ") || "无明显失败"}</p>
+      </article>
+    `);
+    cards.push(`
+      <article class="check-card ${observations.length ? "check-warning" : ""}">
+        <div class="check-head">
+          <strong>Correlation</strong>
+          <span class="status-chip ${observations.length ? "warn-chip" : "success-chip"}">${observations.length ? "attention" : "clear"}</span>
+        </div>
+        <p class="check-summary">${observations[0] || "当前没有观察到明显联动问题。"}</p>
+      </article>
+    `);
+    grid.innerHTML = cards.join("");
+  }
+  renderList(
+    "strategy-code-loop-list",
+    [
+      `策略侧: ${Object.entries(strategyCounts).map(([name, count]) => `${name}=${count}`).join(" / ") || "无明显失败"}`,
+      `编程侧: ${Object.entries(programmerCounts).map(([name, count]) => `${name}=${count}`).join(" / ") || "无明显失败"}`,
+      ...observations,
+      ...recentStrategy.map((item) => `策略轮次 ${item.iteration_no || "-"} / failed=${(item.failed_checks || []).join(", ") || "none"} / next=${(item.research_summary?.next_iteration_focus || []).join("；") || "无"}`),
+      ...recentProgrammer.map((run) => `编程运行 ${run.timestamp || "unknown"} / ${(run.failure_type || run.status || "unknown")} / ${run.validation_detail || run.error || "no detail"}`),
+    ],
+    "还没有联动趋势。"
+  );
+}
+
+function routePriorityRank(priority) {
+  if (priority === "P0") return 0;
+  if (priority === "P1") return 1;
+  return 2;
+}
+
+function stricterPriority(left, right) {
+  return routePriorityRank(left) <= routePriorityRank(right) ? left : right;
+}
+
+function dedupeRouteActions(actions) {
+  return [...new Set((actions || []).filter(Boolean))];
+}
+
+function buildRepairRoutes(snapshot) {
+  const logs = snapshot?.strategy_training_log || [];
+  const runs = snapshot?.programmer_runs || [];
+  const latestLog = logs[logs.length - 1] || {};
+  const latestRun = runs[runs.length - 1] || {};
+  const failedChecks = latestLog.failed_checks || [];
+  const nextFocus = latestLog.research_summary?.next_iteration_focus || [];
+  const programmerFailure = latestRun.failure_type || (latestRun.status === "ok" ? "success" : latestRun.status || "unknown");
+  const programmerPlan = latestRun.repair_plan || {};
+  const programmerSummary = latestRun.failure_summary || {};
+  const routes = [];
+
+  if (failedChecks.includes("integrity")) {
+    if (programmerFailure === "compile_failure") {
+      routes.push({
+        lane: "结构修复",
+        priority: "P0",
+        summary: "先修编译和代码结构，再处理 integrity 规则。",
+        actions: ["修正导入、语法、命名和返回结构", "确保策略输出字段完整", "重新跑 compile + pytest 后再送 integrity 检查"],
+        source: "research",
+      });
+    } else if (programmerFailure === "validation_failure" || programmerFailure === "execution_failure") {
+      routes.push({
+        lane: "契约修复",
+        priority: "P0",
+        summary: "当前更像契约或运行时不匹配，先对齐接口和 candidate 结构。",
+        actions: ["检查 StrategyCandidate 字段", "检查版本命名和输出契约", "检查 check_target/candidate 对应关系"],
+        source: "research",
+      });
+    } else {
+      routes.push({
+        lane: "完整性修复",
+        priority: "P1",
+        summary: "优先按 integrity 失败项修正未来函数、作弊痕迹、硬编码和可疑 rationale。",
+        actions: ["检查 future/leakage 线索", "减少可疑高置信度硬编码", "根据 required_fix_actions 逐项修正"],
+        source: "research",
+      });
+    }
+  }
+
+  if (failedChecks.includes("stress_overfit")) {
+    if (programmerFailure === "test_failure") {
+      routes.push({
+        lane: "行为修复",
+        priority: "P0",
+        summary: "策略行为和测试预期同时有问题，先修可测试行为，再降复杂度。",
+        actions: ["降低参数密度", "减少过窄 universe 依赖", "优先修复测试暴露出的行为偏差"],
+        source: "research",
+      });
+    } else {
+      routes.push({
+        lane: "稳健性修复",
+        priority: "P1",
+        summary: "优先处理过拟合和稳健性问题，降低 train-test gap，提升 walk-forward 稳定性。",
+        actions: ["简化规则和参数", "减少对单一 regime 的依赖", "优先看 validation/test/walk-forward 弱点"],
+        source: "research",
+      });
+    }
+  }
+
+  if (!failedChecks.length && latestLog.research_summary?.final_release_gate_summary?.gate_status === "passed") {
+      routes.push({
+        lane: "通过态",
+        priority: "P2",
+        summary: "当前最优版本已通过门控，不需要强制修复，可进入下一轮研究增强。",
+        actions: ["保留当前版本作为稳定基线", "如继续迭代，优先探索增益而非修复"],
+        source: "research",
+      });
+  }
+
+  if (!routes.length && nextFocus.length) {
+    routes.push({
+      lane: "默认修复",
+      priority: "P1",
+      summary: "优先按研究摘要给出的 next_iteration_focus 执行。",
+      actions: nextFocus,
+      source: "research",
+    });
+  }
+
+  if (!routes.length) {
+    routes.push({
+      lane: "观察",
+      priority: "P2",
+      summary: "当前没有足够的失败信号，先继续积累更多训练和修复记录。",
+      actions: ["继续训练或执行一次 Programmer Agent", "观察 release gate 和失败类型是否收敛"],
+      source: "research",
+    });
+  }
+
+  if ((programmerPlan.actions || []).length) {
+    const dominantFailure = programmerSummary.dominant_failure_type || programmerFailure || "unknown";
+    const programmerRoute = {
+      lane: "代码修复计划",
+      priority: programmerPlan.priority || "P1",
+      summary: `Programmer Agent 判断当前主导失败为 ${dominantFailure}，建议先执行代码侧修复计划。`,
+      actions: dedupeRouteActions(programmerPlan.actions),
+      source: "programmer",
+    };
+    if (routes.length) {
+      const primary = routes[0];
+      primary.priority = stricterPriority(primary.priority, programmerRoute.priority);
+      primary.summary = `${primary.summary} 代码侧主导失败=${dominantFailure}。`;
+      primary.actions = dedupeRouteActions([...programmerRoute.actions, ...(primary.actions || [])]);
+      primary.source = primary.source === "research" ? "research+programmer" : primary.source || "research+programmer";
+      if (
+        dominantFailure !== "success" &&
+        dominantFailure !== "unknown" &&
+        !routes.some((item) => item.lane === programmerRoute.lane)
+      ) {
+        routes.push(programmerRoute);
+      }
+    } else {
+      routes.push(programmerRoute);
+    }
+  }
+  return routes;
+}
+
+function renderRepairRouting(snapshot) {
+  const routes = buildRepairRoutes(snapshot);
+  const grid = document.querySelector("#strategy-repair-route-grid");
+  if (grid) {
+    grid.innerHTML = routes.map((route) => `
+      <article class="check-card ${route.priority === "P0" ? "check-fail" : route.priority === "P1" ? "check-warning" : "check-pass"}">
+        <div class="check-head">
+          <strong>${route.lane}</strong>
+          <span class="status-chip ${route.priority === "P0" ? "danger-chip" : route.priority === "P1" ? "warn-chip" : "success-chip"}">${route.priority}</span>
+        </div>
+        <p class="check-summary">${route.summary}</p>
+        <p class="check-label">来源</p>
+        <p>${route.source || "research"}</p>
+        <p class="check-label">建议动作</p>
+        <p>${route.actions.join("；")}</p>
+      </article>
+    `).join("");
+  }
+
+  renderList(
+    "strategy-repair-route-list",
+    routes.flatMap((route) => [
+      `${route.lane} / ${route.priority} / ${route.source || "research"} / ${route.summary}`,
+      ...route.actions.map((action) => `动作: ${action}`),
+    ]),
+    "还没有修复路由建议。"
+  );
+}
+
+function applyRepairRoutingToFeedback() {
+  const snapshot = loadStoredSnapshot() || {};
+  const routes = buildRepairRoutes(snapshot);
+  const target = document.querySelector("#strategy-feedback-input");
+  if (!target || !routes.length) {
+    setText("strategy-note", "当前没有可回填的修复反馈。");
+    return;
+  }
+  const text = routes
+    .slice(0, 2)
+    .map((route) => `${route.lane}: ${route.summary} 动作: ${route.actions.join("；")}`)
+    .join(" | ");
+  target.value = text;
+  setText("strategy-note", "已将修复路由回填到训练反馈。");
+  appendStrategyLog("info", "已将修复路由回填到训练反馈输入框。");
+}
+
+function applyRepairRoutingToProgrammer() {
+  const snapshot = loadStoredSnapshot() || {};
+  const routes = buildRepairRoutes(snapshot);
+  const instruction = document.querySelector("#programmer-instruction");
+  const context = document.querySelector("#programmer-context");
+  if (!instruction || !routes.length) {
+    setText("strategy-note", "当前没有可回填的修复指令。");
+    return;
+  }
+  const primary = routes[0];
+  instruction.value = `按${primary.lane}优先修复当前策略相关代码，重点：${primary.actions.join("；")}。保持现有风控结构、版本规则和输出契约不变。`;
+  if (context) {
+    context.value = `${primary.summary} 最近优先级=${primary.priority} / 来源=${primary.source || "research"}。如涉及检查失败，先修复对应 required_fix_actions，再重新运行 compile 与 pytest。`;
+  }
+  setText("strategy-note", "已将修复路由回填到 Programmer Agent。");
+  appendStrategyLog("info", "已将修复路由回填到 Programmer Agent 输入框。");
+}
+
+async function applyRepairAndIterate() {
+  applyRepairRoutingToFeedback();
+  await iterateStrategy();
+}
+
+async function applyRepairAndRunProgrammer() {
+  applyRepairRoutingToProgrammer();
+  await runProgrammerAgent();
+}
+
 function renderFeatureSnapshot(snapshot) {
   const features = snapshot?.strategy_package?.feature_snapshot || {};
   const lines = [];
@@ -139,8 +807,15 @@ function renderFeatureSnapshot(snapshot) {
     lines.push(`meta / version=${features.meta.snapshot_version || "unknown"} / hash=${features.meta.snapshot_hash || "unknown"} / bundle=${features.meta.data_bundle_id || "unknown"}`);
   }
   if (features.data_quality) {
-    lines.push(`data_quality / coverage=${features.data_quality.section_coverage_score ?? "unknown"} / providers=${features.data_quality.provider_count ?? 0}`);
+    lines.push(`data_quality / coverage=${features.data_quality.section_coverage_score ?? "unknown"} / providers=${features.data_quality.provider_count ?? 0} / grade=${features.data_quality.quality_grade || "unknown"}`);
     lines.push(`data_quality / available=${(features.data_quality.available_sections || []).join(", ") || "none"} / missing=${(features.data_quality.missing_sections || []).join(", ") || "none"}`);
+    lines.push(`data_quality / freshness_gap_hours=${features.data_quality.freshness?.max_gap_hours ?? "unknown"} / ts_count=${features.data_quality.freshness?.known_timestamp_count ?? 0}`);
+    if ((features.data_quality.alignment_warnings || []).length) {
+      lines.push(`data_quality / warnings=${features.data_quality.alignment_warnings.join(", ")}`);
+    }
+    if (features.data_quality.training_readiness) {
+      lines.push(`data_quality / training=${features.data_quality.training_readiness.status || "unknown"} / ${features.data_quality.training_readiness.note || ""}`);
+    }
   }
   if (features.source_lineage) {
     const lineage = features.source_lineage;
@@ -186,6 +861,15 @@ function renderInputManifest(snapshot) {
   }
   if (manifest.available_sections?.length || manifest.provider_coverage?.length) {
     lines.push(`coverage / sections=${(manifest.available_sections || []).join(", ") || "none"} / providers=${(manifest.provider_coverage || []).join(", ") || "none"}`);
+  }
+  if (manifest.data_quality?.quality_grade) {
+    lines.push(`quality / grade=${manifest.data_quality.quality_grade} / training=${manifest.data_quality.training_readiness?.status || "unknown"}`);
+  }
+  if (manifest.data_quality?.freshness) {
+    lines.push(`freshness / gap_hours=${manifest.data_quality.freshness.max_gap_hours ?? "unknown"} / ts_count=${manifest.data_quality.freshness.known_timestamp_count ?? 0}`);
+  }
+  if ((manifest.data_quality?.alignment_warnings || []).length) {
+    lines.push(`freshness / warnings=${manifest.data_quality.alignment_warnings.join(", ")}`);
   }
   if (lineage.market || lineage.intelligence || lineage.fundamentals || lineage.dark_pool || lineage.options) {
     lines.push(`lineage / market=${lineage.market?.source || "none"} / intel=${lineage.intelligence?.run_id || "none"} / financials=${lineage.fundamentals?.run_id || "none"}`);
@@ -320,6 +1004,131 @@ function runVersionCompare(snapshot) {
   );
 }
 
+function runResearchArchiveCompare(snapshot) {
+  const entries = getStrategyResearchCompareEntries(snapshot);
+  const versionA = document.querySelector("#strategy-research-compare-a")?.value;
+  const versionB = document.querySelector("#strategy-research-compare-b")?.value;
+  const a = entries.find((item) => (item.isCurrent ? `current:${item.version}` : item.version) === versionA);
+  const b = entries.find((item) => (item.isCurrent ? `current:${item.version}` : item.version) === versionB);
+  if (!a || !b) {
+    renderList("strategy-research-compare-list", [], "还没有研究归档对比结果。");
+    const panel = document.querySelector("#strategy-research-export");
+    if (panel) panel.textContent = "{}";
+    return;
+  }
+  const aWinner = a.research?.winner_selection_summary || {};
+  const bWinner = b.research?.winner_selection_summary || {};
+  const aGate = a.research?.final_release_gate_summary || {};
+  const bGate = b.research?.final_release_gate_summary || {};
+  const aRobust = a.research?.robustness_summary || {};
+  const bRobust = b.research?.robustness_summary || {};
+  const aCheck = a.research?.check_target_summary || {};
+  const bCheck = b.research?.check_target_summary || {};
+  const aBundle = a.exportManifest?.data_bundle_id || a.pkg?.data_bundle_id || a.pkg?.input_manifest?.data_bundle_id || "unknown";
+  const bBundle = b.exportManifest?.data_bundle_id || b.pkg?.data_bundle_id || b.pkg?.input_manifest?.data_bundle_id || "unknown";
+  const aQuality = a.exportManifest?.quality_grade || a.pkg?.input_manifest?.data_quality?.quality_grade || "unknown";
+  const bQuality = b.exportManifest?.quality_grade || b.pkg?.input_manifest?.data_quality?.quality_grade || "unknown";
+  renderList(
+    "strategy-research-compare-list",
+    [
+      `版本A / ${a.isCurrent ? "[当前] " : ""}${a.version} / winner=${aWinner.winner_variant_id || "unknown"} / gate=${aGate.gate_status || "unknown"} / robustness=${aRobust.grade || "unknown"} / bundle=${aBundle} / quality=${aQuality}`,
+      `版本B / ${b.isCurrent ? "[当前] " : ""}${b.version} / winner=${bWinner.winner_variant_id || "unknown"} / gate=${bGate.gate_status || "unknown"} / robustness=${bRobust.grade || "unknown"} / bundle=${bBundle} / quality=${bQuality}`,
+      `winner 变化 / ${aWinner.winner_variant_id || "unknown"} -> ${bWinner.winner_variant_id || "unknown"}`,
+      `gate 变化 / ${aGate.gate_status || "unknown"} -> ${bGate.gate_status || "unknown"}`,
+      `robustness 变化 / ${aRobust.grade || "unknown"} -> ${bRobust.grade || "unknown"}`,
+      `check_target 变化 / ${aCheck.variant_id || "unknown"} -> ${bCheck.variant_id || "unknown"}`,
+      `eval_source 变化 / ${aCheck.evaluation_source || "unknown"} -> ${bCheck.evaluation_source || "unknown"}`,
+      `next_focus A / ${(a.research?.next_iteration_focus || []).join("；") || "无"}`,
+      `next_focus B / ${(b.research?.next_iteration_focus || []).join("；") || "无"}`,
+    ],
+    "还没有研究归档对比结果。"
+  );
+  const panel = document.querySelector("#strategy-research-export");
+  if (panel) {
+    panel.textContent = JSON.stringify(
+      {
+        version_a: {
+          version: a.version,
+          current: a.isCurrent,
+          created_at: a.createdAt,
+          data_bundle_id: aBundle,
+          quality_grade: aQuality,
+          research_summary: a.research,
+        },
+        version_b: {
+          version: b.version,
+          current: b.isCurrent,
+          created_at: b.createdAt,
+          data_bundle_id: bBundle,
+          quality_grade: bQuality,
+          research_summary: b.research,
+        },
+      },
+      null,
+      2
+    );
+  }
+}
+
+function renderResearchArchiveDetail(snapshot) {
+  const entries = getStrategyResearchCompareEntries(snapshot);
+  const version = document.querySelector("#strategy-research-detail-version")?.value;
+  const entry = entries.find((item) => (item.isCurrent ? `current:${item.version}` : item.version) === version);
+  if (!entry) {
+    renderList("strategy-research-detail-list", [], "还没有研究归档详情。");
+    const panel = document.querySelector("#strategy-research-detail-export");
+    if (panel) panel.textContent = "{}";
+    return;
+  }
+  const exportManifest = entry.exportManifest || {};
+  const research = entry.research || {};
+  const winner = exportManifest.winner_variant_id || research.winner_selection_summary?.winner_variant_id || "unknown";
+  const gate = exportManifest.gate_status || research.final_release_gate_summary?.gate_status || "unknown";
+  const robustness = exportManifest.robustness_grade || research.robustness_summary?.grade || "unknown";
+  const evaluation = research.evaluation_snapshot || {};
+  const repairRoutes = exportManifest.repair_route_summary || research.repair_route_summary || [];
+  const primaryRepairRoute = exportManifest.primary_repair_route || repairRoutes[0] || null;
+  renderList(
+    "strategy-research-detail-list",
+    [
+      `version / ${entry.isCurrent ? "[当前] " : ""}${entry.version}`,
+      `created_at / ${entry.createdAt}`,
+      `winner / ${winner}`,
+      `gate / ${gate}`,
+      `robustness / ${robustness}`,
+      `bundle / ${exportManifest.data_bundle_id || entry.pkg?.data_bundle_id || "unknown"}`,
+      `quality / ${exportManifest.quality_grade || entry.pkg?.input_manifest?.data_quality?.quality_grade || "unknown"} / training=${exportManifest.training_readiness || entry.pkg?.input_manifest?.data_quality?.training_readiness?.status || "unknown"}`,
+      `check_target / ${exportManifest.check_target_variant_id || research.check_target_summary?.variant_id || "unknown"} / source=${exportManifest.evaluation_source || research.check_target_summary?.evaluation_source || "unknown"}`,
+      `train/validation/test / ${evaluation.train?.objective_score ?? "unknown"} / ${evaluation.validation?.objective_score ?? "unknown"} / ${evaluation.test?.objective_score ?? "unknown"}`,
+      `walk_forward / ${evaluation.walk_forward_score ?? "unknown"} / windows=${evaluation.walk_forward_windows ?? 0}`,
+      `gap / ${evaluation.train_test_gap ?? "unknown"}`,
+      `next_focus / ${(exportManifest.next_iteration_focus || research.next_iteration_focus || []).join("；") || "无"}`,
+      `failed_checks / ${(exportManifest.failed_checks || []).join(", ") || "无"}`,
+      `primary_repair_route / ${primaryRepairRoute ? `${primaryRepairRoute.lane} / ${primaryRepairRoute.priority} / ${primaryRepairRoute.source || "unknown"}` : "无"}`,
+      ...(repairRoutes.length
+        ? repairRoutes.flatMap((route) => [
+            `repair_route / ${route.lane} / ${route.priority} / ${route.source || "unknown"} / ${route.summary || "无摘要"}`,
+            ...((route.actions || []).map((action) => `repair_action / ${action}`)),
+          ])
+        : ["repair_route / 无"]),
+    ],
+    "还没有研究归档详情。"
+  );
+  const panel = document.querySelector("#strategy-research-detail-export");
+  if (panel) {
+    panel.textContent = JSON.stringify(
+      {
+        version: entry.version,
+        current: entry.isCurrent,
+        created_at: entry.createdAt,
+        research_export: exportManifest,
+      },
+      null,
+      2
+    );
+  }
+}
+
 function renderProgrammerRuns(snapshot) {
   const runs = snapshot?.programmer_runs || [];
   renderList(
@@ -327,7 +1136,20 @@ function renderProgrammerRuns(snapshot) {
     runs
       .slice()
       .reverse()
-      .map((item) => `${item.timestamp || "unknown"} / ${item.status || "unknown"} / failure=${item.failure_type || "none"} / commit=${item.commit_hash || "none"} / rollback=${item.rollback_commit || "none"} / files=${(item.changed_files || []).join(", ") || "none"}`),
+      .flatMap((item) => {
+        const summary = item.failure_summary || {};
+        const plan = item.repair_plan || {};
+        const lines = [
+          `${item.timestamp || "unknown"} / ${item.status || "unknown"} / failure=${item.failure_type || "none"} / commit=${item.commit_hash || "none"} / rollback=${item.rollback_commit || "none"} / files=${(item.changed_files || []).join(", ") || "none"}`,
+        ];
+        if (summary.attempt_count) {
+          lines.push(`failure_summary / attempts=${summary.attempt_count} / dominant=${summary.dominant_failure_type || "unknown"} / latest=${summary.latest_failure_type || "unknown"}`);
+        }
+        if (plan.priority || (plan.actions || []).length) {
+          lines.push(`repair_plan / ${plan.priority || "P1"} / ${(plan.actions || []).join("；") || "无"}`);
+        }
+        return lines;
+      }),
     "还没有 Programmer Agent 记录。"
   );
   const panel = document.querySelector("#programmer-diff-panel");
@@ -339,7 +1161,13 @@ function renderProgrammerRuns(snapshot) {
       const attemptSummary = (latest.attempts || [])
         .map((item) => `attempt=${item.attempt} status=${item.status} failure=${item.failure_type || "none"} validation=${item.validation_ok === false ? "fail" : "pass"}`)
         .join("\n");
-      panel.textContent = [attemptSummary, latest.diff || "", latest.stderr || ""].filter(Boolean).join("\n\n");
+      const failureSummary = latest.failure_summary
+        ? JSON.stringify(latest.failure_summary, null, 2)
+        : "";
+      const repairPlan = latest.repair_plan
+        ? JSON.stringify(latest.repair_plan, null, 2)
+        : "";
+      panel.textContent = [attemptSummary, failureSummary, repairPlan, latest.diff || "", latest.stderr || ""].filter(Boolean).join("\n\n");
     }
   }
 }
@@ -550,6 +1378,7 @@ async function runProgrammerAgent() {
     const latestRun = (latest.programmer_runs || [])[latest.programmer_runs.length - 1] || {};
     setText("strategy-note", `Programmer Agent 已执行，status=${latestRun.status || "unknown"}。`);
     appendStrategyLog("info", `Programmer Agent 执行完成，commit=${latestRun.commit_hash || "none"}。`);
+    focusPanel("#programmer-diff-panel");
   } catch (error) {
     setText("strategy-note", `Programmer Agent 执行失败：${error.message}`);
     appendStrategyLog("error", `Programmer Agent 执行失败：${error.message}`);
@@ -726,6 +1555,7 @@ function renderBacktestSummary(snapshot) {
 function renderStrategy(snapshot) {
   formatJsonIntoList("strategy-package-list", snapshot?.strategy_package || null, "还没有策略包。");
   renderStrategyStatus(snapshot);
+  renderReleaseSnapshot(snapshot);
   renderList(
     "strategy-check-list",
     (snapshot?.strategy_checks || []).map((item) => {
@@ -734,6 +1564,7 @@ function renderStrategy(snapshot) {
     }),
     "等待策略检查。"
   );
+  renderCheckFailureTrend(snapshot);
   renderList(
     "feedback-list",
     (snapshot?.strategy_feedback_log || []).map((item) => `${item.strategy_type} / ${item.feedback}`),
@@ -754,6 +1585,12 @@ function renderStrategy(snapshot) {
     );
   }
   renderStrategyAnalysis(snapshot);
+  renderResearchSummary(snapshot);
+  renderResearchTrendSummary(snapshot);
+  renderRepairTrendSummary(snapshot);
+  renderResearchHealthSummary(snapshot);
+  renderResearchCodeLoop(snapshot);
+  renderRepairRouting(snapshot);
   renderFeatureSnapshot(snapshot);
   renderInputManifest(snapshot);
   renderDataBundles(snapshot);
@@ -761,6 +1598,7 @@ function renderStrategy(snapshot) {
   renderStrategyArchive(snapshot);
   renderFailureEvolution(snapshot);
   populateVersionSelectors(snapshot);
+  populateResearchArchiveSelectors(snapshot);
   renderVariantComparison(snapshot);
   renderModelRouting(snapshot);
   renderTokenUsage(snapshot);
@@ -769,6 +1607,8 @@ function renderStrategy(snapshot) {
   renderStrategyPerformance(snapshot);
   renderVersionCode(snapshot);
   runVersionCompare(snapshot);
+  runResearchArchiveCompare(snapshot);
+  renderResearchArchiveDetail(snapshot);
   renderProgrammerRuns(snapshot);
   renderProgrammerStats(snapshot);
   renderProgrammerTrend(snapshot);
@@ -875,6 +1715,7 @@ async function iterateStrategy() {
     checks.forEach((item) => {
       appendStrategyLog(item.status === "fail" ? "error" : "info", `${item.check_type}: ${item.summary}`);
     });
+    focusPanel("#strategy-research-summary-list");
   } catch (error) {
     setText("strategy-note", `策略迭代失败：${error.message}`);
     appendStrategyLog("error", `策略迭代失败：${error.message}`);
@@ -899,6 +1740,7 @@ async function approveStrategy() {
     renderStrategy(latest);
     setText("strategy-note", "策略已确认。");
     appendStrategyLog("success", `策略确认完成，phase=${latest.phase}`);
+    focusPanel("#strategy-status-list");
   } catch (error) {
     setText("strategy-note", `策略确认失败：${error.message}`);
     appendStrategyLog("error", `策略确认失败：${error.message}`);
@@ -911,10 +1753,22 @@ document.querySelector("#submit-universe")?.addEventListener("click", submitUniv
 document.querySelector("#iterate-strategy")?.addEventListener("click", iterateStrategy);
 document.querySelector("#approve-strategy")?.addEventListener("click", approveStrategy);
 document.querySelector("#run-version-compare")?.addEventListener("click", () => runVersionCompare(loadStoredSnapshot() || {}));
+document.querySelector("#run-strategy-research-compare")?.addEventListener("click", () => runResearchArchiveCompare(loadStoredSnapshot() || {}));
+document.querySelector("#strategy-research-detail-version")?.addEventListener("change", () => renderResearchArchiveDetail(loadStoredSnapshot() || {}));
 document.querySelector("#history-version-select")?.addEventListener("change", () => renderVersionCode(loadStoredSnapshot() || {}));
 document.querySelector("#restore-version-button")?.addEventListener("click", () => restoreStrategyVersion(loadStoredSnapshot() || {}));
 document.querySelector("#run-programmer-agent")?.addEventListener("click", runProgrammerAgent);
 document.querySelector("#programmer-trend-filter")?.addEventListener("change", () => renderProgrammerTrend(loadStoredSnapshot() || {}));
+document.querySelector("#apply-repair-feedback")?.addEventListener("click", applyRepairRoutingToFeedback);
+document.querySelector("#apply-repair-programmer")?.addEventListener("click", applyRepairRoutingToProgrammer);
+document.querySelector("#apply-repair-and-iterate")?.addEventListener("click", () => applyRepairAndIterate().catch((error) => {
+  setText("strategy-note", `自动回填并训练失败：${error.message}`);
+  appendStrategyLog("error", `自动回填并训练失败：${error.message}`);
+}));
+document.querySelector("#apply-repair-and-programmer")?.addEventListener("click", () => applyRepairAndRunProgrammer().catch((error) => {
+  setText("strategy-note", `自动回填并执行 Programmer Agent 失败：${error.message}`);
+  appendStrategyLog("error", `自动回填并执行 Programmer Agent 失败：${error.message}`);
+}));
 document.querySelector("#apply-strategy-recommendation")?.addEventListener("click", () => {
   const report = loadStoredSnapshot()?.behavioral_report || {};
   if (report.recommended_strategy_type) {
@@ -966,4 +1820,9 @@ document.querySelector("#apply-strategy-recommendation")?.addEventListener("clic
     document.querySelector("#universe-symbols-input").value = snapshot.trade_universe.requested.join(",");
   }
   appendStrategyLog("info", "策略训练页已加载。");
+  const pendingFocus = window.localStorage.getItem(STRATEGY_FOCUS_KEY);
+  if (pendingFocus) {
+    window.localStorage.removeItem(STRATEGY_FOCUS_KEY);
+    window.setTimeout(() => focusPanel(pendingFocus), 120);
+  }
 })();

@@ -45,6 +45,52 @@
         </ul>
       </article>
       <article class="panel">
+        <p class="eyebrow">Strategy Research</p>
+        <h3>策略研究归档</h3>
+        <div class="action-buttons secondary compact-actions">
+          <button id="jump-to-strategy-research">跳到策略研究</button>
+          <button id="jump-to-strategy-repair">跳到修复路由</button>
+        </div>
+        <ul id="strategy-research-archive-list" class="result-list">
+          <li>当前还没有策略研究归档。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Research Compare</p>
+        <h3>研究归档对比</h3>
+        <div class="trade-config">
+          <label class="config-field">
+            <span>版本 A</span>
+            <select id="report-compare-a"></select>
+          </label>
+          <label class="config-field">
+            <span>版本 B</span>
+            <select id="report-compare-b"></select>
+          </label>
+        </div>
+        <div class="action-buttons secondary compact-actions">
+          <button id="run-report-compare">对比研究归档</button>
+        </div>
+        <ul id="report-compare-list" class="result-list">
+          <li>当前还没有研究归档对比。</li>
+        </ul>
+        <pre id="report-research-export" class="json-panel">{}</pre>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Research Detail</p>
+        <h3>研究归档详情</h3>
+        <div class="trade-config">
+          <label class="config-field">
+            <span>查看版本</span>
+            <select id="report-detail-version"></select>
+          </label>
+        </div>
+        <ul id="report-research-detail-list" class="result-list">
+          <li>当前还没有研究归档详情。</li>
+        </ul>
+        <pre id="report-research-detail-export" class="json-panel">{}</pre>
+      </article>
+      <article class="panel">
         <p class="eyebrow">Evolution</p>
         <h3>画像演化</h3>
         <ul id="evolution-list" class="result-list">
@@ -52,10 +98,79 @@
         </ul>
       </article>
       <article class="panel">
+        <p class="eyebrow">User Feedback</p>
+        <h3>用户意见</h3>
+        <ul id="user-feedback-list" class="result-list">
+          <li>当前还没有用户意见记录。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Feedback Impact</p>
+        <h3>用户意见对应结果</h3>
+        <div class="action-buttons secondary compact-actions">
+          <button id="jump-to-feedback-loop">跳到研究联动</button>
+        </div>
+        <ul id="feedback-impact-list" class="result-list">
+          <li>当前还没有用户意见对应结果。</li>
+        </ul>
+      </article>
+      <article class="panel">
         <p class="eyebrow">History</p>
         <h3>历史时间线</h3>
         <ul id="history-list" class="result-list">
           <li>当前还没有历史记录。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Bundles</p>
+        <h3>训练输入数据包时间线</h3>
+        <ul id="bundle-history-list" class="result-list">
+          <li>当前还没有输入数据包记录。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Input Quality</p>
+        <h3>最新训练输入质量</h3>
+        <ul id="bundle-quality-list" class="result-list">
+          <li>当前还没有训练输入质量信息。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Latest Research</p>
+        <h3>最新策略研究结论</h3>
+        <ul id="latest-research-list" class="result-list">
+          <li>当前还没有策略研究结论。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Research Trend</p>
+        <h3>研究趋势摘要</h3>
+        <ul id="report-research-trend-list" class="result-list">
+          <li>当前还没有研究趋势摘要。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Repair Trend</p>
+        <h3>修复趋势摘要</h3>
+        <ul id="report-repair-trend-list" class="result-list">
+          <li>当前还没有修复趋势摘要。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Research Health</p>
+        <h3>研究健康结论</h3>
+        <ul id="report-research-health-list" class="result-list">
+          <li>当前还没有研究健康结论。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Release Snapshot</p>
+        <h3>研究发布摘要</h3>
+        <section id="report-release-grid" class="check-grid">
+          <article class="check-card"><strong>当前还没有研究发布摘要。</strong></article>
+        </section>
+        <ul id="report-release-list" class="result-list">
+          <li>当前还没有研究发布摘要。</li>
         </ul>
       </article>
     </section>

@@ -79,7 +79,14 @@ class SessionFeaturePipeline:
             latest_dark_pool=latest_dark_pool,
             latest_options=latest_options,
         )
-        snapshot["data_quality"] = self._build_data_quality(snapshot)
+        snapshot["data_quality"] = self._build_data_quality(
+            snapshot,
+            latest_market=latest_market,
+            latest_intelligence=latest_intelligence,
+            latest_financials=latest_financials,
+            latest_dark_pool=latest_dark_pool,
+            latest_options=latest_options,
+        )
         snapshot["meta"] = self._build_meta(snapshot)
         return snapshot
 
@@ -121,7 +128,16 @@ class SessionFeaturePipeline:
             },
         }
 
-    def _build_data_quality(self, snapshot: dict) -> dict:
+    def _build_data_quality(
+        self,
+        snapshot: dict,
+        *,
+        latest_market: dict,
+        latest_intelligence: dict,
+        latest_financials: dict,
+        latest_dark_pool: dict,
+        latest_options: dict,
+    ) -> dict:
         sections = {
             "behavioral": bool(snapshot.get("behavioral")),
             "market": bool((snapshot.get("market") or {}).get("has_snapshot")),
@@ -142,13 +158,110 @@ class SessionFeaturePipeline:
             if provider
         ]
         completeness_score = round(len(available_sections) / len(sections), 4)
+        freshness = self._build_freshness(
+            latest_market=latest_market,
+            latest_intelligence=latest_intelligence,
+            latest_financials=latest_financials,
+            latest_dark_pool=latest_dark_pool,
+            latest_options=latest_options,
+        )
         return {
             "available_sections": available_sections,
             "missing_sections": [name for name, present in sections.items() if not present],
             "section_coverage_score": completeness_score,
             "provider_coverage": sorted(set(provider_coverage)),
             "provider_count": len(set(provider_coverage)),
+            "freshness": freshness,
+            "alignment_warnings": self._build_alignment_warnings(freshness),
+            "quality_grade": self._build_quality_grade(
+                completeness_score=completeness_score,
+                freshness=freshness,
+                provider_count=len(set(provider_coverage)),
+            ),
+            "training_readiness": self._build_training_readiness(
+                completeness_score=completeness_score,
+                freshness=freshness,
+                provider_count=len(set(provider_coverage)),
+            ),
         }
+
+    def _build_freshness(
+        self,
+        *,
+        latest_market: dict,
+        latest_intelligence: dict,
+        latest_financials: dict,
+        latest_dark_pool: dict,
+        latest_options: dict,
+    ) -> dict:
+        timestamps = {
+            "market": self._coerce_datetime(
+                latest_market.get("timestamp")
+                or latest_market.get("captured_at")
+                or latest_market.get("source_timestamp")
+            ),
+            "intelligence": self._coerce_datetime(latest_intelligence.get("generated_at")),
+            "fundamentals": self._coerce_datetime(latest_financials.get("generated_at")),
+            "dark_pool": self._coerce_datetime(latest_dark_pool.get("generated_at")),
+            "options": self._coerce_datetime(latest_options.get("generated_at")),
+        }
+        iso_map = {
+            key: value.isoformat() if value else None
+            for key, value in timestamps.items()
+        }
+        known = [value for value in timestamps.values() if value is not None]
+        max_gap_hours = 0.0
+        if len(known) >= 2:
+            earliest = min(known)
+            latest = max(known)
+            max_gap_hours = round((latest - earliest).total_seconds() / 3600, 4)
+        return {
+            "timestamps": iso_map,
+            "known_timestamp_count": len(known),
+            "max_gap_hours": max_gap_hours,
+        }
+
+    def _build_alignment_warnings(self, freshness: dict) -> list[str]:
+        warnings: list[str] = []
+        if freshness.get("known_timestamp_count", 0) < 2:
+            warnings.append("limited_timestamp_coverage")
+        if float(freshness.get("max_gap_hours", 0.0) or 0.0) > 72.0:
+            warnings.append("cross_source_time_gap_gt_72h")
+        return warnings
+
+    def _build_quality_grade(self, *, completeness_score: float, freshness: dict, provider_count: int) -> str:
+        gap = float(freshness.get("max_gap_hours", 0.0) or 0.0)
+        known_timestamps = int(freshness.get("known_timestamp_count", 0) or 0)
+        if completeness_score >= 0.85 and gap <= 24.0 and provider_count >= 2 and known_timestamps >= 3:
+            return "healthy"
+        if completeness_score >= 0.55 and gap <= 72.0 and known_timestamps >= 2:
+            return "warning"
+        return "degraded"
+
+    def _build_training_readiness(self, *, completeness_score: float, freshness: dict, provider_count: int) -> dict:
+        grade = self._build_quality_grade(
+            completeness_score=completeness_score,
+            freshness=freshness,
+            provider_count=provider_count,
+        )
+        if grade == "healthy":
+            return {"status": "ready", "note": "数据覆盖、时间对齐和来源数量满足训练要求。"}
+        if grade == "warning":
+            return {"status": "caution", "note": "可用于训练，但建议先检查时间差和缺失输入层。"}
+        return {"status": "blocked", "note": "当前输入质量较弱，不建议直接用于正式训练。"}
+
+    def _coerce_datetime(self, raw: str | None) -> datetime | None:
+        if not raw:
+            return None
+        try:
+            if raw.endswith("Z"):
+                raw = raw[:-1] + "+00:00"
+            parsed = datetime.fromisoformat(raw)
+            if parsed.tzinfo is None:
+                return parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+        except Exception:
+            return None
 
     def _build_meta(self, snapshot: dict) -> dict:
         canonical = {

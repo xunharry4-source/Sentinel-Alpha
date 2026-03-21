@@ -405,6 +405,16 @@ class WorkflowService:
                     features=iteration_context["features"],
                     objective_metric=objective_metric,
                 )
+                research_summary = self._build_research_summary(
+                    strategy_type=strategy_type,
+                    objective_metric=objective_metric,
+                    baseline_candidate=baseline_payload,
+                    baseline_evaluation=baseline_evaluation,
+                    variants=variants,
+                    winner=winner,
+                    selected_check_target=selected_check_target,
+                    dataset_plan=dataset_plan,
+                )
                 self._register_data_bundle(session, input_manifest)
                 session.strategy_package = {
                     "iteration_no": iteration_no,
@@ -428,6 +438,7 @@ class WorkflowService:
                     "feature_snapshot_version": iteration_context["features"].get("meta", {}).get("snapshot_hash"),
                     "data_bundle_id": iteration_context["features"].get("meta", {}).get("data_bundle_id"),
                     "input_manifest": input_manifest,
+                    "research_summary": research_summary,
                     "evaluation_protocol": {
                         "selection_target": "highest test objective score",
                         "guardrails": [
@@ -452,6 +463,13 @@ class WorkflowService:
                 }
                 session.strategy_checks = self._run_strategy_checks(session)
                 failed_checks = [check for check in session.strategy_checks if check["status"] == "fail"]
+                research_summary = self._finalize_research_summary(research_summary, session.strategy_checks)
+                repair_route_summary = self._build_unified_repair_route_summary(
+                    research_summary,
+                    session.programmer_runs[-1] if session.programmer_runs else None,
+                )
+                research_summary["repair_route_summary"] = repair_route_summary
+                session.strategy_package["research_summary"] = research_summary
                 self._record_agent_activity(
                     "strategy_integrity_checker",
                     "error" if any(check["check_type"] == "integrity" and check["status"] == "fail" for check in session.strategy_checks) else "ok",
@@ -480,6 +498,7 @@ class WorkflowService:
                         "feature_snapshot_version": iteration_context["features"].get("meta", {}).get("snapshot_hash"),
                         "data_bundle_id": iteration_context["features"].get("meta", {}).get("data_bundle_id"),
                         "input_manifest": input_manifest,
+                        "research_summary": research_summary,
                         "status": "rework_required" if failed_checks else "checked",
                         "feedback": feedback or "",
                         "analysis_summary": analysis["summary"],
@@ -488,7 +507,12 @@ class WorkflowService:
                         "recommended_test_score": winner["evaluation"].get("test_objective_score"),
                         "recommended_stability_score": winner["evaluation"].get("stability_score"),
                         "failed_checks": [check["check_type"] for check in failed_checks],
+                        "repair_route_summary": repair_route_summary,
                     }
+                )
+                research_export = self._build_research_export_manifest(
+                    session.strategy_package,
+                    session.strategy_training_log[-1],
                 )
                 self._archive_report(
                     session,
@@ -498,6 +522,7 @@ class WorkflowService:
                         "strategy_package": session.strategy_package,
                         "strategy_checks": session.strategy_checks,
                         "training_log_entry": session.strategy_training_log[-1],
+                        "research_export": research_export,
                     },
                     related_refs=expanded,
                 )
@@ -510,6 +535,19 @@ class WorkflowService:
                         "version_label": session.strategy_package["version_label"],
                         "status": "rework_required" if failed_checks else "checked",
                         "data_bundle_id": session.strategy_package.get("data_bundle_id"),
+                        "quality_grade": input_manifest.get("data_quality", {}).get("quality_grade"),
+                        "training_readiness": input_manifest.get("data_quality", {}).get("training_readiness", {}).get("status"),
+                        "winner_variant_id": research_export.get("winner_variant_id"),
+                        "gate_status": research_export.get("gate_status"),
+                        "evaluation_source": research_export.get("evaluation_source"),
+                        "robustness_grade": research_export.get("robustness_grade"),
+                        "train_objective_score": research_export.get("research_summary", {}).get("evaluation_snapshot", {}).get("train", {}).get("objective_score"),
+                        "validation_objective_score": research_export.get("research_summary", {}).get("evaluation_snapshot", {}).get("validation", {}).get("objective_score"),
+                        "test_objective_score": research_export.get("research_summary", {}).get("evaluation_snapshot", {}).get("test", {}).get("objective_score"),
+                        "walk_forward_score": research_export.get("research_summary", {}).get("evaluation_snapshot", {}).get("walk_forward_score"),
+                        "train_test_gap": research_export.get("research_summary", {}).get("evaluation_snapshot", {}).get("train_test_gap"),
+                        "repair_route_lane": (research_export.get("primary_repair_route") or {}).get("lane"),
+                        "repair_route_priority": (research_export.get("primary_repair_route") or {}).get("priority"),
                     },
                 )
                 if not failed_checks and iteration_mode != "free":
@@ -1092,6 +1130,376 @@ class WorkflowService:
                 }
         return best
 
+    def _build_research_summary(
+        self,
+        strategy_type: str,
+        objective_metric: str,
+        baseline_candidate: dict,
+        baseline_evaluation: dict,
+        variants: list[dict],
+        winner: dict,
+        selected_check_target: dict,
+        dataset_plan: dict,
+    ) -> dict:
+        def _result_summary(name: str, version: str, evaluation: dict, plan: dict | None = None) -> dict:
+            dataset = evaluation.get("dataset_evaluation") or {}
+            return {
+                "name": name,
+                "version": version,
+                "source": evaluation.get("evaluation_source"),
+                "objective_score": evaluation.get("objective_score"),
+                "test_objective_score": evaluation.get("test_objective_score"),
+                "validation_objective_score": evaluation.get("validation_objective_score"),
+                "stability_score": evaluation.get("stability_score"),
+                "train_test_gap": evaluation.get("train_test_gap"),
+                "focus": plan.get("focus") if plan else None,
+                "changes": plan.get("changes") if plan else [],
+                "train": dataset.get("train"),
+                "validation": dataset.get("validation"),
+                "test": dataset.get("test"),
+            }
+
+        candidates = [
+            _result_summary(
+                name="baseline",
+                version=baseline_candidate.get("version", "baseline"),
+                evaluation=baseline_evaluation,
+            )
+        ]
+        for variant in variants:
+            candidates.append(
+                _result_summary(
+                    name=variant.get("variant_id", "unknown"),
+                    version=variant.get("candidate", {}).get("version", variant.get("variant_id", "unknown")),
+                    evaluation=variant.get("evaluation", {}),
+                    plan=variant.get("plan") or {},
+                )
+            )
+
+        sorted_candidates = sorted(
+            candidates,
+            key=lambda item: (
+                float(item.get("test_objective_score") or 0.0),
+                float(item.get("validation_objective_score") or 0.0),
+                float(item.get("stability_score") or 0.0),
+            ),
+            reverse=True,
+        )
+        winner_id = winner.get("variant_id", "baseline")
+        winner_entry = next((item for item in sorted_candidates if item["name"] == winner_id), sorted_candidates[0] if sorted_candidates else {})
+        baseline_test = float(baseline_evaluation.get("test_objective_score") or 0.0)
+        winner_test = float(winner_entry.get("test_objective_score") or 0.0)
+        winner_gain = round(winner_test - baseline_test, 4)
+        check_target_eval = selected_check_target.get("evaluation") or {}
+        check_target_dataset = check_target_eval.get("dataset_evaluation") or {}
+        winner_gap = abs(float(winner_entry.get("train_test_gap") or 0.0))
+        winner_stability = float(winner_entry.get("stability_score") or 0.0)
+        if winner_stability >= 0.8 and winner_gap <= 0.12:
+            robustness_grade = "strong"
+            robustness_note = "The winner remains stable across out-of-sample evaluation and the train-test gap is controlled."
+        elif winner_stability >= 0.6 and winner_gap <= 0.2:
+            robustness_grade = "acceptable"
+            robustness_note = "The winner is usable, but stability or train-test dispersion still needs monitoring."
+        else:
+            robustness_grade = "fragile"
+            robustness_note = "The winner is currently ahead, but robustness is weak and should be treated as research-only."
+        rejection_summary = []
+        for item in sorted_candidates:
+            if item["name"] == winner_id:
+                continue
+            reasons = []
+            if float(item.get("test_objective_score") or 0.0) < winner_test:
+                reasons.append("weaker out-of-sample test score")
+            if float(item.get("validation_objective_score") or 0.0) < float(winner_entry.get("validation_objective_score") or 0.0):
+                reasons.append("weaker validation score")
+            if float(item.get("stability_score") or 0.0) < winner_stability:
+                reasons.append("lower stability")
+            if abs(float(item.get("train_test_gap") or 0.0)) > winner_gap:
+                reasons.append("larger train-test gap")
+            if not reasons:
+                reasons.append("lost on the composite ranking tie-breaker")
+            rejection_summary.append(
+                {
+                    "name": item["name"],
+                    "version": item["version"],
+                    "reason": ", ".join(reasons),
+                    "test_objective_score": item.get("test_objective_score"),
+                    "validation_objective_score": item.get("validation_objective_score"),
+                    "stability_score": item.get("stability_score"),
+                    "train_test_gap": item.get("train_test_gap"),
+                }
+            )
+        evaluation_snapshot = {
+            "evaluation_source": check_target_eval.get("evaluation_source"),
+            "train": check_target_dataset.get("train"),
+            "validation": check_target_dataset.get("validation"),
+            "test": check_target_dataset.get("test"),
+            "walk_forward_windows": len(check_target_dataset.get("walk_forward") or []),
+            "walk_forward_score": check_target_dataset.get("stability", {}).get("walk_forward_score"),
+            "stability_score": check_target_eval.get("stability_score"),
+            "train_test_gap": check_target_dataset.get("stability", {}).get("train_test_gap"),
+        }
+        evaluation_highlights = []
+        if evaluation_snapshot["test"]:
+            evaluation_highlights.append(
+                f"Test score {evaluation_snapshot['test'].get('objective_score', 'unknown')} with return {evaluation_snapshot['test'].get('expected_return_pct', 'unknown')}% and drawdown {evaluation_snapshot['test'].get('drawdown_pct', 'unknown')}%."
+            )
+        if evaluation_snapshot["validation"]:
+            evaluation_highlights.append(
+                f"Validation score {evaluation_snapshot['validation'].get('objective_score', 'unknown')} confirms out-of-sample consistency."
+            )
+        if evaluation_snapshot["walk_forward_score"] is not None:
+            evaluation_highlights.append(
+                f"Walk-forward score {evaluation_snapshot['walk_forward_score']} across {evaluation_snapshot['walk_forward_windows']} windows."
+            )
+        if evaluation_snapshot["train_test_gap"] is not None:
+            evaluation_highlights.append(f"Train-test gap is {evaluation_snapshot['train_test_gap']}.")
+        return {
+            "objective_metric": objective_metric,
+            "strategy_type": strategy_type,
+            "dataset_protocol": dataset_plan.get("protocol"),
+            "selection_rule": "Select the candidate with the best out-of-sample test score, then validate stability and send only the winner for integrity/stress checks.",
+            "candidate_count": len(candidates),
+            "winner_selection_summary": {
+                "winner_variant_id": winner_id,
+                "winner_version": winner_entry.get("version"),
+                "winner_test_objective_score": winner_entry.get("test_objective_score"),
+                "winner_validation_objective_score": winner_entry.get("validation_objective_score"),
+                "winner_stability_score": winner_entry.get("stability_score"),
+                "baseline_test_objective_score": baseline_test,
+                "winner_advantage_vs_baseline": winner_gain,
+                "reason": winner.get("reason"),
+            },
+            "check_target_summary": {
+                "variant_id": selected_check_target.get("variant_id"),
+                "source": selected_check_target.get("source"),
+                "evaluation_source": check_target_eval.get("evaluation_source"),
+                "test_objective_score": check_target_eval.get("test_objective_score"),
+                "stability_score": check_target_eval.get("stability_score"),
+                "reason": (
+                    f"Only the current best candidate ({selected_check_target.get('variant_id')}) proceeds to integrity and stress/overfit validation."
+                ),
+            },
+            "robustness_summary": {
+                "grade": robustness_grade,
+                "stability_score": winner_stability,
+                "train_test_gap": winner_entry.get("train_test_gap"),
+                "test_objective_score": winner_entry.get("test_objective_score"),
+                "validation_objective_score": winner_entry.get("validation_objective_score"),
+                "note": robustness_note,
+            },
+            "evaluation_snapshot": evaluation_snapshot,
+            "evaluation_highlights": evaluation_highlights,
+            "rejection_summary": rejection_summary,
+            "candidate_rankings": [
+                {
+                    "rank": index + 1,
+                    "name": item["name"],
+                    "version": item["version"],
+                    "source": item.get("source"),
+                    "objective_score": item.get("objective_score"),
+                    "test_objective_score": item.get("test_objective_score"),
+                    "validation_objective_score": item.get("validation_objective_score"),
+                    "stability_score": item.get("stability_score"),
+                    "train_test_gap": item.get("train_test_gap"),
+                    "focus": item.get("focus"),
+                    "changes": item.get("changes"),
+                }
+                for index, item in enumerate(sorted_candidates)
+            ],
+            "research_summary": (
+                f"Using {dataset_plan.get('protocol', 'unknown protocol')}, the current winner is {winner_id} "
+                f"with test score {winner_entry.get('test_objective_score', 'unknown')}, "
+                f"validation score {winner_entry.get('validation_objective_score', 'unknown')}, "
+                f"and stability {winner_entry.get('stability_score', 'unknown')}. "
+                f"Relative to baseline, the winner changes the test objective by {winner_gain}."
+            ),
+        }
+
+    def _finalize_research_summary(self, research_summary: dict, strategy_checks: list[dict]) -> dict:
+        failed_checks = [check for check in strategy_checks if check.get("status") == "fail"]
+        passed_checks = [check for check in strategy_checks if check.get("status") != "fail"]
+        release_ready = not failed_checks
+        final_release_gate_summary = {
+            "release_ready": release_ready,
+            "failed_check_count": len(failed_checks),
+            "passed_check_count": len(passed_checks),
+            "gate_status": "passed" if release_ready else "blocked",
+            "reason": (
+                "The selected winner passed integrity and stress/overfit validation."
+                if release_ready
+                else "The selected winner is blocked by integrity and/or stress-overfit checks and must be reworked."
+            ),
+        }
+        check_failure_summary = [
+            {
+                "check_type": check.get("check_type"),
+                "summary": check.get("summary"),
+                "score": check.get("score"),
+                "required_fix_actions": list(check.get("required_fix_actions") or []),
+            }
+            for check in failed_checks
+        ]
+        next_iteration_focus = []
+        for check in failed_checks:
+            next_iteration_focus.extend(list(check.get("required_fix_actions") or []))
+        merged = dict(research_summary)
+        merged["final_release_gate_summary"] = final_release_gate_summary
+        merged["check_failure_summary"] = check_failure_summary
+        merged["next_iteration_focus"] = list(dict.fromkeys(next_iteration_focus))
+        return merged
+
+    def _build_research_export_manifest(self, strategy_package: dict, training_log_entry: dict) -> dict:
+        research = strategy_package.get("research_summary") or training_log_entry.get("research_summary") or {}
+        winner = research.get("winner_selection_summary") or {}
+        gate = research.get("final_release_gate_summary") or {}
+        robustness = research.get("robustness_summary") or {}
+        check_target = research.get("check_target_summary") or {}
+        quality = strategy_package.get("input_manifest", {}).get("data_quality", {})
+        training_quality = training_log_entry.get("input_manifest", {}).get("data_quality", {})
+        return {
+            "version": strategy_package.get("version_label"),
+            "strategy_type": strategy_package.get("strategy_type"),
+            "data_bundle_id": strategy_package.get("data_bundle_id") or training_log_entry.get("data_bundle_id"),
+            "feature_snapshot_version": strategy_package.get("feature_snapshot_version") or training_log_entry.get("feature_snapshot_version"),
+            "quality_grade": quality.get("quality_grade") or training_quality.get("quality_grade"),
+            "training_readiness": (
+                quality.get("training_readiness", {}).get("status")
+                or training_quality.get("training_readiness", {}).get("status")
+            ),
+            "winner_variant_id": winner.get("winner_variant_id"),
+            "gate_status": gate.get("gate_status"),
+            "robustness_grade": robustness.get("grade"),
+            "check_target_variant_id": check_target.get("variant_id"),
+            "evaluation_source": check_target.get("evaluation_source"),
+            "next_iteration_focus": research.get("next_iteration_focus") or [],
+            "repair_route_summary": research.get("repair_route_summary") or [],
+            "primary_repair_route": (research.get("repair_route_summary") or [None])[0],
+            "failed_checks": training_log_entry.get("failed_checks") or [],
+            "research_summary": research,
+        }
+
+    def _build_unified_repair_route_summary(self, research_summary: dict, programmer_run: dict | None) -> list[dict]:
+        failed_checks = [item.get("check_type") for item in research_summary.get("check_failure_summary") or [] if item.get("check_type")]
+        next_focus = list(research_summary.get("next_iteration_focus") or [])
+        final_gate = research_summary.get("final_release_gate_summary") or {}
+        programmer_run = programmer_run or {}
+        programmer_failure = programmer_run.get("failure_type") or (
+            "success" if programmer_run.get("status") == "ok" else programmer_run.get("status") or "unknown"
+        )
+        programmer_plan = programmer_run.get("repair_plan") or {}
+        routes: list[dict] = []
+
+        def add_route(lane: str, priority: str, summary: str, actions: list[str], source: str) -> None:
+            routes.append(
+                {
+                    "lane": lane,
+                    "priority": priority,
+                    "summary": summary,
+                    "actions": list(dict.fromkeys([item for item in actions if item])),
+                    "source": source,
+                }
+            )
+
+        if "integrity" in failed_checks:
+            if programmer_failure == "compile_failure":
+                add_route(
+                    "结构修复",
+                    "P0",
+                    "先修编译和代码结构，再处理 integrity 规则。",
+                    ["修正导入、语法、命名和返回结构", "确保策略输出字段完整", "重新跑 compile + pytest 后再送 integrity 检查"],
+                    "research",
+                )
+            elif programmer_failure in {"validation_failure", "execution_failure"}:
+                add_route(
+                    "契约修复",
+                    "P0",
+                    "当前更像契约或运行时不匹配，先对齐接口和 candidate 结构。",
+                    ["检查 StrategyCandidate 字段", "检查版本命名和输出契约", "检查 check_target/candidate 对应关系"],
+                    "research",
+                )
+            else:
+                add_route(
+                    "完整性修复",
+                    "P1",
+                    "优先按 integrity 失败项修正未来函数、作弊痕迹、硬编码和可疑 rationale。",
+                    ["检查 future/leakage 线索", "减少可疑高置信度硬编码", "根据 required_fix_actions 逐项修正"],
+                    "research",
+                )
+
+        if "stress_overfit" in failed_checks:
+            if programmer_failure == "test_failure":
+                add_route(
+                    "行为修复",
+                    "P0",
+                    "策略行为和测试预期同时有问题，先修可测试行为，再降复杂度。",
+                    ["降低参数密度", "减少过窄 universe 依赖", "优先修复测试暴露出的行为偏差"],
+                    "research",
+                )
+            else:
+                add_route(
+                    "稳健性修复",
+                    "P1",
+                    "优先处理过拟合和稳健性问题，降低 train-test gap，提升 walk-forward 稳定性。",
+                    ["简化规则和参数", "减少对单一 regime 的依赖", "优先看 validation/test/walk-forward 弱点"],
+                    "research",
+                )
+
+        if not routes and final_gate.get("gate_status") == "passed":
+            add_route(
+                "通过态",
+                "P2",
+                "当前最优版本已通过门控，不需要强制修复，可进入下一轮研究增强。",
+                ["保留当前版本作为稳定基线", "如继续迭代，优先探索增益而非修复"],
+                "research",
+            )
+
+        if not routes and next_focus:
+            add_route(
+                "默认修复",
+                "P1",
+                "优先按研究摘要给出的 next_iteration_focus 执行。",
+                next_focus,
+                "research",
+            )
+
+        if not routes:
+            add_route(
+                "观察",
+                "P2",
+                "当前没有足够的失败信号，先继续积累更多训练和修复记录。",
+                ["继续训练或执行一次 Programmer Agent", "观察 release gate 和失败类型是否收敛"],
+                "research",
+            )
+
+        if programmer_plan.get("actions"):
+            dominant_failure = (
+                programmer_run.get("failure_summary", {}).get("dominant_failure_type")
+                or programmer_failure
+                or "unknown"
+            )
+            programmer_route = {
+                "lane": "代码修复计划",
+                "priority": programmer_plan.get("priority") or "P1",
+                "summary": f"Programmer Agent 判断当前主导失败为 {dominant_failure}，建议先执行代码侧修复计划。",
+                "actions": list(dict.fromkeys(programmer_plan.get("actions") or [])),
+                "source": "programmer",
+            }
+            if routes:
+                primary = routes[0]
+                priority_order = {"P0": 0, "P1": 1, "P2": 2}
+                if priority_order.get(programmer_route["priority"], 2) < priority_order.get(primary["priority"], 2):
+                    primary["priority"] = programmer_route["priority"]
+                primary["summary"] = f"{primary['summary']} 代码侧主导失败={dominant_failure}。"
+                primary["actions"] = list(dict.fromkeys((programmer_route["actions"] or []) + (primary.get("actions") or [])))
+                primary["source"] = "research+programmer" if primary.get("source") == "research" else (primary.get("source") or "research+programmer")
+                if dominant_failure not in {"success", "unknown"}:
+                    routes.append(programmer_route)
+            else:
+                routes.append(programmer_route)
+
+        return routes
+
     def approve_strategy(self, session_id: UUID) -> WorkflowSession:
         session = self.get_session(session_id)
         approved, message = self.risk_guardian.approve(session.strategy_checks)
@@ -1635,7 +2043,9 @@ class WorkflowService:
         auth_style: str,
         order_endpoint: str,
         cancel_endpoint: str,
+        order_status_endpoint: str,
         positions_endpoint: str,
+        balances_endpoint: str,
         docs_summary: str,
         user_notes: str | None = None,
     ) -> WorkflowSession:
@@ -1650,7 +2060,9 @@ class WorkflowService:
             auth_style=auth_style,
             order_endpoint=order_endpoint,
             cancel_endpoint=cancel_endpoint,
+            order_status_endpoint=order_status_endpoint,
             positions_endpoint=positions_endpoint,
+            balances_endpoint=balances_endpoint,
             docs_summary=docs_summary,
             user_notes=user_notes,
         )
@@ -1755,6 +2167,50 @@ class WorkflowService:
             "ok" if result.get("status") == "ok" else "error",
             "apply_trading_terminal_integration",
             result.get("error") or f"Applied terminal adapter for {selected_run['terminal_name']}.",
+            session.session_id,
+        )
+        return session
+
+    def test_trading_terminal_integration(
+        self,
+        session_id: UUID,
+        run_id: str | None = None,
+    ) -> WorkflowSession:
+        session = self.get_session(session_id)
+        if not session.terminal_integration_runs:
+            raise ValueError("No trading-terminal integration run is available.")
+        selected_run = session.terminal_integration_runs[-1]
+        if run_id:
+            matched = next((item for item in session.terminal_integration_runs if item.get("run_id") == run_id), None)
+            if matched is None:
+                raise ValueError(f"Unknown trading-terminal run: {run_id}")
+            selected_run = matched
+        result = self.terminal_integrator.run_smoke_test(selected_run)
+        result["timestamp"] = self._now_iso()
+        result["run_id"] = selected_run["run_id"]
+        selected_run["terminal_test"] = result
+        self._archive_report(
+            session,
+            report_type="trading_terminal_test",
+            title=f"Trading Terminal Test: {selected_run['terminal_name']}",
+            body=result,
+            related_refs=[selected_run["target_module"], selected_run["target_test"]],
+        )
+        self._append_history_event(
+            session,
+            "trading_terminal_test_completed",
+            "交易终端接入 smoke test 已完成。",
+            {
+                "run_id": selected_run["run_id"],
+                "status": result.get("status"),
+                "summary": result.get("summary"),
+            },
+        )
+        self._record_agent_activity(
+            "trading_terminal_integration_agent",
+            "ok" if result.get("status") == "ok" else "warning",
+            "test_trading_terminal_integration",
+            result.get("summary") or f"Tested terminal adapter for {selected_run['terminal_name']}.",
             session.session_id,
         )
         return session
@@ -2170,6 +2626,7 @@ class WorkflowService:
             "feature_snapshot_version": meta.get("snapshot_hash"),
             "available_sections": data_quality.get("available_sections") or [],
             "provider_coverage": data_quality.get("provider_coverage") or [],
+            "data_quality": data_quality,
             "source_lineage": lineage,
         }
 
@@ -2191,6 +2648,8 @@ class WorkflowService:
                 "selected_universe_size": manifest.get("selected_universe_size"),
                 "available_sections": manifest.get("available_sections") or [],
                 "provider_coverage": manifest.get("provider_coverage") or [],
+                "quality_grade": manifest.get("data_quality", {}).get("quality_grade"),
+                "training_readiness": manifest.get("data_quality", {}).get("training_readiness", {}).get("status"),
                 "source_lineage": manifest.get("source_lineage") or {},
                 "created_at": self._now_iso(),
                 "last_used_at": self._now_iso(),
@@ -2204,6 +2663,8 @@ class WorkflowService:
             {
                 "data_bundle_id": bundle_id,
                 "dataset_protocol": manifest.get("dataset_protocol"),
+                "quality_grade": manifest.get("data_quality", {}).get("quality_grade"),
+                "training_readiness": manifest.get("data_quality", {}).get("training_readiness", {}).get("status"),
             },
         )
 
@@ -2238,6 +2699,15 @@ class WorkflowService:
                 "strategy_type": strategy_type,
                 "feedback": feedback,
             }
+        )
+        self._append_history_event(
+            session,
+            "strategy_feedback_recorded",
+            "用户提供了新的策略意见。",
+            {
+                "strategy_type": strategy_type,
+                "feedback": feedback,
+            },
         )
         self._merge_profile_evolution(session, event)
 

@@ -254,8 +254,25 @@ def test_full_workflow_api() -> None:
     assert strategy.json()["strategy_package"]["data_bundle_id"]
     assert strategy.json()["strategy_package"]["input_manifest"]["data_bundle_id"]
     assert strategy.json()["strategy_package"]["input_manifest"]["dataset_protocol"] == "time_series_split_with_walk_forward"
+    assert strategy.json()["strategy_package"]["input_manifest"]["data_quality"]["quality_grade"] in {"healthy", "warning", "degraded"}
+    assert strategy.json()["strategy_package"]["input_manifest"]["data_quality"]["training_readiness"]["status"] in {"ready", "caution", "blocked"}
+    assert strategy.json()["strategy_package"]["research_summary"]["winner_selection_summary"]["winner_variant_id"]
+    assert strategy.json()["strategy_package"]["research_summary"]["check_target_summary"]["variant_id"] == strategy.json()["strategy_package"]["selected_check_target"]["variant_id"]
+    assert strategy.json()["strategy_package"]["research_summary"]["robustness_summary"]["grade"] in {"strong", "acceptable", "fragile"}
+    assert strategy.json()["strategy_package"]["research_summary"]["final_release_gate_summary"]["gate_status"] in {"passed", "blocked"}
+    assert strategy.json()["strategy_package"]["research_summary"]["evaluation_snapshot"]["evaluation_source"]
+    assert strategy.json()["strategy_package"]["research_summary"]["evaluation_snapshot"]["walk_forward_windows"] >= 0
+    assert isinstance(strategy.json()["strategy_package"]["research_summary"]["evaluation_highlights"], list)
+    assert isinstance(strategy.json()["strategy_package"]["research_summary"]["check_failure_summary"], list)
+    assert isinstance(strategy.json()["strategy_package"]["research_summary"]["next_iteration_focus"], list)
+    assert isinstance(strategy.json()["strategy_package"]["research_summary"]["repair_route_summary"], list)
+    assert strategy.json()["strategy_package"]["research_summary"]["repair_route_summary"]
+    assert isinstance(strategy.json()["strategy_package"]["research_summary"]["rejection_summary"], list)
+    assert len(strategy.json()["strategy_package"]["research_summary"]["candidate_rankings"]) >= 1
     assert len(strategy.json()["data_bundles"]) >= 1
     assert strategy.json()["data_bundles"][-1]["data_bundle_id"] == strategy.json()["strategy_package"]["data_bundle_id"]
+    assert strategy.json()["data_bundles"][-1]["quality_grade"] in {"healthy", "warning", "degraded"}
+    assert strategy.json()["data_bundles"][-1]["training_readiness"] in {"ready", "caution", "blocked"}
     assert "conflict_warning" in strategy.json()["trading_preferences"]
     assert "score" in strategy.json()["strategy_checks"][0]
     assert "required_fix_actions" in strategy.json()["strategy_checks"][0]
@@ -265,7 +282,45 @@ def test_full_workflow_api() -> None:
     assert len(strategy.json()["strategy_training_log"]) >= 1
     assert strategy.json()["strategy_training_log"][-1]["data_bundle_id"]
     assert strategy.json()["strategy_training_log"][-1]["input_manifest"]["data_bundle_id"]
+    assert strategy.json()["strategy_training_log"][-1]["research_summary"]["winner_selection_summary"]["winner_variant_id"]
+    assert strategy.json()["strategy_training_log"][-1]["research_summary"]["robustness_summary"]["grade"] in {"strong", "acceptable", "fragile"}
+    assert strategy.json()["strategy_training_log"][-1]["research_summary"]["final_release_gate_summary"]["gate_status"] in {"passed", "blocked"}
+    assert strategy.json()["strategy_training_log"][-1]["repair_route_summary"]
     assert len(strategy.json()["report_history"]) >= 2
+    assert any(
+        item["report_type"] == "strategy_iteration"
+        and item["body"]["strategy_package"]["data_bundle_id"] == strategy.json()["strategy_package"]["data_bundle_id"]
+        and item["body"]["training_log_entry"]["feedback"] == "Reduce concentration"
+        and item["body"]["research_export"]["data_bundle_id"] == strategy.json()["strategy_package"]["data_bundle_id"]
+        and item["body"]["research_export"]["winner_variant_id"]
+        and item["body"]["research_export"]["gate_status"] in {"passed", "blocked"}
+        and item["body"]["research_export"]["repair_route_summary"]
+        and item["body"]["research_export"]["primary_repair_route"]["lane"]
+        for item in strategy.json()["report_history"]
+    )
+    assert any(
+        item["event_type"] == "strategy_iteration_completed"
+        and item["payload"].get("data_bundle_id") == strategy.json()["strategy_package"]["data_bundle_id"]
+        and item["payload"].get("quality_grade") in {"healthy", "warning", "degraded"}
+        and item["payload"].get("training_readiness") in {"ready", "caution", "blocked"}
+        and item["payload"].get("winner_variant_id")
+        and item["payload"].get("gate_status") in {"passed", "blocked"}
+        and item["payload"].get("evaluation_source")
+        and item["payload"].get("robustness_grade") in {"strong", "acceptable", "fragile"}
+        and item["payload"].get("repair_route_lane")
+        and item["payload"].get("repair_route_priority") in {"P0", "P1", "P2"}
+        and item["payload"].get("train_objective_score") is not None
+        and item["payload"].get("validation_objective_score") is not None
+        and item["payload"].get("test_objective_score") is not None
+        and item["payload"].get("walk_forward_score") is not None
+        and item["payload"].get("train_test_gap") is not None
+        for item in strategy.json()["history_events"]
+    )
+    assert any(
+        item["event_type"] == "strategy_feedback_recorded"
+        and item["payload"].get("feedback") == "Reduce concentration"
+        for item in strategy.json()["history_events"]
+    )
 
 
 def test_intelligence_information_events_are_recorded(monkeypatch) -> None:
@@ -579,7 +634,9 @@ def test_trading_terminal_integration_agent_run_is_recorded() -> None:
             "auth_style": "bearer",
             "order_endpoint": "orders/place",
             "cancel_endpoint": "orders/cancel",
+            "order_status_endpoint": "orders/status",
             "positions_endpoint": "portfolio/positions",
+            "balances_endpoint": "account/balances",
             "docs_summary": "REST trading API.",
             "user_notes": "Need order and cancel support.",
         },
@@ -619,7 +676,9 @@ def test_trading_terminal_integration_can_be_applied_by_programmer_agent() -> No
             "auth_style": "header",
             "order_endpoint": "orders",
             "cancel_endpoint": "orders/cancel",
+            "order_status_endpoint": "orders/status",
             "positions_endpoint": "positions",
+            "balances_endpoint": "account/balances",
             "docs_summary": "REST gateway API.",
             "user_notes": "Need positions and cancel.",
         },
@@ -641,3 +700,43 @@ def test_trading_terminal_integration_can_be_applied_by_programmer_agent() -> No
         item["event_type"] in {"trading_terminal_integration_applied", "trading_terminal_integration_apply_failed"}
         for item in body["history_events"]
     )
+
+
+def test_trading_terminal_integration_can_be_smoke_tested() -> None:
+    created = client.post("/api/sessions", json={"user_name": "TerminalTester", "starting_capital": 100000})
+    session_id = created.json()["session_id"]
+
+    expanded = client.post(
+        f"/api/sessions/{session_id}/terminal/expand",
+        json={
+            "terminal_name": "Smoke Broker",
+            "terminal_type": "broker_api",
+            "official_docs_url": "https://example.com/docs",
+            "docs_search_url": "https://example.com/search?q=order",
+            "api_base_url": "https://api.example.com",
+            "api_key_env": "SMOKE_BROKER_KEY",
+            "auth_style": "header",
+            "order_endpoint": "orders/place",
+            "cancel_endpoint": "orders/cancel",
+            "order_status_endpoint": "orders/status",
+            "positions_endpoint": "portfolio/positions",
+            "balances_endpoint": "account/balances",
+            "docs_summary": "REST trading API with place/cancel/positions.",
+            "user_notes": "Need smoke test coverage.",
+        },
+    )
+    assert expanded.status_code == 200
+    run_id = expanded.json()["terminal_integration_runs"][-1]["run_id"]
+
+    tested = client.post(
+        f"/api/sessions/{session_id}/terminal/test",
+        json={"run_id": run_id},
+    )
+    assert tested.status_code == 200
+    body = tested.json()
+    run = body["terminal_integration_runs"][-1]
+    assert run["terminal_test"]["status"] in {"ok", "warning"}
+    assert len(run["terminal_test"]["checks"]) == 6
+    assert len(run["terminal_test"]["calls"]) == 5
+    assert any(item["event_type"] == "trading_terminal_test_completed" for item in body["history_events"])
+    assert any(item["report_type"] == "trading_terminal_test" for item in body["report_history"])

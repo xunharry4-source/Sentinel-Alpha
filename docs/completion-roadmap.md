@@ -22,6 +22,50 @@ The system already has:
 - programmer-agent and data-source-expansion-agent integration
 - in-memory and incremental performance optimizations
 
+Current implementation progress snapshot:
+
+- `Phase 0`: effectively stable
+- `Phase 1`: partially complete
+- `Phase 2`: substantially complete for structured intelligence factors and event clustering
+- `Phase 3`: substantially complete for feature snapshots, data bundles, lineage, quality grading, and training-readiness gating
+- `Phase 4`: in progress
+  - completed:
+    - research summary
+    - winner selection summary
+    - robustness summary
+    - evaluation snapshot and evaluation highlights
+    - rejection summary
+    - final release-gate summary
+    - next-iteration repair routing
+    - release snapshot on strategy and report pages
+    - research trend summary on strategy and report pages
+    - research health conclusion on strategy and report pages
+    - repair trend summary on strategy and report pages
+    - repair convergence conclusion on strategy and report pages
+    - archived unified repair-route summary across strategy package, training log, report export, and history events
+    - timeline replay of winner, gate, quality, source, and split metrics
+    - report-page replay of user feedback and research outcomes
+  - remaining:
+    - stronger research comparison exports
+    - fuller strategy research presentation in archived reports
+    - deeper coupling to the real backtest engine
+- `Phase 6`: started
+  - completed:
+    - trading terminal adapter generation from user-supplied docs and endpoint metadata
+    - Programmer Agent handoff for generated terminal adapters
+    - terminal smoke tests for:
+      - ping
+      - positions
+      - balances
+      - order placement contract
+      - order-status contract
+      - cancel contract
+    - terminal integration health summary on terminal, system-health, and configuration pages
+  - remaining:
+    - deeper terminal connectivity tests against real user endpoints
+    - account and order-state synchronization beyond smoke tests
+    - stronger terminal-specific repair and config flows
+
 The system does not yet have:
 
 - a production-grade backtesting and evaluation engine

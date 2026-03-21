@@ -139,7 +139,9 @@ class TradingTerminalIntegrationRequestIn(BaseModel):
     auth_style: Literal["header", "query", "bearer"] = "header"
     order_endpoint: str
     cancel_endpoint: str
+    order_status_endpoint: str
     positions_endpoint: str
+    balances_endpoint: str
     docs_summary: str
     user_notes: str | None = None
 
@@ -147,6 +149,10 @@ class TradingTerminalIntegrationRequestIn(BaseModel):
 class TradingTerminalApplyRequest(BaseModel):
     run_id: str | None = None
     commit_changes: bool = True
+
+
+class TradingTerminalTestRequest(BaseModel):
+    run_id: str | None = None
 
 
 class ConfigUpdateRequest(BaseModel):

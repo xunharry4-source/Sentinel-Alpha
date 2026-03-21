@@ -1,3 +1,12 @@
+const STRATEGY_FOCUS_KEY = "sentinel-alpha:strategy-focus-target";
+
+function jumpFromIntelligence(targetPage, focusTarget = "") {
+  if (focusTarget) {
+    window.localStorage.setItem(STRATEGY_FOCUS_KEY, focusTarget);
+  }
+  window.location.href = targetPage;
+}
+
 function latestIntelligenceReport(snapshot) {
   const runs = snapshot?.intelligence_runs || [];
   return runs.length ? runs[runs.length - 1].report || null : null;
@@ -311,6 +320,8 @@ document.querySelector("#search-intelligence")?.addEventListener("click", search
 document.querySelector("#search-financials")?.addEventListener("click", searchFinancials);
 document.querySelector("#search-dark-pool")?.addEventListener("click", searchDarkPool);
 document.querySelector("#search-options")?.addEventListener("click", searchOptions);
+document.querySelector("#jump-intel-to-strategy")?.addEventListener("click", () => jumpFromIntelligence("./strategy.html", "#strategy-research-summary-list"));
+document.querySelector("#jump-intel-to-config")?.addEventListener("click", () => jumpFromIntelligence("./configuration.html"));
 
 (function bootstrapIntelligencePage() {
   renderIntelligencePage(loadStoredSnapshot());

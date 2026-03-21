@@ -1,5 +1,13 @@
 const SYSTEM_HEALTH_POLL_MS = 10000;
+const STRATEGY_FOCUS_KEY = "sentinel-alpha:strategy-focus-target";
 let systemHealthTimerId = null;
+
+function jumpFromHealth(targetPage, focusTarget = "") {
+  if (focusTarget) {
+    window.localStorage.setItem(STRATEGY_FOCUS_KEY, focusTarget);
+  }
+  window.location.href = targetPage;
+}
 
 function renderCounts(modules) {
   const okCount = modules.filter((item) => item.status === "ok").length;
@@ -81,6 +89,31 @@ function renderErrors(errors) {
   );
 }
 
+function renderTerminalIntegrationHealth() {
+  const snapshot = loadStoredSnapshot() || {};
+  const runs = snapshot?.terminal_integration_runs || [];
+  if (!runs.length) {
+    renderList("terminal-integration-health-list", [], "当前还没有终端接入健康摘要。");
+    return;
+  }
+  const latest = runs[runs.length - 1] || {};
+  const test = latest.terminal_test || {};
+  const checks = test.checks || [];
+  const passed = checks.filter((item) => item.status === "pass").length;
+  renderList(
+    "terminal-integration-health-list",
+    [
+      `latest_run / ${latest.run_id || "unknown"} / ${latest.terminal_name || "unknown"} / ${latest.terminal_type || "unknown"}`,
+      `docs / ${latest.docs_context?.docs_fetch_ok ? "ok" : "fail"} / ready=${latest.validation?.ready_for_programmer_agent ? "yes" : "no"}`,
+      `test / ${test.status || "not_tested"} / passed=${passed}/${checks.length || 0}`,
+      `summary / ${test.summary || "终端方案已生成，但还没有执行 smoke test。"}`,
+      `module / ${latest.target_module || "unknown"}`,
+      `next / ${test.status === "ok" ? "可继续交给 Programmer Agent 或进入更强联通测试。" : "建议先到终端接入页检查 endpoint 和 smoke test 失败项。"}`,
+    ],
+    "当前还没有终端接入健康摘要。"
+  );
+}
+
 function renderAgentLogs(logs) {
   renderList(
     "agent-log-list",
@@ -109,6 +142,7 @@ async function refreshSystemHealth() {
     renderCards("agent-health-grid", payload.agents || [], "agent");
     renderPerformance(payload.performance || {});
     renderErrors(payload.recent_errors || []);
+    renderTerminalIntegrationHealth();
     renderAgentLogs(payload.recent_agent_logs || []);
     renderTokenUsage(payload.token_usage || {});
   } catch (error) {
@@ -120,6 +154,7 @@ async function refreshSystemHealth() {
     renderCards("agent-health-grid", [], "agent");
     renderPerformance({});
     renderErrors([]);
+    renderTerminalIntegrationHealth();
     renderAgentLogs([]);
     renderTokenUsage({});
   } finally {
@@ -128,6 +163,8 @@ async function refreshSystemHealth() {
 }
 
 document.querySelector("#refresh-system-health")?.addEventListener("click", refreshSystemHealth);
+document.querySelector("#jump-health-to-config")?.addEventListener("click", () => jumpFromHealth("./configuration.html"));
+document.querySelector("#jump-health-to-strategy")?.addEventListener("click", () => jumpFromHealth("./strategy.html", "#strategy-repair-route-list"));
 
 (async function bootstrapSystemHealthPage() {
   renderShell("system-health");

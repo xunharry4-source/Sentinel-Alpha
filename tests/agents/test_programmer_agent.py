@@ -91,6 +91,9 @@ def test_programmer_agent_retries_until_validator_passes(monkeypatch) -> None:
     assert attempts["count"] == 2
     assert len(result["attempts"]) == 2
     assert result["attempts"][0]["failure_type"] == "validation_failure"
+    assert result["failure_summary"]["attempt_count"] == 2
+    assert result["failure_summary"]["dominant_failure_type"] in {"validation_failure", "success"}
+    assert result["repair_plan"]["priority"] in {"P0", "P1", "P2"}
 
 
 def test_programmer_agent_classifies_compile_failure(monkeypatch) -> None:
@@ -125,6 +128,49 @@ def test_programmer_agent_classifies_compile_failure(monkeypatch) -> None:
 
     assert result["status"] == "error"
     assert result["attempts"][0]["failure_type"] == "compile_failure"
+    assert result["failure_summary"]["dominant_failure_type"] == "compile_failure"
+    assert result["repair_plan"]["dominant_failure_type"] == "compile_failure"
+    assert result["repair_plan"]["priority"] == "P0"
+
+
+def test_programmer_agent_retry_context_includes_repair_plan(monkeypatch) -> None:
+    settings = get_settings()
+    patched = settings.__class__(**{**settings.__dict__, "programmer_agent_retry_attempts": 2})
+    agent = ProgrammerAgent(patched)
+    seen_contexts: list[str | None] = []
+    attempts = {"count": 0}
+
+    def fake_execute(*, instruction, target_files, context=None, commit_changes=None):
+        attempts["count"] += 1
+        seen_contexts.append(context)
+        return {
+            "status": "ok",
+            "instruction": instruction,
+            "target_files": target_files,
+            "stdout": "",
+            "stderr": "",
+            "returncode": 0,
+            "diff": "",
+            "changed_files": target_files,
+            "commit_hash": None,
+            "commit_error": None,
+            "rollback_commit": "abc",
+            "head_after_run": "def",
+            "failure_type": None,
+        }
+
+    monkeypatch.setattr(agent, "execute", fake_execute)
+
+    result = agent.execute_with_retries(
+        instruction="fix code",
+        target_files=["tests/example.py"],
+        validator=lambda files: (attempts["count"] >= 2, "py_compile failed: SyntaxError" if attempts["count"] < 2 else "ok"),
+    )
+
+    assert result["status"] == "ok"
+    assert len(seen_contexts) == 2
+    assert "Repair priority: P0" in (seen_contexts[1] or "")
+    assert "Repair action:" in (seen_contexts[1] or "")
 
 
 def test_programmer_validator_maps_pytest_targets(monkeypatch) -> None:

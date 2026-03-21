@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import re
+from types import MethodType
 from dataclasses import dataclass
 from urllib.error import URLError
 from urllib.request import Request, urlopen
@@ -18,7 +19,9 @@ class TradingTerminalIntegrationRequest:
     auth_style: str
     order_endpoint: str
     cancel_endpoint: str
+    order_status_endpoint: str
     positions_endpoint: str
+    balances_endpoint: str
     docs_summary: str
     user_notes: str | None = None
 
@@ -40,6 +43,7 @@ class TradingTerminalIntegrationAgent:
         return {
             "terminal_name": request.terminal_name,
             "terminal_slug": slug,
+            "class_name": class_name,
             "terminal_type": request.terminal_type,
             "official_docs_url": request.official_docs_url,
             "docs_search_url": request.docs_search_url,
@@ -57,6 +61,88 @@ class TradingTerminalIntegrationAgent:
                 "docs_fetch_ok": docs_context["docs_fetch_ok"],
                 "ready_for_programmer_agent": module_validation["ok"] and test_validation["ok"],
             },
+        }
+
+    def run_smoke_test(self, package: dict) -> dict:
+        module_code = package.get("generated_module_code") or ""
+        class_name = package.get("class_name") or ""
+        if not module_code or not class_name:
+            return {
+                "status": "error",
+                "summary": "Missing generated module code or class name.",
+                "checks": [],
+            }
+        namespace: dict[str, object] = {}
+        exec(compile(module_code, f"<generated_terminal:{package.get('terminal_slug', 'unknown')}>", "exec"), namespace)
+        adapter_cls = namespace.get(class_name)
+        if adapter_cls is None:
+            return {
+                "status": "error",
+                "summary": f"Generated class {class_name} not found.",
+                "checks": [],
+            }
+        adapter = adapter_cls(base_url=package.get("config_candidate", {}).get("provider_config", {}).get("base_url"))  # type: ignore[misc]
+        calls: list[dict] = []
+
+        def fake_request_json(self_obj, method: str, path: str, params: dict | None = None, payload: dict | None = None) -> dict:
+            calls.append(
+                {
+                    "method": method,
+                    "path": path,
+                    "params": dict(params or {}),
+                    "payload": dict(payload or {}),
+                }
+            )
+            return {"ok": True, "method": method, "path": path, "payload": dict(payload or {})}
+
+        adapter._request_json = MethodType(fake_request_json, adapter)  # type: ignore[attr-defined]
+
+        ping_result = adapter.ping()
+        positions_result = adapter.fetch_positions()
+        balances_result = adapter.fetch_balances()
+        order_result = adapter.place_order("AAPL", "buy", 100, order_type="limit", limit_price=195.5)
+        status_result = adapter.fetch_order_status("ORD-1")
+        cancel_result = adapter.cancel_order("ORD-1")
+
+        provider = package.get("config_candidate", {}).get("provider_config", {})
+        checks = [
+            {
+                "name": "ping",
+                "status": "pass" if ping_result.get("ok") and ping_result.get("terminal") else "fail",
+                "detail": f"ping terminal={ping_result.get('terminal')}",
+            },
+            {
+                "name": "positions_contract",
+                "status": "pass" if positions_result.get("path") == provider.get("positions_endpoint") else "fail",
+                "detail": f"GET {positions_result.get('path')}",
+            },
+            {
+                "name": "balances_contract",
+                "status": "pass" if balances_result.get("path") == provider.get("balances_endpoint") else "fail",
+                "detail": f"GET {balances_result.get('path')}",
+            },
+            {
+                "name": "order_contract",
+                "status": "pass" if order_result.get("path") == provider.get("order_endpoint") and order_result.get("payload", {}).get("symbol") == "AAPL" else "fail",
+                "detail": f"POST {order_result.get('path')} symbol={order_result.get('payload', {}).get('symbol')}",
+            },
+            {
+                "name": "order_status_contract",
+                "status": "pass" if status_result.get("path") == provider.get("order_status_endpoint") and status_result.get("params", {}).get("order_id") == "ORD-1" else "fail",
+                "detail": f"GET {status_result.get('path')} order_id={status_result.get('params', {}).get('order_id')}",
+            },
+            {
+                "name": "cancel_contract",
+                "status": "pass" if cancel_result.get("path") == provider.get("cancel_endpoint") and cancel_result.get("payload", {}).get("order_id") == "ORD-1" else "fail",
+                "detail": f"POST {cancel_result.get('path')} order_id={cancel_result.get('payload', {}).get('order_id')}",
+            },
+        ]
+        failed = [item for item in checks if item["status"] != "pass"]
+        return {
+            "status": "ok" if not failed else "warning",
+            "summary": "Terminal adapter smoke test passed." if not failed else "Terminal adapter smoke test has contract mismatches.",
+            "checks": checks,
+            "calls": calls,
         }
 
     def _fetch_documentation_context(self, request: TradingTerminalIntegrationRequest) -> dict:
@@ -145,8 +231,12 @@ class TradingTerminalIntegrationAgent:
             f'        return self._request_json("POST", "{request.order_endpoint}", payload=payload)\n\n'
             "    def cancel_order(self, order_id: str) -> dict:\n"
             f'        return self._request_json("POST", "{request.cancel_endpoint}", payload={{"order_id": order_id}})\n\n'
+            "    def fetch_order_status(self, order_id: str) -> dict:\n"
+            f'        return self._request_json("GET", "{request.order_status_endpoint}", params={{"order_id": order_id}})\n\n'
             "    def fetch_positions(self) -> dict:\n"
-            f'        return self._request_json("GET", "{request.positions_endpoint}")\n'
+            f'        return self._request_json("GET", "{request.positions_endpoint}")\n\n'
+            "    def fetch_balances(self) -> dict:\n"
+            f'        return self._request_json("GET", "{request.balances_endpoint}")\n'
         )
 
     def _build_test_code(self, request: TradingTerminalIntegrationRequest, slug: str, class_name: str) -> str:
@@ -161,13 +251,17 @@ class TradingTerminalIntegrationAgent:
             "        return {\"ok\": True, \"method\": method, \"path\": path, \"payload\": payload or {}}\n\n"
             "    adapter._request_json = fake_request  # type: ignore[method-assign]\n"
             "    adapter.place_order(\"AAPL\", \"buy\", 100, order_type=\"limit\", limit_price=195.5)\n"
+            "    adapter.fetch_order_status(\"ORD-1\")\n"
             "    adapter.cancel_order(\"ORD-1\")\n"
-            "    adapter.fetch_positions()\n\n"
-            "    assert len(calls) == 3\n"
+            "    adapter.fetch_positions()\n"
+            "    adapter.fetch_balances()\n\n"
+            "    assert len(calls) == 5\n"
             "    assert calls[0][0] == \"POST\"\n"
             "    assert calls[0][3][\"symbol\"] == \"AAPL\"\n"
-            "    assert calls[1][3][\"order_id\"] == \"ORD-1\"\n"
-            "    assert calls[2][0] == \"GET\"\n"
+            "    assert calls[1][2][\"order_id\"] == \"ORD-1\"\n"
+            "    assert calls[2][3][\"order_id\"] == \"ORD-1\"\n"
+            "    assert calls[3][0] == \"GET\"\n"
+            "    assert calls[4][0] == \"GET\"\n"
         )
 
     def _build_config_candidate(
@@ -187,7 +281,9 @@ class TradingTerminalIntegrationAgent:
             "docs_search_url": request.docs_search_url or "",
             "order_endpoint": request.order_endpoint,
             "cancel_endpoint": request.cancel_endpoint,
+            "order_status_endpoint": request.order_status_endpoint,
             "positions_endpoint": request.positions_endpoint,
+            "balances_endpoint": request.balances_endpoint,
         }
         return {
             "terminal_name": slug,

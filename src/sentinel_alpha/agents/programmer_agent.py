@@ -162,8 +162,12 @@ class ProgrammerAgent:
                 final = dict(result)
                 final["attempts"] = attempts
                 final["status"] = "ok"
+                final["failure_summary"] = self._build_failure_summary(attempts)
+                final["repair_plan"] = self._build_repair_plan(attempts, final["failure_summary"])
                 return final
-            retry_context = self._build_retry_context(instruction, retry_context, result, validation_detail)
+            current_summary = self._build_failure_summary(attempts)
+            current_plan = self._build_repair_plan(attempts, current_summary)
+            retry_context = self._build_retry_context(instruction, retry_context, result, validation_detail, current_plan)
 
         final = dict(attempts[-1]) if attempts else {
             "status": "error",
@@ -174,6 +178,8 @@ class ProgrammerAgent:
         }
         final["attempts"] = attempts
         final["status"] = "error"
+        final["failure_summary"] = self._build_failure_summary(attempts)
+        final["repair_plan"] = self._build_repair_plan(attempts, final["failure_summary"])
         return final
 
     def _validate_targets(self, target_files: list[str]) -> list[str]:
@@ -257,6 +263,7 @@ class ProgrammerAgent:
         current_context: str,
         result: dict,
         validation_detail: str,
+        repair_plan: dict | None = None,
     ) -> str:
         failure_type = str(result.get("failure_type") or "validation_failure")
         parts = [current_context.strip()] if current_context.strip() else []
@@ -271,6 +278,11 @@ class ProgrammerAgent:
         if validation_detail:
             parts.append(f"- validator: {validation_detail}")
         parts.append("- Preserve existing workflow, logging, monitoring, and approval contracts.")
+        if repair_plan:
+            parts.append(f"- Repair priority: {repair_plan.get('priority', 'P1')}")
+            parts.append(f"- Dominant failure type: {repair_plan.get('dominant_failure_type', failure_type)}")
+            for action in repair_plan.get("actions", []):
+                parts.append(f"- Repair action: {action}")
         if failure_type == "compile_failure":
             parts.append("- Focus on syntax, imports, signatures, and Python correctness first.")
             parts.append("- Do not refactor unrelated logic until the code compiles.")
@@ -284,3 +296,81 @@ class ProgrammerAgent:
         else:
             parts.append("- Fix the failure directly and keep the patch minimal.")
         return "\n".join(parts)
+
+    def _build_failure_summary(self, attempts: list[dict]) -> dict:
+        counts: dict[str, int] = {}
+        ordered_types: list[str] = []
+        for item in attempts:
+            failure_type = str(item.get("failure_type") or ("success" if item.get("status") == "ok" else "unknown"))
+            counts[failure_type] = counts.get(failure_type, 0) + 1
+            ordered_types.append(failure_type)
+        latest = attempts[-1] if attempts else {}
+        dominant_failure_type = max(counts.items(), key=lambda pair: pair[1])[0] if counts else "unknown"
+        return {
+            "attempt_count": len(attempts),
+            "ordered_failure_types": ordered_types,
+            "failure_type_counts": counts,
+            "dominant_failure_type": dominant_failure_type,
+            "latest_failure_type": latest.get("failure_type") or ("success" if latest.get("status") == "ok" else "unknown"),
+            "latest_validation_detail": latest.get("validation_detail") or latest.get("error") or latest.get("stderr") or "",
+            "stable_success": bool(attempts and attempts[-1].get("status") == "ok"),
+        }
+
+    def _build_repair_plan(self, attempts: list[dict], failure_summary: dict) -> dict:
+        dominant = str(failure_summary.get("dominant_failure_type") or "unknown")
+        latest_detail = str(failure_summary.get("latest_validation_detail") or "").strip()
+        priorities: list[str] = []
+        actions: list[str] = []
+        if dominant == "compile_failure":
+            priorities.append("P0")
+            actions.extend(
+                [
+                    "修正语法、导入、签名与返回结构，先确保代码可编译。",
+                    "避免继续扩大修改面，优先最小补丁通过 py_compile。",
+                ]
+            )
+        elif dominant == "test_failure":
+            priorities.append("P0")
+            actions.extend(
+                [
+                    "优先修复行为与测试预期不一致的问题。",
+                    "先看断言失败点，缩小改动范围，不要先动无关逻辑。",
+                ]
+            )
+        elif dominant == "validation_failure":
+            priorities.append("P1")
+            actions.extend(
+                [
+                    "优先修复 validator 暴露出的契约或结构问题。",
+                    "检查输出字段、目标文件、版本命名和返回格式是否符合平台契约。",
+                ]
+            )
+        elif dominant == "commit_failure":
+            priorities.append("P1")
+            actions.extend(
+                [
+                    "检查 git 状态、提交消息、暂存内容和目标文件是否可提交。",
+                    "优先保证变更集最小且可提交，再继续下一轮修改。",
+                ]
+            )
+        elif dominant == "execution_failure":
+            priorities.append("P1")
+            actions.extend(
+                [
+                    "检查执行工具返回错误、生成结果是否畸形、上下文是否导致错误修改。",
+                    "必要时缩短指令并减少目标文件数量。",
+                ]
+            )
+        elif dominant == "success":
+            priorities.append("P2")
+            actions.append("当前最近一次已成功，可将该结果作为稳定修复基线。")
+        else:
+            priorities.append("P1")
+            actions.append("当前失败类型不明确，先检查最近一次 stderr 和 validator 输出。")
+        if latest_detail:
+            actions.append(f"最近失败细节: {latest_detail[:240]}")
+        return {
+            "dominant_failure_type": dominant,
+            "priority": priorities[0] if priorities else "P1",
+            "actions": actions,
+        }

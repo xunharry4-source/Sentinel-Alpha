@@ -75,6 +75,16 @@
           <input id="terminal-positions-endpoint" type="text" value="portfolio/positions" />
         </label>
       </div>
+      <div class="trade-config">
+        <label class="config-field">
+          <span>订单状态 Endpoint</span>
+          <input id="terminal-order-status-endpoint" type="text" value="orders/status" />
+        </label>
+        <label class="config-field">
+          <span>资金/账户 Endpoint</span>
+          <input id="terminal-balances-endpoint" type="text" value="account/balances" />
+        </label>
+      </div>
       <label class="config-field">
         <span>接口/文档摘要</span>
         <textarea id="terminal-docs-summary" class="config-editor compact-editor" spellcheck="false">REST trading API with endpoints for place order, cancel order, and fetch positions. Uses limit orders and account-level authentication.</textarea>
@@ -85,6 +95,7 @@
       </label>
       <div class="button-row">
         <button id="generate-terminal">生成终端接入方案</button>
+        <button id="test-terminal">测试终端接入方案</button>
         <button id="apply-terminal">交给 Programmer Agent 写入真实文件</button>
       </div>
     </section>
@@ -123,6 +134,19 @@
       <section class="panel">
         <p class="eyebrow">Config Candidate</p>
         <pre id="terminal-config-candidate" class="code-block">等待生成配置候选。</pre>
+      </section>
+      <section class="panel">
+        <p class="eyebrow">Terminal Smoke Test</p>
+        <ul id="terminal-test-results" class="result-list">
+          <li>等待执行终端 smoke test。</li>
+        </ul>
+      </section>
+    </section>
+
+    <section class="grid two-up">
+      <section class="panel">
+        <p class="eyebrow">Test Calls</p>
+        <pre id="terminal-test-calls" class="code-block">等待终端测试调用记录。</pre>
       </section>
       <section class="panel">
         <p class="eyebrow">Diff / Commit</p>

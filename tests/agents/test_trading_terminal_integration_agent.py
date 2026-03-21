@@ -20,7 +20,9 @@ def test_trading_terminal_integration_agent_generates_valid_code_and_test() -> N
             auth_style="bearer",
             order_endpoint="orders/place",
             cancel_endpoint="orders/cancel",
+            order_status_endpoint="orders/status",
             positions_endpoint="portfolio/positions",
+            balances_endpoint="account/balances",
             docs_summary="REST trading API with limit-order support.",
             user_notes="Need place, cancel, positions.",
         )
@@ -49,7 +51,9 @@ def test_trading_terminal_integration_agent_preserves_docs_context_in_package() 
             auth_style="header",
             order_endpoint="fix/order",
             cancel_endpoint="fix/cancel",
+            order_status_endpoint="fix/order-status",
             positions_endpoint="fix/positions",
+            balances_endpoint="fix/balances",
             docs_summary="FIX gateway wrapper.",
             user_notes=None,
         )
@@ -58,3 +62,33 @@ def test_trading_terminal_integration_agent_preserves_docs_context_in_package() 
     assert result["docs_context"]["docs_fetch_ok"] is True
     assert "broker.example/docs" in result["docs_context"]["docs_excerpt"]
     assert result["config_candidate"]["terminal_name"] == "fix_bridge"
+
+
+def test_trading_terminal_integration_agent_runs_smoke_test() -> None:
+    agent = TradingTerminalIntegrationAgent()
+    package = agent.build_terminal_package(
+        TradingTerminalIntegrationRequest(
+            terminal_name="Smoke Broker",
+            terminal_type="broker_api",
+            official_docs_url="https://example.com/docs",
+            docs_search_url=None,
+            api_base_url="https://api.example.com",
+            api_key_env="SMOKE_KEY",
+            auth_style="header",
+            order_endpoint="orders/place",
+            cancel_endpoint="orders/cancel",
+            order_status_endpoint="orders/status",
+            positions_endpoint="portfolio/positions",
+            balances_endpoint="account/balances",
+            docs_summary="REST trading API.",
+            user_notes=None,
+        )
+    )
+    result = agent.run_smoke_test(package)
+    assert result["status"] in {"ok", "warning"}
+    assert len(result["checks"]) == 6
+    assert any(item["name"] == "ping" for item in result["checks"])
+    assert any(item["name"] == "order_contract" for item in result["checks"])
+    assert any(item["name"] == "order_status_contract" for item in result["checks"])
+    assert any(item["name"] == "balances_contract" for item in result["checks"])
+    assert len(result["calls"]) == 5

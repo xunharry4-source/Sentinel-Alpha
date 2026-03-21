@@ -24,6 +24,7 @@ from sentinel_alpha.api.schemas import (
     StrategyIterationRequest,
     TradingTerminalApplyRequest,
     TradingTerminalIntegrationRequestIn,
+    TradingTerminalTestRequest,
     TradeExecutionIn,
     TradingPreferenceRequest,
     TradeUniverseRequest,
@@ -529,7 +530,9 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
                 auth_style=payload.auth_style,
                 order_endpoint=payload.order_endpoint,
                 cancel_endpoint=payload.cancel_endpoint,
+                order_status_endpoint=payload.order_status_endpoint,
                 positions_endpoint=payload.positions_endpoint,
+                balances_endpoint=payload.balances_endpoint,
                 docs_summary=payload.docs_summary,
                 user_notes=payload.user_notes,
             )
@@ -546,6 +549,19 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
                 session_id=session_id,
                 run_id=payload.run_id,
                 commit_changes=payload.commit_changes,
+            )
+            return snapshot(session_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Session not found.") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/sessions/{session_id}/terminal/test", response_model=SessionSnapshot)
+    def test_trading_terminal(session_id: UUID, payload: TradingTerminalTestRequest) -> SessionSnapshot:
+        try:
+            resolved_service.test_trading_terminal_integration(
+                session_id=session_id,
+                run_id=payload.run_id,
             )
             return snapshot(session_id)
         except KeyError as exc:

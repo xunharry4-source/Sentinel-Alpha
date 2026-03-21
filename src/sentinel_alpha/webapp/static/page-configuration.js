@@ -1,3 +1,5 @@
+const STRATEGY_FOCUS_KEY = "sentinel-alpha:strategy-focus-target";
+
 function setValue(id, value) {
   const target = document.querySelector(`#${id}`);
   if (target) {
@@ -47,6 +49,72 @@ function normalizeSnapshotCandidates(snapshot) {
     .filter((item) => item?.config_candidate?.provider_name)
     .slice()
     .reverse();
+}
+
+function normalizeTerminalCandidates(snapshot) {
+  return (snapshot?.terminal_integration_runs || [])
+    .filter((item) => item?.config_candidate?.terminal_name)
+    .slice()
+    .reverse();
+}
+
+function renderTerminalHealth(snapshot) {
+  const runs = snapshot?.terminal_integration_runs || [];
+  if (!runs.length) {
+    renderList("config-terminal-health-list", [], "当前还没有终端接入健康摘要。");
+    return;
+  }
+  const latest = runs[runs.length - 1] || {};
+  const test = latest.terminal_test || {};
+  const checks = test.checks || [];
+  const passed = checks.filter((item) => item.status === "pass").length;
+  renderList(
+    "config-terminal-health-list",
+    [
+      `latest_run / ${latest.run_id || "unknown"} / ${latest.terminal_name || "unknown"} / ${latest.terminal_type || "unknown"}`,
+      `docs / ${latest.docs_context?.docs_fetch_ok ? "ok" : "fail"} / ready=${latest.validation?.ready_for_programmer_agent ? "yes" : "no"}`,
+      `test / ${test.status || "not_tested"} / passed=${passed}/${checks.length || 0}`,
+      `summary / ${test.summary || "终端方案已生成，但还没有执行 smoke test。"}`,
+      `module / ${latest.target_module || "unknown"}`,
+      `config_hint / ${test.status === "ok" ? "当前终端方案基础契约正常，可继续挂入配置或写入真实文件。" : "先检查 order/cancel/status/positions/balances endpoint 再落配置。"}`,
+    ],
+    "当前还没有终端接入健康摘要。"
+  );
+}
+
+function renderTerminalCandidates(snapshot) {
+  const target = document.querySelector("#config-terminal-candidates");
+  if (!target) return;
+  const candidates = normalizeTerminalCandidates(snapshot);
+  if (!candidates.length) {
+    target.innerHTML = `
+      <article class="candidate-card">
+        <strong>当前还没有终端候选项。</strong>
+        <p>请先到交易终端接入页生成至少一个终端方案。</p>
+      </article>
+    `;
+    return;
+  }
+  target.innerHTML = candidates
+    .map((item) => {
+      const applyStatus = item.programmer_apply?.status || "not_applied";
+      const testStatus = item.terminal_test?.status || "not_tested";
+      return `
+        <article class="candidate-card">
+          <p class="eyebrow">${item.terminal_type}</p>
+          <h3>${item.terminal_name}</h3>
+          <p>${item.target_module}</p>
+          <p>Smoke Test / ${testStatus}</p>
+          <p>Programmer Agent / ${applyStatus}</p>
+          <div class="button-row">
+            <button type="button" data-terminal-action="merge" data-run-id="${item.run_id}">挂入终端配置</button>
+            <button type="button" data-terminal-action="merge-default" data-run-id="${item.run_id}">挂入并设为默认终端</button>
+          </div>
+          <pre class="code-block">${JSON.stringify(item.config_candidate, null, 2)}</pre>
+        </article>
+      `;
+    })
+    .join("");
 }
 
 function renderGeneratedCandidates(snapshot) {
@@ -111,6 +179,28 @@ function applyCandidatePayload(payload, candidate, setDefaultProvider) {
   return next;
 }
 
+function applyTerminalCandidatePayload(payload, candidate, setDefaultTerminal) {
+  const next = JSON.parse(JSON.stringify(payload));
+  const terminalName = candidate.terminal_name;
+  next.generated_terminals = next.generated_terminals || {};
+  next.generated_terminals.providers = next.generated_terminals.providers || {};
+  next.terminal_integration = next.terminal_integration || {};
+  next.terminal_integration.providers = next.terminal_integration.providers || {};
+
+  next.generated_terminals.providers[terminalName] = {
+    ...(next.generated_terminals.providers[terminalName] || {}),
+    ...(candidate.generated_terminals?.providers?.[terminalName] || {}),
+  };
+  next.terminal_integration.providers[terminalName] = {
+    ...(next.terminal_integration.providers[terminalName] || {}),
+    ...(candidate.provider_config || {}),
+  };
+  if (setDefaultTerminal) {
+    next.terminal_integration.default_terminal = terminalName;
+  }
+  return next;
+}
+
 function currentEditorPayload() {
   const raw = document.querySelector("#config-editor").value;
   return JSON.parse(raw);
@@ -132,6 +222,8 @@ async function loadConfigPage() {
     populateConfigForm(payload.payload);
     renderValidation(payload.validation);
     renderGeneratedCandidates(snapshot);
+    renderTerminalHealth(snapshot);
+    renderTerminalCandidates(snapshot);
     setText("config-note", "当前配置已加载。保存后会自动执行有效性检测。");
   } catch (error) {
     setText("config-note", `配置加载失败：${error.message}`);
@@ -142,6 +234,7 @@ function renderValidation(validation) {
   if (!validation) {
     renderList("config-validation-summary", [], "等待配置测试。");
     renderList("config-validation-checks", [], "等待配置测试。");
+    renderList("config-fix-routing-list", [], "等待配置测试结果。");
     return;
   }
   renderList(
@@ -163,6 +256,42 @@ function renderValidation(validation) {
     ),
     "无验证明细。"
   );
+  renderFixRouting(validation);
+}
+
+function renderFixRouting(validation) {
+  const checks = validation?.checks || [];
+  const errors = checks.filter((item) => item.status === "error");
+  const warnings = checks.filter((item) => item.status === "warning");
+  const lines = [];
+  if (!checks.length) {
+    renderList("config-fix-routing-list", [], "等待配置测试结果。");
+    return;
+  }
+  if (errors.some((item) => String(item.name || "").includes("llm."))) {
+    lines.push("检测到 LLM 配置问题，优先跳到系统健康或策略页检查模型与运行状态。");
+  }
+  if (errors.some((item) => String(item.name || "").includes("programmer_agent"))) {
+    lines.push("检测到 Programmer Agent 配置问题，优先修正 repo_path 或运行环境。");
+  }
+  if (checks.some((item) => String(item.name || "").includes("local_file"))) {
+    lines.push("检测到本地文件路径相关问题，优先回到 Provider 配置区修正本地目录。");
+  }
+  if (errors.some((item) => String(item.name || "").includes("default_provider"))) {
+    lines.push("默认 Provider 未启用或未定义，优先修正 Provider 默认值和 enabled 列表。");
+  }
+  if (!lines.length) {
+    lines.push(`当前配置状态为 ${validation.status}，暂无强制跳转建议，可继续在当前页修正。`);
+  }
+  lines.push(`errors=${errors.length} / warnings=${warnings.length} / restart_required=${validation.restart_required ? "yes" : "no"}`);
+  renderList("config-fix-routing-list", lines, "等待配置测试结果。");
+}
+
+function jumpFromConfig(targetPage, focusTarget = "") {
+  if (focusTarget) {
+    window.localStorage.setItem(STRATEGY_FOCUS_KEY, focusTarget);
+  }
+  window.location.href = targetPage;
 }
 
 function parseEditorPayload() {
@@ -245,19 +374,49 @@ function applyGeneratedCandidate(runId, setDefaultProvider) {
   }
 }
 
+function applyTerminalCandidate(runId, setDefaultTerminal) {
+  try {
+    const snapshot = loadStoredSnapshot();
+    const run = (snapshot?.terminal_integration_runs || []).find((item) => item.run_id === runId);
+    if (!run?.config_candidate) {
+      throw new Error("未找到可应用的终端候选项。");
+    }
+    const nextPayload = applyTerminalCandidatePayload(currentEditorPayload(), run.config_candidate, setDefaultTerminal);
+    document.querySelector("#config-editor").value = JSON.stringify(nextPayload, null, 2);
+    populateConfigForm(nextPayload);
+    setText(
+      "config-note",
+      setDefaultTerminal
+        ? `已挂入 ${run.terminal_name} 并设为默认终端。`
+        : `已将 ${run.terminal_name} 挂入终端配置候选区。`
+    );
+  } catch (error) {
+    setText("config-note", `应用终端候选失败：${error.message}`);
+  }
+}
+
 document.querySelector("#reload-config")?.addEventListener("click", loadConfigPage);
 document.querySelector("#save-config")?.addEventListener("click", saveConfig);
 document.querySelector("#test-config")?.addEventListener("click", testConfigOnly);
 document.querySelector("#test-sec-provider")?.addEventListener("click", () => testSingleConfigItem("fundamentals", "sec"));
 document.querySelector("#test-finra-provider")?.addEventListener("click", () => testSingleConfigItem("dark_pool", "finra"));
 document.querySelector("#test-yahoo-options-provider")?.addEventListener("click", () => testSingleConfigItem("options_data", "yahoo_options"));
+document.querySelector("#jump-config-to-providers")?.addEventListener("click", () => jumpFromConfig("./configuration.html"));
+document.querySelector("#jump-config-to-strategy")?.addEventListener("click", () => jumpFromConfig("./strategy.html", "#strategy-repair-route-list"));
+document.querySelector("#jump-config-to-health")?.addEventListener("click", () => jumpFromConfig("./system-health.html"));
 document.addEventListener("click", (event) => {
   const target = event.target;
   if (!(target instanceof HTMLElement)) return;
   const action = target.dataset.candidateAction;
   const runId = target.dataset.runId;
-  if (!action || !runId) return;
-  applyGeneratedCandidate(runId, action === "merge-default");
+  if (action && runId) {
+    applyGeneratedCandidate(runId, action === "merge-default");
+    return;
+  }
+  const terminalAction = target.dataset.terminalAction;
+  const terminalRunId = target.dataset.runId;
+  if (!terminalAction || !terminalRunId) return;
+  applyTerminalCandidate(terminalRunId, terminalAction === "merge-default");
 });
 
 loadConfigPage();

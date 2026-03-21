@@ -79,6 +79,7 @@ Additional free datasets now include:
 - system health diagnostics with module status, agent logs, recent errors, and token usage
 - library and SDK diagnostics inside system health
 - controlled Programmer Agent for local strategy-code mutation and self-repair
+- trading-terminal integration generation, smoke testing, and health summary
 - PostgreSQL / TimescaleDB / Qdrant / Redis persistence adapters
 - dedicated frontend web module
 
@@ -182,6 +183,12 @@ Frontend page rule:
 - 会话创建、模拟测试、测试报告、交易偏好、策略训练、情报中心、系统健康、部署监控必须分页面承载
 - 策略训练页必须支持循环迭代，而不是单次生成
 - 策略训练页必须显示训练日志、检查失败原因、当前策略版本与模型路由信息
+- 测试报告、情报中心、系统健康、配置管理页面应支持直接跳回策略训练或配置修复区域
+- 报告页必须能回放：
+  - 用户意见
+  - 用户意见对应结果
+  - 最新策略研究结论
+  - 训练输入数据包质量
 
 ## LLM Routing
 
@@ -211,6 +218,33 @@ Current programmer-agent support:
 - target-path allowlist
 - diff / commit / rollback outputs
 - session-level archival through `programmer_runs`, `history_events`, and `report_history`
+
+## Current Research Platform State
+
+The current platform already supports a usable research feedback loop:
+
+- structured `feature_snapshot`
+- `input_manifest`
+- `data_bundle_id` and bundle registry
+- strategy `research_summary`
+- winner selection summary
+- robustness summary
+- evaluation snapshot and evaluation highlights
+- release-gate summary
+- rejection summary
+- next-iteration repair routing
+- release snapshot
+- research trend summary
+- research health conclusion
+- repair trend summary
+- repair convergence conclusion
+- archived unified repair routes (`repair_route_summary`, `primary_repair_route`)
+- cross-page jump flow from:
+  - report page
+  - intelligence page
+  - system-health page
+  - configuration page
+  back into strategy or configuration repair surfaces
 
 ## Production Gaps
 

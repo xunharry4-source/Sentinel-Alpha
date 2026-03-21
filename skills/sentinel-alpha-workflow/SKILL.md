@@ -165,6 +165,34 @@ The user flow is:
    - strategy health monitoring
    - market and watched-asset monitoring
 
+## Trading Terminal Integration Rule
+
+Trading terminal integration is not complete when the system only generates adapter code.
+
+Required rule:
+
+- a generated trading terminal package must include:
+  - adapter code
+  - test code
+  - config candidate
+  - documentation context
+- terminal integration should support a smoke-test layer before live use
+- smoke tests should at minimum cover:
+  - ping
+  - positions
+  - balances or account summary
+  - order placement contract
+  - order-status contract
+  - cancel contract
+- smoke-test output must be archived into:
+  - terminal integration runs
+  - report history
+  - history events
+- terminal health should be visible outside the terminal page itself:
+  - terminal integration page
+  - system health page
+  - configuration page
+
 ## LLM Routing Rule
 
 Behavior analysis, intent parsing, noise generation, strategy analysis, strategy code generation, and strategy critique are not the same task.
@@ -390,6 +418,85 @@ Required rule:
 - reports must be archived, not silently overwritten
 - history entries must preserve timestamp, phase, event type, and a structured payload
 - intelligence history must preserve raw source URLs alongside the summarized report
+- user feedback must be visible in:
+  - strategy feedback history
+  - report archives
+  - history timeline
+- report pages must not only show the current profiler output; they must also replay:
+  - user feedback
+  - feedback-to-training outcomes
+  - latest strategy research conclusion
+  - latest data-bundle quality context
+  - latest release snapshot
+  - latest research trend summary
+  - latest research health conclusion
+
+## Cross-Page Repair Routing Rule
+
+The user should not have to infer manually where to go next after discovering a problem.
+
+Required rule:
+
+- report, intelligence, system-health, and configuration pages should expose direct navigation back to the relevant repair surface
+- when possible, page-to-page jumps should preserve a target focus so the destination page can auto-focus the relevant panel
+- examples of valid repair targets:
+  - strategy research summary
+  - strategy repair routing
+  - strategy research/code loop
+  - configuration provider section
+- a task that adds diagnostics without a path back to repair is incomplete
+
+## Research Presentation Rule
+
+Strategy research output is incomplete if the user still has to manually infer whether research quality is improving or deteriorating.
+
+Required rule:
+
+- strategy and report pages must surface:
+  - latest research summary
+  - release snapshot
+  - research trend summary
+  - research health conclusion
+  - repair trend summary
+- research health should compress:
+  - gate
+  - robustness
+  - test trend
+  - walk-forward trend
+  - train-test gap trend
+  into a direct conclusion such as:
+  - `healthy`
+  - `warning`
+  - `fragile`
+- repair trend should compress:
+  - latest primary repair lane
+  - recent repair-lane distribution
+  - recent priority movement
+  - recent source movement
+  into a direct conclusion such as:
+  - `converging`
+  - `flat`
+  - `diverging`
+- unified repair routing must be archived, not computed only in the browser:
+  - `research_summary.repair_route_summary`
+  - `training_log_entry.repair_route_summary`
+  - `research_export.repair_route_summary`
+  - `research_export.primary_repair_route`
+  - `history_events.payload.repair_route_lane`
+  - `history_events.payload.repair_route_priority`
+- strategy-iteration history events should preserve enough payload to replay:
+  - winner
+  - gate
+  - evaluation source
+  - robustness grade
+  - train objective score
+  - validation objective score
+  - test objective score
+  - walk-forward score
+  - primary repair route lane
+  - primary repair route priority
+  - train-test gap
+- strategy-iteration report archives should preserve a stable `research_export` payload so the strategy and report pages read the same research contract
 
 ## Intelligence Rule
 
