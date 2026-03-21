@@ -326,6 +326,7 @@ th {
 
 .simulator-panel {
   margin-top: 24px;
+  padding: 22px;
 }
 
 .workflow-panel {
@@ -423,7 +424,7 @@ th {
 }
 
 .simulator-head {
-  margin-bottom: 24px;
+  margin-bottom: 18px;
 }
 
 .simulator-toolbar {
@@ -488,12 +489,41 @@ th {
 
 .simulator-grid,
 .simulation-bottom {
-  grid-template-columns: 1.3fr 0.9fr;
+  grid-template-columns: minmax(0, 1.45fr) minmax(320px, 0.85fr);
+  align-items: start;
+  margin-bottom: 18px;
+}
+
+.chart-mode-switch {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.chart-mode-button {
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--ink);
+  border-radius: 999px;
+  padding: 10px 16px;
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.chart-mode-button.active {
+  background: var(--ink);
+  color: #fff;
+  border-color: var(--ink);
 }
 
 .simulation-stage,
 .control-panel {
   background: rgba(255, 251, 245, 0.88);
+}
+
+.simulation-stage {
+  padding: 22px;
 }
 
 .chart-head,
@@ -508,13 +538,13 @@ th {
 
 .chart-head {
   align-items: start;
-  margin-bottom: 18px;
+  margin-bottom: 14px;
 }
 
 .stage-stats {
   display: grid;
   grid-template-columns: repeat(3, minmax(70px, 1fr));
-  gap: 14px;
+  gap: 10px;
 }
 
 .stage-stats span,
@@ -533,15 +563,15 @@ th {
   display: block;
   margin-top: 6px;
   font-family: "Space Grotesk", sans-serif;
-  font-size: 22px;
+  font-size: 18px;
   color: var(--ink);
 }
 
 .chart-shell {
   border: 1px solid var(--line);
-  border-radius: 24px;
-  padding: 12px;
-  background: linear-gradient(180deg, rgba(255,255,255,0.75), rgba(246,239,228,0.75));
+  border-radius: 20px;
+  padding: 10px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.78), rgba(246,239,228,0.82));
 }
 
 .chart-legend {
@@ -583,17 +613,28 @@ th {
   width: 100%;
   height: auto;
   display: block;
+  cursor: crosshair;
+}
+
+#campaign-chart {
+  width: 100%;
+  height: auto;
+  display: block;
+  cursor: pointer;
 }
 
 .timeline-meta {
-  margin-top: 14px;
+  margin-top: 12px;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .control-panel {
-  display: grid;
-  gap: 16px;
+  display: block;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
 }
 
 .noise-card,
@@ -605,9 +646,16 @@ th {
 .mini-metric,
 .profile-item {
   border: 1px solid var(--line);
-  border-radius: 22px;
-  background: rgba(255, 255, 255, 0.52);
-  padding: 18px;
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.66);
+  padding: 18px 18px 16px;
+}
+
+.action-card {
+  position: sticky;
+  top: 16px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.92), rgba(247,241,232,0.92));
+  box-shadow: 0 12px 30px rgba(50, 42, 31, 0.1);
 }
 
 .noise-card strong {
@@ -620,8 +668,8 @@ th {
 .discussion-feed {
   display: grid;
   gap: 10px;
-  margin-top: 14px;
-  max-height: 260px;
+  margin-top: 12px;
+  max-height: 220px;
   overflow: auto;
   padding-right: 4px;
 }
@@ -631,7 +679,7 @@ th {
   border: 1px solid var(--line);
   border-radius: 16px;
   padding: 14px;
-  background: rgba(255, 255, 255, 0.72);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(250, 246, 239, 0.92));
 }
 
 .headline-item strong,
@@ -640,11 +688,14 @@ th {
   color: var(--ink);
   font-size: 15px;
   margin-bottom: 6px;
+  line-height: 1.45;
 }
 
 .headline-item p,
 .discussion-item p {
   margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .headline-item.positive,
@@ -675,10 +726,45 @@ th {
   font-family: "Space Grotesk", sans-serif;
 }
 
+.feed-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.feed-source,
+.feed-tag,
+.feed-handle {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-family: "Space Grotesk", sans-serif;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.feed-source {
+  color: var(--accent-deep);
+  background: rgba(200, 92, 63, 0.12);
+}
+
+.feed-tag {
+  color: var(--teal);
+  background: rgba(31, 85, 81, 0.12);
+}
+
+.feed-handle {
+  color: var(--muted);
+  background: rgba(133, 115, 95, 0.12);
+}
+
 .impact-card strong {
   display: block;
   margin-top: 8px;
-  font-size: 20px;
+  font-size: 18px;
   color: var(--ink);
 }
 
@@ -693,14 +779,14 @@ th {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
-  margin-top: 16px;
+  margin-top: 14px;
 }
 
 .trade-config {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
-  margin-top: 16px;
+  gap: 10px;
+  margin-top: 12px;
 }
 
 .config-field {
@@ -718,11 +804,11 @@ th {
 .config-field input {
   border-radius: 14px;
   border: 1px solid var(--line);
-  padding: 12px 14px;
-  background: rgba(255, 255, 255, 0.72);
+  padding: 11px 12px;
+  background: rgba(255, 255, 255, 0.84);
   color: var(--ink);
   font-family: "Space Grotesk", sans-serif;
-  font-size: 15px;
+  font-size: 14px;
 }
 
 .action-buttons.secondary {
@@ -737,11 +823,11 @@ th {
 button {
   border: 0;
   border-radius: 14px;
-  padding: 12px 14px;
+  padding: 11px 12px;
   background: var(--teal);
   color: #f7fcfb;
   font-family: "Space Grotesk", sans-serif;
-  font-size: 14px;
+  font-size: 13px;
   cursor: pointer;
   transition: transform 120ms ease, opacity 120ms ease, background 120ms ease;
 }
@@ -764,6 +850,7 @@ button[data-action="HOLD"],
 .profile-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
 }
 
 .tape-strip {
@@ -776,10 +863,11 @@ button[data-action="HOLD"],
 }
 
 .profiler-note {
-  margin-top: 16px;
-  padding: 14px 16px;
+  margin-top: 12px;
+  padding: 12px 14px;
   border-radius: 16px;
   background: rgba(31, 85, 81, 0.08);
+  font-size: 13px;
 }
 
 .compact-note {
@@ -788,6 +876,7 @@ button[data-action="HOLD"],
 
 .log-table-wrap {
   overflow-x: auto;
+  margin-top: 18px;
 }
 
 .log-table {
@@ -798,7 +887,7 @@ button[data-action="HOLD"],
 .log-table th,
 .log-table td {
   text-align: left;
-  padding: 12px 10px;
+  padding: 10px 8px;
   border-bottom: 1px solid var(--line);
   color: var(--muted);
 }
@@ -866,6 +955,17 @@ button[data-action="HOLD"],
   border-color: transparent;
 }
 
+.market-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin: 18px 0;
+}
+
+.impact-card p {
+  margin: 6px 0;
+}
+
 .positive {
   color: var(--teal);
 }
@@ -891,6 +991,7 @@ button[data-action="HOLD"],
   .architecture-grid,
   .workflow-grid,
   .simulator-grid,
+  .market-grid,
   .simulation-bottom,
   .check-grid,
   .module-card-grid {
@@ -930,6 +1031,10 @@ button[data-action="HOLD"],
   .action-buttons,
   .action-buttons.secondary {
     grid-template-columns: 1fr;
+  }
+
+  .action-card {
+    position: static;
   }
 
   .scenario-picker select {

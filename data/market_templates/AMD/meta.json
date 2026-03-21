@@ -1,0 +1,7 @@
+{
+  "playbook": "fake_reversal",
+  "market_regime": "oscillation",
+  "shape_family": "N",
+  "pattern_label": "N 型反抽回落",
+  "notes": "芯片股高波动，适合假反与分歧扩散模板"
+}

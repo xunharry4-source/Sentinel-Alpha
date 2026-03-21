@@ -150,6 +150,41 @@ create table if not exists market_data_ts (
     regime_tag text
 );
 
+create table if not exists market_template_days (
+    id uuid primary key,
+    symbol text not null,
+    trading_day date not null,
+    source text not null,
+    playbook text,
+    market_regime text,
+    shape_family text,
+    pattern_label text,
+    open_price double precision not null,
+    high_price double precision not null,
+    low_price double precision not null,
+    close_price double precision not null,
+    volume double precision not null default 0,
+    metadata jsonb not null default '{}'::jsonb,
+    created_at timestamptz not null default now(),
+    unique (symbol, trading_day, source)
+);
+
+create table if not exists market_template_intraday_segments (
+    id uuid primary key,
+    template_day_id uuid not null,
+    symbol text not null,
+    trading_day date not null,
+    segment_index integer not null,
+    start_ts timestamptz not null,
+    end_ts timestamptz not null,
+    shape_family text,
+    market_regime text,
+    pattern_label text,
+    metadata jsonb not null default '{}'::jsonb,
+    created_at timestamptz not null default now(),
+    unique (template_day_id, segment_index)
+);
+
 create table if not exists intelligence_documents (
     id uuid primary key,
     session_id uuid not null,
@@ -158,6 +193,22 @@ create table if not exists intelligence_documents (
     title text not null,
     url text not null,
     published_at text,
+    payload jsonb not null,
+    created_at timestamptz not null default now()
+);
+
+create table if not exists information_events (
+    id uuid primary key,
+    session_id uuid not null,
+    channel text not null,
+    trading_day text,
+    source text not null,
+    author text,
+    handle text,
+    title text not null,
+    body text not null,
+    info_tag text,
+    sentiment_score double precision not null default 0,
     payload jsonb not null,
     created_at timestamptz not null default now()
 );

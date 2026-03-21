@@ -11,6 +11,7 @@ from sentinel_alpha.api.schemas import (
     CompleteSimulationRequest,
     CreateSessionRequest,
     DeploymentRequest,
+    InformationEventBatchRequest,
     IntelligenceSearchRequest,
     MarketSnapshotIn,
     SessionSnapshot,
@@ -79,7 +80,9 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
             market_snapshots=session.market_snapshots,
             trade_records=session.trade_records,
             strategy_feedback_log=session.strategy_feedback_log,
+            strategy_training_log=session.strategy_training_log,
             intelligence_documents=session.intelligence_documents,
+            information_events=session.information_events,
             monitors=resolved_service.monitor_signals(session_id),
         )
 
@@ -95,6 +98,33 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
     @app.get("/api/system-health")
     def system_health() -> dict:
         return resolved_service.system_health()
+
+    @app.get("/api/llm-config")
+    def llm_config() -> dict:
+        return resolved_service.llm_config()
+
+    @app.get("/api/market-template-campaign")
+    def market_template_campaign(
+        day_count: int = 40,
+        required_shapes: str | None = None,
+        required_regimes: str | None = None,
+        baseline_open: float = 100.0,
+        seed: int = 11,
+    ) -> dict:
+        shapes = [item.strip() for item in required_shapes.split(",")] if required_shapes else None
+        regimes = [item.strip() for item in required_regimes.split(",")] if required_regimes else None
+        days = resolved_service.compose_market_template_campaign(
+            day_count=day_count,
+            required_shapes=shapes,
+            required_regimes=regimes,
+            baseline_open=baseline_open,
+            seed=seed,
+        )
+        return {"days": days, "day_count": len(days), "baseline_open": baseline_open, "seed": seed}
+
+    @app.get("/api/market-template-coverage")
+    def market_template_coverage() -> dict:
+        return resolved_service.market_template_coverage()
 
     @app.get("/api/sessions/{session_id}", response_model=SessionSnapshot)
     def get_session(session_id: UUID) -> SessionSnapshot:
@@ -163,7 +193,20 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
     @app.post("/api/sessions/{session_id}/strategy/iterate", response_model=SessionSnapshot)
     def iterate_strategy(session_id: UUID, payload: StrategyIterationRequest) -> SessionSnapshot:
         try:
-            resolved_service.iterate_strategy(session_id, payload.feedback, payload.strategy_type)
+            resolved_service.iterate_strategy(
+                session_id,
+                payload.feedback,
+                payload.strategy_type,
+                auto_iterations=payload.auto_iterations,
+                iteration_mode=payload.iteration_mode,
+                objective_metric=payload.objective_metric,
+                objective_targets={
+                    "target_return_pct": payload.target_return_pct,
+                    "target_win_rate_pct": payload.target_win_rate_pct,
+                    "target_drawdown_pct": payload.target_drawdown_pct,
+                    "target_max_loss_pct": payload.target_max_loss_pct,
+                },
+            )
             return snapshot(session_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Session not found.") from exc
@@ -196,6 +239,31 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
     def search_intelligence(session_id: UUID, payload: IntelligenceSearchRequest) -> SessionSnapshot:
         try:
             resolved_service.search_intelligence(session_id, payload.query, payload.max_documents)
+            return snapshot(session_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Session not found.") from exc
+
+    @app.post("/api/sessions/{session_id}/information-events", response_model=SessionSnapshot)
+    def append_information_events(session_id: UUID, payload: InformationEventBatchRequest) -> SessionSnapshot:
+        try:
+            resolved_service.append_information_events(
+                session_id,
+                [
+                    {
+                        "channel": item.channel,
+                        "source": item.source,
+                        "title": item.title,
+                        "body": item.body,
+                        "trading_day": item.trading_day,
+                        "author": item.author,
+                        "handle": item.handle,
+                        "info_tag": item.info_tag,
+                        "sentiment_score": item.sentiment_score,
+                        "metadata": item.metadata,
+                    }
+                    for item in payload.events
+                ],
+            )
             return snapshot(session_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Session not found.") from exc

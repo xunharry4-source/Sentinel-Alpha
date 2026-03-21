@@ -31,9 +31,10 @@ The implemented product flow is:
 7. submit trade universe inputs
 8. iterate strategy candidates with user feedback
 9. run mandatory integrity and stress checks
-10. approve strategy
-11. switch to autonomous or advice-only mode
-12. continue monitoring and profile evolution
+10. re-iterate automatically or manually if checks fail
+11. approve strategy
+12. switch to autonomous or advice-only mode
+13. continue monitoring and profile evolution
 
 ## Repository Structure
 
@@ -164,6 +165,10 @@ These files define:
 - minimum trade universe size
 - health retry interval
 - intelligence search templates
+- LLM enablement
+- default provider/model
+- per-agent model routing
+- per-task model routing
 
 Detailed configuration rules are documented in [configuration.md](/Users/harry/Documents/git/Sentinel-Alpha/docs/configuration.md).
 
@@ -201,6 +206,23 @@ Every strategy candidate must pass:
 
 If any required check fails, the workflow moves into `strategy_rework_required` and approval is blocked.
 
+Strategy training is not one-shot anymore.
+
+The workflow now supports:
+
+- `guided` iteration mode
+  - automatically keep iterating for the requested loop count until checks pass or the loop budget ends
+- `free` iteration mode
+  - keep exploring versions without forcing an early stop when a version passes
+
+Each iteration now emits:
+
+- a strategy package
+- structured strategy checks
+- a strategy training log row
+- generated strategy code artifact
+- LLM route metadata for the current version
+
 ## Behavioral Alignment Layer
 
 This codebase does not treat user profiling as a one-time questionnaire.
@@ -219,6 +241,39 @@ Relevant workflow fields:
 - `strategy_feedback_log`
 - `trade_records`
 - `market_snapshots`
+
+## LLM Routing Layer
+
+This repository now distinguishes between:
+
+- agent-level model routing
+- task-level model routing
+
+The system is explicitly designed to avoid forcing all work through a single model.
+
+Current task classes include:
+
+- `intent_translation`
+- `noise_generation`
+- `behavior_analysis`
+- `market_summarization`
+- `strategy_analysis`
+- `strategy_codegen`
+- `strategy_critic`
+
+This matters because user-behavior analysis, strategy reasoning, and strategy code generation are different tasks and should not be collapsed into one generic model route.
+
+The current runtime exposes:
+
+- `GET /api/llm-config`
+
+The strategy package now includes:
+
+- `llm_profile`
+- `agent_model_map`
+- `task_model_map`
+- `generated_strategy_code`
+- `llm_generation_summary`
 
 ## Web Module Pages
 
@@ -246,6 +301,9 @@ Implemented:
 - behavior-based recommendation of trading rhythm
 - behavior-based recommendation of strategy type
 - strategy iteration and approval checks
+- multi-model LLM routing config
+- generated strategy code artifacts
+- iterative strategy training logs
 - profile evolution
 - intelligence search skeleton
 - dedicated web module
@@ -254,7 +312,7 @@ Not fully complete yet:
 
 - full broker integration
 - real production market data ingestion
-- independent fully interactive multi-page frontend workflows
+- live provider SDK calls for all configured LLM routes
 - persistent infrastructure health verification against live databases
 
 ## Validation

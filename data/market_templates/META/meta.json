@@ -1,0 +1,7 @@
+{
+  "playbook": "fake_reversal",
+  "market_regime": "bull",
+  "shape_family": "A",
+  "pattern_label": "冲高回落 A 顶",
+  "notes": "社媒龙头适合强预期后的冲高分歧模板"
+}

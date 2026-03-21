@@ -24,6 +24,11 @@ Sentinel-Alpha must not rely on hardcoded runtime endpoints or storage addresses
 - intelligence search enablement
 - intelligence RSS search templates
 - intelligence fetch timeout and max document count
+- LLM global enablement
+- default LLM provider/model/temperature/max tokens
+- provider credential env names
+- per-agent LLM mappings
+- per-task LLM mappings such as behavior analysis, strategy analysis, strategy code generation, and strategy critic
 
 Environment variables may override storage secrets when needed:
 
@@ -37,6 +42,11 @@ Environment variables may override storage secrets when needed:
 - `SENTINEL_REDIS_URL`
 - `SENTINEL_QDRANT_URL`
 - `SENTINEL_QDRANT_COLLECTION`
+- `SENTINEL_LLM_ENABLED`
+- `SENTINEL_LLM_DEFAULT_PROVIDER`
+- `SENTINEL_LLM_DEFAULT_MODEL`
+- `SENTINEL_LLM_DEFAULT_TEMPERATURE`
+- `SENTINEL_LLM_DEFAULT_MAX_TOKENS`
 
 These overrides are the expected deployment path for Docker and other container runtimes.
 
@@ -58,6 +68,7 @@ The web client must load this file at startup before attempting API calls.
 - CORS origins must come from configuration.
 - behavioral thresholds that affect workflow behavior, such as minimum trade universe size, must come from configuration.
 - if a new agent depends on an external provider or service, its endpoint and credentials must be added to config before implementation is considered complete.
+- behavior analysis, strategy analysis, strategy code generation, and strategy critique must support different model mappings when the workflow requires it; do not force every task through a single model.
 
 ## Persistence Rules
 

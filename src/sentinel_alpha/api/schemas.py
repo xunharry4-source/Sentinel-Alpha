@@ -39,6 +39,13 @@ class TradingPreferenceRequest(BaseModel):
 class StrategyIterationRequest(BaseModel):
     feedback: str | None = None
     strategy_type: str = "rule_based_aligned"
+    auto_iterations: int = Field(default=1, ge=1, le=10)
+    iteration_mode: Literal["guided", "free"] = "guided"
+    objective_metric: Literal["return", "win_rate", "drawdown", "max_loss"] = "return"
+    target_return_pct: float | None = None
+    target_win_rate_pct: float | None = None
+    target_drawdown_pct: float | None = None
+    target_max_loss_pct: float | None = None
 
 
 class MarketSnapshotIn(BaseModel):
@@ -69,6 +76,23 @@ class TradeExecutionIn(BaseModel):
 class IntelligenceSearchRequest(BaseModel):
     query: str
     max_documents: int | None = Field(default=None, ge=1, le=20)
+
+
+class InformationEventIn(BaseModel):
+    channel: Literal["focus", "news", "chat", "discussion"]
+    source: str
+    title: str
+    body: str
+    trading_day: str | None = None
+    author: str | None = None
+    handle: str | None = None
+    info_tag: str | None = None
+    sentiment_score: float = 0.0
+    metadata: dict[str, str | float | int | bool | None] = Field(default_factory=dict)
+
+
+class InformationEventBatchRequest(BaseModel):
+    events: list[InformationEventIn] = Field(default_factory=list)
 
 
 class DeploymentRequest(BaseModel):
@@ -111,5 +135,7 @@ class SessionSnapshot(BaseModel):
     market_snapshots: list[dict]
     trade_records: list[dict]
     strategy_feedback_log: list[dict]
+    strategy_training_log: list[dict]
     intelligence_documents: list[dict]
+    information_events: list[dict]
     monitors: list[MonitorSignal]

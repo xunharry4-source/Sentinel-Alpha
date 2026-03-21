@@ -30,12 +30,22 @@ Primary output:
 - `StrategyEvolverAgent`: transforms market priors and behavioral traits into aligned trading constraints
 - `IntentAlignerAgent`: updates policy when user intent or confidence changes
 
+This phase now includes an explicit LLM routing layer:
+
+- agent-level routing
+- task-level routing
+- multi-model strategy analysis
+- multi-model strategy code generation
+- multi-model strategy critique
+
 Primary output:
 
 - expected return estimate
 - worst-case drawdown estimate
 - intervention-aware position sizing
 - user-aligned utility score
+- generated strategy code artifact
+- strategy training log
 
 ### Phase 3: Execution
 
@@ -75,6 +85,36 @@ The persistence split is deliberate:
 - `Qdrant` handles semantic recall for personalized memory and market context.
 - `Redis` handles short-lived operational speed paths.
 
+## LLM Routing
+
+The framework should not assume that one model is optimal for every task.
+
+Current routing layers:
+
+- agent routing:
+  - `Intent Aligner`
+  - `Noise Agent`
+  - `Behavioral Profiler`
+  - `Intelligence Agent`
+  - `Strategy Evolver`
+- task routing:
+  - `intent_translation`
+  - `noise_generation`
+  - `behavior_analysis`
+  - `market_summarization`
+  - `strategy_analysis`
+  - `strategy_codegen`
+  - `strategy_critic`
+
+The current codebase supports configuration-driven per-agent and per-task model routing through `config/settings.toml`.
+
+The strategy layer now exposes the resolved model map through workflow state so every strategy version can be audited for:
+
+- which agent route was configured
+- which task route was configured
+- which model family planned the strategy code artifact
+- whether the run was live-model or fallback-mode
+
 ## Critical Research Interface
 
 The first research question implemented here is:
@@ -89,6 +129,28 @@ Current mapping:
 - stronger averaging-down tendency increases stop discipline and cool-down windows
 
 This mapping is intentionally explicit and inspectable instead of hidden inside a black-box optimizer.
+
+## Strategy Training Loop
+
+Strategy synthesis is a loop, not a single function call.
+
+Current iteration modes:
+
+- `guided`
+  - continue iterating within the requested loop budget until a version passes mandatory checks
+- `free`
+  - continue iterating for the requested loop budget even if a version already passes, so the user can keep exploring
+
+Every iteration should produce:
+
+- a new strategy version
+- strategy package metadata
+- generated strategy code artifact
+- integrity-check result
+- stress/overfit-check result
+- strategy training log entry
+
+If any required strategy check fails, the workflow must remain in rework state until a later iteration passes.
 
 ## Stimulus Matrix
 

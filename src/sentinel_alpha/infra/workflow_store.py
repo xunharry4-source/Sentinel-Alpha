@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+from collections import defaultdict
+from datetime import date
+from random import Random
 from uuid import UUID, uuid4
 
 try:
@@ -287,3 +290,282 @@ class PostgresWorkflowStore:
                             json.dumps(document),
                         ),
                     )
+
+    def save_information_events(self, session_id: UUID, events: list[dict]) -> None:
+        with psycopg.connect(self.dsn) as connection:
+            with connection.cursor() as cursor:
+                for event in events:
+                    cursor.execute(
+                        """
+                        insert into information_events (
+                            id, session_id, channel, trading_day, source,
+                            author, handle, title, body, info_tag,
+                            sentiment_score, payload
+                        ) values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                        """,
+                        (
+                            uuid4(),
+                            session_id,
+                            event.get("channel"),
+                            event.get("trading_day"),
+                            event.get("source"),
+                            event.get("author"),
+                            event.get("handle"),
+                            event.get("title"),
+                            event.get("body"),
+                            event.get("info_tag"),
+                            event.get("sentiment_score", 0.0),
+                            json.dumps(event),
+                        ),
+                    )
+
+    def compose_market_template_campaign(
+        self,
+        day_count: int = 40,
+        required_shapes: list[str] | None = None,
+        required_regimes: list[str] | None = None,
+        baseline_open: float = 100.0,
+        seed: int = 11,
+    ) -> list[dict]:
+        with psycopg.connect(self.dsn) as connection:
+            with connection.cursor() as cursor:
+                where_clauses: list[str] = []
+                params: list[object] = []
+                if required_shapes:
+                    where_clauses.append("lower(coalesce(shape_family, '')) = any(%s)")
+                    params.append([item.lower() for item in required_shapes])
+                if required_regimes:
+                    where_clauses.append("lower(coalesce(market_regime, '')) = any(%s)")
+                    params.append([item.lower() for item in required_regimes])
+                where_sql = f"where {' and '.join(where_clauses)}" if where_clauses else ""
+                cursor.execute(
+                    """
+                    with templ as (
+                        select
+                            id,
+                            symbol,
+                            trading_day,
+                            playbook,
+                            pattern_label,
+                            market_regime,
+                            shape_family,
+                            open_price,
+                            high_price,
+                            low_price,
+                            close_price,
+                            volume,
+                            metadata,
+                            lag(close_price) over (partition by symbol order by trading_day) as source_prev_close
+                        from market_template_days
+                    )
+                    select id, symbol, trading_day, playbook, pattern_label,
+                           market_regime, shape_family,
+                           open_price, high_price, low_price, close_price, volume, metadata, source_prev_close
+                    from templ
+                    """
+                    + where_sql
+                    + """
+                    order by random()
+                    limit %s
+                    """,
+                    (*params, day_count),
+                )
+                selected_rows = cursor.fetchall()
+
+                raw_days: list[dict] = []
+                for (
+                    template_day_id,
+                    symbol,
+                    trading_day,
+                    playbook,
+                    pattern_label,
+                    market_regime,
+                    shape_family,
+                    open_price,
+                    high_price,
+                    low_price,
+                    close_price,
+                    volume,
+                    metadata,
+                    source_prev_close,
+                ) in selected_rows:
+                    cursor.execute(
+                        """
+                        select ts, open_price, high_price, low_price, close_price, volume
+                        from market_data_ts
+                        where symbol = %s
+                          and timeframe = '5m'
+                          and source = 'template_library'
+                          and date(ts) = %s
+                        order by ts asc
+                        """,
+                        (symbol, trading_day),
+                    )
+                    bars = [
+                        {
+                            "time": ts.isoformat(),
+                            "timeLabel": ts.strftime("%H:%M"),
+                            "open": open_v,
+                            "high": high_v,
+                            "low": low_v,
+                            "close": close_v,
+                            "volume": vol,
+                        }
+                        for ts, open_v, high_v, low_v, close_v, vol in cursor.fetchall()
+                    ]
+                    if not bars:
+                        continue
+                    cursor.execute(
+                        """
+                        select segment_index, start_ts, end_ts, shape_family, market_regime, pattern_label, metadata
+                        from market_template_intraday_segments
+                        where template_day_id = %s
+                        order by segment_index asc
+                        """,
+                        (template_day_id,),
+                    )
+                    segments = [
+                        {
+                            "segment_index": segment_index,
+                            "start": start_ts.isoformat(),
+                            "end": end_ts.isoformat(),
+                            "shape_family": segment_shape,
+                            "market_regime": segment_regime,
+                            "pattern_label": segment_label,
+                            "metadata": segment_meta or {},
+                        }
+                        for segment_index, start_ts, end_ts, segment_shape, segment_regime, segment_label, segment_meta in cursor.fetchall()
+                    ]
+                    raw_days.append(
+                        {
+                            "template_day_id": str(template_day_id),
+                            "symbol": symbol,
+                            "dateLabel": str(trading_day),
+                            "regimeKey": playbook or "template_library",
+                            "regimeLabel": pattern_label or playbook or symbol,
+                            "market_regime": market_regime,
+                            "shape_family": shape_family,
+                            "open": open_price,
+                            "high": high_price,
+                            "low": low_price,
+                            "close": close_price,
+                            "volume": volume,
+                            "metadata": metadata or {},
+                            "source_prev_close": source_prev_close,
+                            "bars": bars,
+                            "segments": segments,
+                        }
+                    )
+                return self._shuffle_weeks_and_scale(raw_days, day_count=day_count, baseline_open=baseline_open, seed=seed)
+
+    def _shuffle_weeks_and_scale(
+        self,
+        raw_days: list[dict],
+        day_count: int,
+        baseline_open: float,
+        seed: int,
+    ) -> list[dict]:
+        if not raw_days:
+            return []
+
+        grouped: dict[str, list[dict]] = defaultdict(list)
+        for day in raw_days:
+            iso_year, iso_week, _ = date.fromisoformat(day["dateLabel"]).isocalendar()
+            grouped[f"{iso_year}-W{iso_week:02d}"].append(day)
+
+        weeks = list(grouped.values())
+        for week in weeks:
+            week.sort(key=lambda item: item["dateLabel"])
+
+        randomizer = Random(seed)
+        randomizer.shuffle(weeks)
+
+        remixed: list[dict] = []
+        current_anchor = baseline_open
+        current_index = 0
+        for week in weeks:
+            if current_index >= day_count:
+                break
+            for day in week:
+                if current_index >= day_count:
+                    break
+                source_anchor = float(day.get("source_prev_close") or 0.0)
+                if source_anchor <= 0:
+                    source_anchor = float(day["open"])
+                if source_anchor <= 0:
+                    continue
+                scale = current_anchor / source_anchor
+                remixed_day = self._scale_template_day(day, scale, current_index)
+                remixed.append(remixed_day)
+                current_anchor = remixed_day["close"]
+                current_index += 1
+        return remixed
+
+    def _scale_template_day(self, day: dict, scale: float, day_index: int) -> dict:
+        scaled_bars = [
+            {
+                **bar,
+                "open": round(bar["open"] * scale, 4),
+                "high": round(bar["high"] * scale, 4),
+                "low": round(bar["low"] * scale, 4),
+                "close": round(bar["close"] * scale, 4),
+            }
+            for bar in day["bars"]
+        ]
+        return {
+            **day,
+            "dayIndex": day_index,
+            "source_weekly_remix": True,
+            "open": round(day["open"] * scale, 4),
+            "high": round(day["high"] * scale, 4),
+            "low": round(day["low"] * scale, 4),
+            "close": round(day["close"] * scale, 4),
+            "bars": scaled_bars,
+        }
+
+    def market_template_coverage(self) -> dict:
+        required_shapes = ["w", "n", "v", "a", "box", "trend"]
+        required_regimes = ["bull", "bear", "oscillation", "fake_reversal", "gap"]
+        with psycopg.connect(self.dsn) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    select
+                        lower(coalesce(shape_family, '')) as shape_family,
+                        lower(coalesce(market_regime, '')) as market_regime,
+                        count(*) as sample_count
+                    from market_template_days
+                    group by lower(coalesce(shape_family, '')), lower(coalesce(market_regime, ''))
+                    order by sample_count desc
+                    """
+                )
+                rows = cursor.fetchall()
+
+        shape_counts: dict[str, int] = {}
+        regime_counts: dict[str, int] = {}
+        matrix: list[dict] = []
+        for shape_family, market_regime, sample_count in rows:
+            if shape_family:
+                shape_counts[shape_family] = shape_counts.get(shape_family, 0) + sample_count
+            if market_regime:
+                regime_counts[market_regime] = regime_counts.get(market_regime, 0) + sample_count
+            matrix.append(
+                {
+                    "shape_family": shape_family or "unknown",
+                    "market_regime": market_regime or "unknown",
+                    "sample_count": sample_count,
+                }
+            )
+
+        missing_shapes = [item for item in required_shapes if shape_counts.get(item, 0) == 0]
+        missing_regimes = [item for item in required_regimes if regime_counts.get(item, 0) == 0]
+        return {
+            "status": "ok" if not missing_shapes and not missing_regimes else "incomplete",
+            "required_shapes": required_shapes,
+            "required_regimes": required_regimes,
+            "shape_counts": shape_counts,
+            "regime_counts": regime_counts,
+            "missing_shapes": missing_shapes,
+            "missing_regimes": missing_regimes,
+            "matrix": matrix,
+        }

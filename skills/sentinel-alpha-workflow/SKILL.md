@@ -29,6 +29,9 @@ Required rule:
 - PostgreSQL, TimescaleDB, Redis, and Qdrant endpoints must come from backend config
 - behavioral thresholds such as minimum trade universe size must come from backend config
 - if a new service is added and no config entry exists yet, the task is not complete
+- if an agent or workflow step uses LLMs, provider/model selection must be declared in config
+- do not force all agent reasoning and generation through a single model; support per-agent and per-task model routing
+- strategy analysis, strategy code generation, and strategy critique should be allowed to use different models
 
 Use environment-variable override only for deployment-sensitive values when needed, but keep the base shape in the config file.
 
@@ -122,6 +125,34 @@ The user flow is:
    - user behavior monitoring
    - strategy health monitoring
    - market and watched-asset monitoring
+
+## LLM Routing Rule
+
+Behavior analysis, intent parsing, noise generation, strategy analysis, strategy code generation, and strategy critique are not the same task.
+
+Required rule:
+
+- `Intent Aligner`, `Noise Agent`, `Behavioral Profiler`, `Intelligence Agent`, and `Strategy Evolver` may use different model mappings
+- within `Strategy Evolver`, at least these task classes must be allowed to use different models:
+  - strategy analysis
+  - strategy code generation
+  - strategy critique
+- LLM selection must be inspectable through API or health output
+- if live provider credentials are unavailable, the workflow must degrade with explicit fallback status rather than silently pretending a live LLM ran
+
+## Strategy Iteration Rule
+
+Strategy training is a loop, not a one-shot action.
+
+Required rule:
+
+- each iteration must produce a new strategy version
+- each iteration must run the two mandatory check agents
+- each iteration must be logged
+- iteration failures must be logged with explicit error detail
+- the user must be allowed to choose:
+  - guided auto-iteration until the version passes
+  - free iteration for a fixed number of rounds even if the user wants to keep exploring
 
 ## Architecture Rule
 

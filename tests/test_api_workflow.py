@@ -27,7 +27,18 @@ def test_system_health_endpoint_exposes_module_statuses() -> None:
     assert isinstance(payload["modules"], list)
     assert any(item["name"] == "behavioral_profiler" for item in payload["modules"])
     assert any(item["name"] == "strategy_registry" for item in payload["modules"])
+    assert any(item["name"] == "llm_runtime" for item in payload["modules"])
     assert all("recommendation" in item for item in payload["modules"])
+
+
+def test_llm_config_endpoint_exposes_agent_and_task_models() -> None:
+    response = client.get("/api/llm-config")
+    assert response.status_code == 200
+    payload = response.json()
+    assert "agents" in payload
+    assert "tasks" in payload
+    assert "strategy_evolver" in payload["agents"]
+    assert "strategy_codegen" in payload["tasks"]
 
 
 def test_full_workflow_api() -> None:
@@ -102,6 +113,10 @@ def test_full_workflow_api() -> None:
     assert "metrics" in strategy.json()["strategy_checks"][0]
     assert strategy.json()["profile_evolution"] is not None
     assert len(strategy.json()["strategy_feedback_log"]) == 1
+    assert len(strategy.json()["strategy_training_log"]) >= 1
+    assert "llm_profile" in strategy.json()["strategy_package"]
+    assert "task_model_map" in strategy.json()["strategy_package"]
+    assert "generated_strategy_code" in strategy.json()["strategy_package"]
 
     market_snapshot = client.post(
         f"/api/sessions/{session_id}/market-snapshots",

@@ -130,9 +130,17 @@ class PersistentWorkflowService(WorkflowService):
         )
         return session
 
-    def iterate_strategy(self, session_id: UUID, feedback: str | None, strategy_type: str = "rule_based_aligned") -> WorkflowSession:
-        session = super().iterate_strategy(session_id, feedback, strategy_type)
+    def iterate_strategy(
+        self,
+        session_id: UUID,
+        feedback: str | None,
+        strategy_type: str = "rule_based_aligned",
+        auto_iterations: int = 1,
+        iteration_mode: str = "guided",
+    ) -> WorkflowSession:
+        session = super().iterate_strategy(session_id, feedback, strategy_type, auto_iterations, iteration_mode)
         self.workflow_store.save_phase_payload(session_id, session.phase, "strategy_package", session.strategy_package)
+        self.workflow_store.save_phase_payload(session_id, session.phase, "strategy_training_log", session.strategy_training_log)
         if feedback:
             self.workflow_store.save_profile_evolution(session_id, session.profile_evolution or {})
             self.memory_store.add_profile_evolution_memory(
@@ -147,6 +155,7 @@ class PersistentWorkflowService(WorkflowService):
                 "session_id": str(session_id),
                 "iteration_no": session.strategy_package["iteration_no"],
                 "strategy_type": session.strategy_package["strategy_type"],
+                "iteration_mode": session.strategy_package.get("iteration_mode"),
                 "strategy_checks": session.strategy_checks,
             },
         )
@@ -211,6 +220,34 @@ class PersistentWorkflowService(WorkflowService):
             {"session_id": str(session_id), "query": query, "documents": len(session.intelligence_documents)},
         )
         return session
+
+    def append_information_events(self, session_id: UUID, events: list[dict]) -> WorkflowSession:
+        session = super().append_information_events(session_id, events)
+        self.workflow_store.save_information_events(session_id, events)
+        self.runtime_bus.publish_agent_event(
+            "workflow.information_events.recorded",
+            {"session_id": str(session_id), "count": len(events)},
+        )
+        return session
+
+    def compose_market_template_campaign(
+        self,
+        day_count: int = 40,
+        required_shapes: list[str] | None = None,
+        required_regimes: list[str] | None = None,
+        baseline_open: float = 100.0,
+        seed: int = 11,
+    ) -> list[dict]:
+        return self.workflow_store.compose_market_template_campaign(
+            day_count=day_count,
+            required_shapes=required_shapes,
+            required_regimes=required_regimes,
+            baseline_open=baseline_open,
+            seed=seed,
+        )
+
+    def market_template_coverage(self) -> dict:
+        return self.workflow_store.market_template_coverage()
 
     def system_health(self) -> dict:
         payload = super().system_health()

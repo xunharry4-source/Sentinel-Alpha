@@ -1,0 +1,7 @@
+{
+  "playbook": "downtrend",
+  "market_regime": "bear",
+  "shape_family": "trend",
+  "pattern_label": "指数单边走弱",
+  "notes": "指数模板用于系统性风险和持续下跌情境"
+}

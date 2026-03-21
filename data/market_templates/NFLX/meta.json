@@ -1,0 +1,7 @@
+{
+  "playbook": "gap",
+  "market_regime": "fake_reversal",
+  "shape_family": "N",
+  "pattern_label": "财报缺口 N 型演化",
+  "notes": "财报敏感标的，适合缺口与反转博弈模板"
+}

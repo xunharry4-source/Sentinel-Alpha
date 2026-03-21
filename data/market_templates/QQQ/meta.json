@@ -1,0 +1,7 @@
+{
+  "playbook": "oscillation",
+  "market_regime": "bull",
+  "shape_family": "V",
+  "pattern_label": "高波动 V 型修复",
+  "notes": "成长风格指数适合快跌快弹与拥挤交易模板"
+}

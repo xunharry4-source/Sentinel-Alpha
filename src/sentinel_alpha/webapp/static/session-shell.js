@@ -50,6 +50,11 @@ async function apiRequest(path, options = {}) {
     ...options,
   });
   if (!response.ok) {
+    const contentType = response.headers.get("content-type") || "";
+    if (contentType.includes("application/json")) {
+      const payload = await response.json();
+      throw new Error(payload?.detail || payload?.message || `API ${response.status}`);
+    }
     const detail = await response.text();
     throw new Error(detail || `API ${response.status}`);
   }

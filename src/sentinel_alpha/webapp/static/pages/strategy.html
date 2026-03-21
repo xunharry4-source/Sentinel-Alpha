@@ -55,6 +55,19 @@
             <input id="strategy-feedback-input" type="text" value="Reduce concentration and avoid earnings week." />
           </label>
         </div>
+        <div class="trade-config">
+          <label class="config-field">
+            <span>迭代模式</span>
+            <select id="iteration-mode-input">
+              <option value="guided">自动迭代直到通过</option>
+              <option value="free">自由迭代</option>
+            </select>
+          </label>
+          <label class="config-field">
+            <span>自动轮数</span>
+            <input id="auto-iterations-input" type="number" min="1" max="10" value="3" />
+          </label>
+        </div>
         <div class="action-buttons secondary">
           <button id="apply-strategy-recommendation">应用策略推荐</button>
           <button id="iterate-strategy">生成下一版策略</button>
@@ -84,6 +97,13 @@
         <h3>训练反馈记录</h3>
         <ul id="feedback-list" class="result-list">
           <li>还没有训练反馈。</li>
+        </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Training Log</p>
+        <h3>训练日志</h3>
+        <ul id="training-log-list" class="result-list">
+          <li>还没有训练日志。</li>
         </ul>
       </article>
     </section>

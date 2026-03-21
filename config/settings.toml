@@ -35,3 +35,112 @@ rss_search_templates = [
   "https://news.google.com/rss/search?q={query}",
   "https://feeds.finance.yahoo.com/rss/2.0/headline?s={query}&region=US&lang=en-US"
 ]
+
+[llm]
+enabled = false
+default_provider = "openai"
+default_model = "gpt-4.1-mini"
+default_temperature = 0.2
+default_max_tokens = 1200
+
+[llm.providers.openai]
+api_key_env = "OPENAI_API_KEY"
+base_url_env = "OPENAI_BASE_URL"
+
+[llm.providers.anthropic]
+api_key_env = "ANTHROPIC_API_KEY"
+base_url_env = "ANTHROPIC_BASE_URL"
+
+[llm.providers.google]
+api_key_env = "GOOGLE_API_KEY"
+base_url_env = "GOOGLE_API_BASE"
+
+[llm.agents.intent_aligner]
+provider = "openai"
+model = "gpt-4.1-mini"
+temperature = 0.2
+max_tokens = 1000
+
+[llm.agents.noise_agent]
+provider = "openai"
+model = "gpt-4.1-mini"
+temperature = 0.8
+max_tokens = 900
+
+[llm.agents.behavioral_profiler]
+provider = "openai"
+model = "gpt-4.1-mini"
+temperature = 0.1
+max_tokens = 1200
+
+[llm.agents.intelligence_agent]
+provider = "openai"
+model = "gpt-4.1-mini"
+temperature = 0.2
+max_tokens = 1200
+
+[llm.agents.strategy_evolver]
+provider = "openai"
+model = "gpt-4.1"
+temperature = 0.15
+max_tokens = 1800
+
+[llm.agents.intent_monitor]
+provider = "openai"
+model = "gpt-4.1-mini"
+temperature = 0.2
+max_tokens = 900
+
+[llm.agents.strategy_integrity_checker]
+provider = "openai"
+model = "gpt-4.1-mini"
+temperature = 0.0
+max_tokens = 1400
+
+[llm.agents.strategy_stress_checker]
+provider = "openai"
+model = "gpt-4.1-mini"
+temperature = 0.0
+max_tokens = 1400
+
+[llm.tasks.intent_translation]
+provider = "openai"
+model = "gpt-4.1-mini"
+temperature = 0.2
+max_tokens = 1000
+
+[llm.tasks.noise_generation]
+provider = "openai"
+model = "gpt-4.1-mini"
+temperature = 0.85
+max_tokens = 1000
+
+[llm.tasks.behavior_analysis]
+provider = "openai"
+model = "gpt-4.1"
+temperature = 0.1
+max_tokens = 1400
+
+[llm.tasks.market_summarization]
+provider = "openai"
+model = "gpt-4.1-mini"
+temperature = 0.2
+max_tokens = 1200
+
+[llm.tasks.strategy_analysis]
+provider = "anthropic"
+model = "claude-3-7-sonnet-latest"
+temperature = 0.15
+max_tokens = 1600
+
+[llm.tasks.strategy_codegen]
+provider = "openai"
+model = "gpt-4.1"
+temperature = 0.1
+max_tokens = 2200
+
+[llm.tasks.strategy_critic]
+provider = "google"
+model = "gemini-2.5-pro"
+temperature = 0.0
+max_tokens = 1800

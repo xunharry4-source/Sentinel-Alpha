@@ -11,6 +11,7 @@ from sentinel_alpha.agents.strategy_evolver import StrategyEvolverAgent
 from dataclasses import asdict
 
 from sentinel_alpha.config import get_settings
+from sentinel_alpha.infra.llm_runtime import LLMRuntime
 from sentinel_alpha.strategies.registry import StrategyRegistry
 from sentinel_alpha.domain.models import BehaviorEvent, MarketDataPoint, MarketSnapshot, ProfileEvolutionEvent, TradeExecutionRecord, UserProfile
 from sentinel_alpha.domain.models import BehavioralReport
@@ -36,8 +37,10 @@ class WorkflowSession:
     market_snapshots: list[dict] = field(default_factory=list)
     trade_records: list[dict] = field(default_factory=list)
     strategy_feedback_log: list[dict] = field(default_factory=list)
+    strategy_training_log: list[dict] = field(default_factory=list)
     scenario_packages: list[dict] = field(default_factory=list)
     intelligence_documents: list[dict] = field(default_factory=list)
+    information_events: list[dict] = field(default_factory=list)
 
 
 class WorkflowService:
@@ -49,6 +52,7 @@ class WorkflowService:
         self.intelligence = IntelligenceAgent()
         self.evolver = StrategyEvolverAgent()
         self.strategy_registry = StrategyRegistry()
+        self.llm_runtime = LLMRuntime(self.settings)
 
     def create_session(self, user_name: str, starting_capital: float) -> WorkflowSession:
         session = WorkflowSession(session_id=uuid4(), user_name=user_name, starting_capital=starting_capital)
@@ -187,56 +191,113 @@ class WorkflowService:
         session.phase = "universe_ready"
         return session
 
-    def iterate_strategy(self, session_id: UUID, feedback: str | None, strategy_type: str = "rule_based_aligned") -> WorkflowSession:
+    def iterate_strategy(
+        self,
+        session_id: UUID,
+        feedback: str | None,
+        strategy_type: str = "rule_based_aligned",
+        auto_iterations: int = 1,
+        iteration_mode: str = "guided",
+    ) -> WorkflowSession:
         session = self.get_session(session_id)
         if session.trade_universe is None or session.behavioral_report is None:
             raise ValueError("Trade universe and behavioral report must exist before strategy iteration.")
         expanded = session.trade_universe["expanded"]
-        iteration_no = 1 if session.strategy_package is None else session.strategy_package["iteration_no"] + 1
-        compatibility = max(0.35, min(0.95, 0.78 - 0.04 * max(0, iteration_no - 1)))
-        market = MarketSnapshot(
-            symbol=expanded[0],
-            expected_return_pct=16.0,
-            realized_volatility_pct=28.0,
-            trend_score=0.58 if strategy_type == "trend_following_aligned" else 0.18 if strategy_type == "mean_reversion_aligned" else 0.42,
-            event_risk_score=0.32,
-            liquidity_score=0.92,
-        )
-        user = UserProfile(
-            user_id=str(session.session_id),
-            preferred_assets=expanded,
-            capital_base=session.starting_capital,
-            target_holding_days=self._target_holding_days(session.trading_preferences),
-            self_reported_risk_tolerance=0.5,
-            confidence_level=0.55,
-        )
         if feedback:
             self._apply_feedback_evolution(session, feedback, strategy_type)
-        behavior = self._effective_behavior_report(session)
-        policy = self.evolver.derive_risk_policy(user, behavior)
-        candidate = self.evolver.build_strategy_candidate(
-            user=user,
-            market=market,
-            report=behavior,
-            policy=policy,
-            selected_universe=expanded,
-            feedback=feedback,
-            strategy_type=strategy_type,
-        )
-        session.strategy_package = {
-            "iteration_no": iteration_no,
-            "strategy_type": strategy_type,
-            "selected_universe": expanded,
-            "feedback": feedback,
-            "expected_return_range": [0.10, 0.22],
-            "max_potential_loss": -0.12,
-            "expected_drawdown": -0.08,
-            "position_limit": 0.18,
-            "behavioral_compatibility": compatibility,
-            "candidate": asdict(candidate),
-            "trading_preferences": session.trading_preferences,
-        }
-        session.strategy_checks = self._run_strategy_checks(session)
+        last_error: str | None = None
+        for loop_index in range(max(1, auto_iterations)):
+            iteration_no = 1 if session.strategy_package is None else session.strategy_package["iteration_no"] + 1
+            try:
+                compatibility = max(0.35, min(0.95, 0.78 - 0.04 * max(0, iteration_no - 1)))
+                market = MarketSnapshot(
+                    symbol=expanded[0],
+                    expected_return_pct=16.0,
+                    realized_volatility_pct=28.0,
+                    trend_score=0.58 if strategy_type == "trend_following_aligned" else 0.18 if strategy_type == "mean_reversion_aligned" else 0.42,
+                    event_risk_score=0.32,
+                    liquidity_score=0.92,
+                )
+                user = UserProfile(
+                    user_id=str(session.session_id),
+                    preferred_assets=expanded,
+                    capital_base=session.starting_capital,
+                    target_holding_days=self._target_holding_days(session.trading_preferences),
+                    self_reported_risk_tolerance=0.5,
+                    confidence_level=0.55,
+                )
+                behavior = self._effective_behavior_report(session)
+                policy = self.evolver.derive_risk_policy(user, behavior)
+                candidate = self.evolver.build_strategy_candidate(
+                    user=user,
+                    market=market,
+                    report=behavior,
+                    policy=policy,
+                    selected_universe=expanded,
+                    feedback=feedback,
+                    strategy_type=strategy_type,
+                )
+                llm_strategy_artifact = self.llm_runtime.generate_strategy_code(
+                    strategy_type=strategy_type,
+                    selected_universe=expanded,
+                    candidate_payload=asdict(candidate),
+                    feedback=feedback,
+                )
+                session.strategy_package = {
+                    "iteration_no": iteration_no,
+                    "strategy_type": strategy_type,
+                    "selected_universe": expanded,
+                    "feedback": feedback,
+                    "iteration_mode": iteration_mode,
+                    "auto_iterations_requested": auto_iterations,
+                    "expected_return_range": [0.10, 0.22],
+                    "max_potential_loss": -0.12,
+                    "expected_drawdown": -0.08,
+                    "position_limit": 0.18,
+                    "behavioral_compatibility": compatibility,
+                    "candidate": asdict(candidate),
+                    "llm_profile": llm_strategy_artifact["profile"],
+                    "generated_strategy_code": llm_strategy_artifact["code"],
+                    "llm_generation_summary": llm_strategy_artifact["summary"],
+                    "agent_model_map": self.llm_runtime.agent_matrix(),
+                    "task_model_map": self.llm_runtime.describe().get("tasks", {}),
+                    "trading_preferences": session.trading_preferences,
+                }
+                session.strategy_checks = self._run_strategy_checks(session)
+                failed_checks = [check for check in session.strategy_checks if check["status"] == "fail"]
+                session.strategy_training_log.append(
+                    {
+                        "timestamp": self._now_iso(),
+                        "iteration_no": iteration_no,
+                        "loop_index": loop_index + 1,
+                        "strategy_type": strategy_type,
+                        "iteration_mode": iteration_mode,
+                        "status": "rework_required" if failed_checks else "checked",
+                        "feedback": feedback or "",
+                        "llm_summary": llm_strategy_artifact["summary"],
+                        "failed_checks": [check["check_type"] for check in failed_checks],
+                    }
+                )
+                if not failed_checks and iteration_mode != "free":
+                    break
+            except Exception as exc:
+                last_error = str(exc)
+                session.strategy_training_log.append(
+                    {
+                        "timestamp": self._now_iso(),
+                        "iteration_no": iteration_no,
+                        "loop_index": loop_index + 1,
+                        "strategy_type": strategy_type,
+                        "iteration_mode": iteration_mode,
+                        "status": "error",
+                        "feedback": feedback or "",
+                        "error": last_error,
+                    }
+                )
+                session.phase = "strategy_rework_required"
+                raise ValueError(f"Strategy iteration failed: {last_error}") from exc
+        if last_error:
+            raise ValueError(last_error)
         session.phase = (
             "strategy_rework_required"
             if any(check["status"] == "fail" for check in session.strategy_checks)
@@ -273,6 +334,33 @@ class WorkflowService:
         session = self.get_session(session_id)
         session.intelligence_documents = [asdict(item) for item in self.intelligence.search(query, max_documents)]
         return session
+
+    def append_information_events(self, session_id: UUID, events: list[dict]) -> WorkflowSession:
+        session = self.get_session(session_id)
+        session.information_events.extend(events)
+        return session
+
+    def compose_market_template_campaign(
+        self,
+        day_count: int = 40,
+        required_shapes: list[str] | None = None,
+        required_regimes: list[str] | None = None,
+        baseline_open: float = 100.0,
+        seed: int = 11,
+    ) -> list[dict]:
+        return []
+
+    def market_template_coverage(self) -> dict:
+        return {
+            "status": "unavailable",
+            "required_shapes": ["w", "n", "v", "a", "box", "trend"],
+            "required_regimes": ["bull", "bear", "oscillation", "fake_reversal", "gap"],
+            "shape_counts": {},
+            "regime_counts": {},
+            "missing_shapes": ["w", "n", "v", "a", "box", "trend"],
+            "missing_regimes": ["bull", "bear", "oscillation", "fake_reversal", "gap"],
+            "matrix": [],
+        }
 
     def monitor_signals(self, session_id: UUID) -> list[dict]:
         session = self.get_session(session_id)
@@ -312,24 +400,49 @@ class WorkflowService:
             "pages/operations.html",
         ]
         missing_pages = [name for name in frontend_pages if not (static_dir / name).exists()]
+        modules = [
+            self._module_status("config", "ok", f"Loaded from {self.settings.config_path}.", "Keep deployment overrides aligned with the config contract."),
+            self._module_status("workflow_service", "ok", f"{self.__class__.__name__} is active.", "No action required."),
+            self._module_status("scenario_generator", "ok", "Scenario generator is attached with deterministic replay behavior.", "No action required."),
+            self._module_status("behavioral_profiler", "ok", "Behavioral profiler is attached.", "No action required."),
+            self._module_status(
+                "intelligence_agent",
+                "ok" if self.settings.intelligence_enabled else "warning",
+                "Intelligence agent is attached." if self.settings.intelligence_enabled else "Intelligence agent is present but disabled by config.",
+                "Enable intelligence in config if external news retrieval should participate in workflow." if not self.settings.intelligence_enabled else "No action required.",
+            ),
+            self._module_status("strategy_evolver", "ok", "Strategy evolver is attached.", "No action required."),
+            self._module_status("strategy_registry", "ok", f"Registered strategies: {', '.join(self.strategy_registry.list_types())}.", "Register new strategy implementations here before exposing them to workflow."),
+            self._module_status("monitoring_agents", "ok", "User, strategy, and market monitors are enabled in workflow.", "No action required."),
+            self._module_status("strategy_check_agents", "ok", "Integrity checker and stress/overfit checker are enforced before approval.", "No action required."),
+            self._module_status(
+                "web_module",
+                "ok" if not missing_pages else "error",
+                "Canonical web pages are present." if not missing_pages else f"Missing pages: {', '.join(missing_pages)}.",
+                "No action required." if not missing_pages else "Restore missing pages under src/sentinel_alpha/webapp/static/pages before shipping.",
+            ),
+            self._module_status(
+                "storage_layer",
+                "ok",
+                "In-memory workflow service is active. External persistence is optional in the current mode.",
+                "Switch to persistent_app only when you need PostgreSQL, TimescaleDB, Redis, and Qdrant persistence.",
+            ),
+        ]
+        modules.extend(self.llm_runtime.system_health_modules())
+        overall = "ok"
+        if any(item["status"] == "error" for item in modules):
+            overall = "degraded"
+        elif any(item["status"] == "warning" for item in modules):
+            overall = "warning"
         return {
-            "status": "ok",
+            "status": overall,
             "service_mode": self.settings.app_mode,
             "timestamp": self._now_iso(),
-            "modules": [
-                self._module_status("config", "ok", f"Loaded from {self.settings.config_path}.", "Keep deployment overrides aligned with the config contract."),
-                self._module_status("workflow_service", "ok", f"{self.__class__.__name__} is active.", "No action required."),
-                self._module_status("scenario_generator", "ok", "Scenario generator is attached with deterministic replay behavior.", "No action required."),
-                self._module_status("behavioral_profiler", "ok", "Behavioral profiler is attached.", "No action required."),
-                self._module_status("intelligence_agent", "ok" if self.settings.intelligence_enabled else "warning", "Intelligence agent is attached." if self.settings.intelligence_enabled else "Intelligence agent is present but disabled by config.", "Enable intelligence in config if external news retrieval should participate in workflow."),
-                self._module_status("strategy_evolver", "ok", "Strategy evolver is attached.", "No action required."),
-                self._module_status("strategy_registry", "ok", f"Registered strategies: {', '.join(self.strategy_registry.list_types())}.", "Register new strategy implementations here before exposing them to workflow."),
-                self._module_status("monitoring_agents", "ok", "User, strategy, and market monitors are enabled in workflow.", "No action required."),
-                self._module_status("strategy_check_agents", "ok", "Integrity checker and stress/overfit checker are enforced before approval.", "No action required."),
-                self._module_status("web_module", "ok" if not missing_pages else "error", "Canonical web pages are present." if not missing_pages else f"Missing pages: {', '.join(missing_pages)}.", "Restore missing pages under src/sentinel_alpha/webapp/static/pages before shipping."),
-                self._module_status("storage_layer", "warning", "In-memory workflow service is active. External persistence is not attached.", "Use persistent_app and provision PostgreSQL, TimescaleDB, Redis, and Qdrant for long-lived operation."),
-            ],
+            "modules": modules,
         }
+
+    def llm_config(self) -> dict:
+        return self.llm_runtime.describe()
 
     def _run_strategy_checks(self, session: WorkflowSession) -> list[dict]:
         behavior = (session.profile_evolution or {}).get("effective_profile") or session.behavioral_report or {}

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Sentinel-Alpha | 模拟测试</title>
+  <title>Sentinel-Alpha | 交易终端</title>
   <link rel="stylesheet" href="../styles.css" />
 </head>
 <body>
@@ -13,7 +13,7 @@
         <img class="shell-logo" src="../assets/logo.jpg" alt="Sentinel-Alpha logo" />
         <div>
           <p class="eyebrow">Sentinel-Alpha</p>
-          <h2>模拟测试模块</h2>
+          <h2>交易终端</h2>
         </div>
       </div>
       <div class="shell-nav" data-shell="nav"></div>
@@ -21,19 +21,23 @@
     </header>
     <section class="panel simulator-panel">
       <div class="simulator-head">
-        <p class="eyebrow">Simulation</p>
-        <h2>30-60 天日度决策模拟舱</h2>
-        <p id="simulation-note">请根据盘面、新闻和讨论信息，自主决定当天交易动作。</p>
+        <p class="eyebrow">Trading Desk</p>
+        <h2>30-60 天交易终端</h2>
+        <p id="simulation-note">请根据盘面、新闻和讨论信息，自主下单。</p>
       </div>
       <div class="simulator-toolbar">
         <div class="chip-row">
           <span class="status-chip outline-chip" id="campaign-chip">0 个交易日</span>
           <span class="status-chip outline-chip" id="step-chip">Step 1</span>
-          <span class="status-chip outline-chip" id="pause-chip">第 1 次暂停 / 5</span>
+          <span class="status-chip outline-chip" id="segment-chip">第 1 时段 / 5</span>
+        </div>
+        <div class="chart-mode-switch">
+          <button id="show-intraday-chart" class="chart-mode-button active" type="button">今日5分钟线</button>
+          <button id="show-daily-chart" class="chart-mode-button" type="button">切换日线图</button>
         </div>
       </div>
       <div class="grid simulator-grid">
-        <article class="panel simulation-stage">
+        <article class="panel simulation-stage" id="campaign-stage" hidden>
           <div class="chart-head">
             <div>
               <p class="eyebrow">Campaign Daily Chart</p>
@@ -53,7 +57,7 @@
             <svg id="campaign-chart" viewBox="0 0 720 250" role="img" aria-label="campaign daily chart"></svg>
           </div>
         </article>
-        <article class="panel simulation-stage">
+        <article class="panel simulation-stage" id="intraday-stage">
           <div class="chart-head">
             <div>
               <p class="eyebrow">Daily Trading Day</p>
@@ -77,6 +81,13 @@
             <span id="current-time">-</span>
             <span id="noise-channel">-</span>
           </div>
+          <div class="metric-strip chart-detail-strip">
+            <div class="mini-metric"><span>选中K线</span><strong id="selected-k-label">未选中</strong></div>
+            <div class="mini-metric"><span>开盘 / Open</span><strong id="selected-k-open">-</strong></div>
+            <div class="mini-metric"><span>最高 / High</span><strong id="selected-k-high">-</strong></div>
+            <div class="mini-metric"><span>最低 / Low</span><strong id="selected-k-low">-</strong></div>
+            <div class="mini-metric"><span>收盘 / Close</span><strong id="selected-k-close">-</strong></div>
+          </div>
           <div class="metric-strip tape-strip">
             <div class="mini-metric"><span>开盘缺口</span><strong id="open-gap">0%</strong></div>
             <div class="mini-metric"><span>振幅</span><strong id="day-range">0%</strong></div>
@@ -85,34 +96,8 @@
           </div>
         </article>
         <aside class="panel control-panel">
-          <div class="noise-card">
-            <p class="eyebrow">Narrative Pressure</p>
-            <strong id="noise-headline">-</strong>
-            <p id="noise-body">-</p>
-            <div class="noise-meta">
-              <span id="noise-sentiment">-</span>
-            </div>
-          </div>
-          <div class="headline-card">
-            <p class="eyebrow">Headline Feed</p>
-            <div id="headline-feed" class="headline-feed">
-              <article class="headline-item">
-                <strong>等待新闻流。</strong>
-                <p>开盘后这里会显示当天的重要资讯。</p>
-              </article>
-            </div>
-          </div>
-          <div class="discussion-card">
-            <p class="eyebrow">Community Noise</p>
-            <div id="discussion-feed" class="discussion-feed">
-              <article class="discussion-item">
-                <strong>等待讨论流。</strong>
-                <p>开盘后这里会显示社区讨论和盘中观点。</p>
-              </article>
-            </div>
-          </div>
           <div class="action-card">
-            <p class="eyebrow">Trade Config</p>
+            <p class="eyebrow">Order Ticket</p>
             <div class="trade-config">
               <label class="config-field">
                 <span>下单模式</span>
@@ -122,8 +107,8 @@
                 </select>
               </label>
               <label class="config-field">
-                <span>模拟本金</span>
-                <input id="capital-input" type="number" min="10000" step="10000" value="500000" />
+                <span>账户资金</span>
+                <input id="capital-input" type="number" min="30000" step="10000" value="30000" disabled />
               </label>
               <label class="config-field">
                 <span id="order-value-label">本次交易金额 (CNY)</span>
@@ -134,30 +119,60 @@
                 <input id="limit-price-input" type="number" min="0.01" step="0.01" value="100.00" />
               </label>
             </div>
-            <p class="profiler-note compact-note">测试开始后，模拟本金会锁定。所有交易都按你输入的限价单撮合，未触发不会成交。</p>
+            <p class="profiler-note compact-note">账户资金固定为 30000。所有交易按限价单撮合，未触发不会成交。</p>
             <div class="action-buttons">
-              <button id="buy-day">今天买入 / 加仓</button>
-              <button id="sell-day">今天按输入卖出</button>
-              <button id="hold-day">本次暂停不交易</button>
+              <button id="buy-day">买入 / 加仓</button>
+              <button id="sell-day">按输入卖出</button>
+              <button id="hold-day">暂不下单</button>
             </div>
             <div class="action-buttons secondary">
+              <button id="next-segment">进入下一段</button>
+              <button id="end-day">结束今天</button>
               <button id="skip-day">直接跳过今天</button>
               <button id="sell-all-day">一键全卖</button>
-              <button id="reset-sim">重新生成整段测试</button>
-              <button id="complete-simulation">生成测试报告</button>
+              <button id="reset-sim">重新加载行情</button>
+              <button id="complete-simulation">生成报告</button>
             </div>
           </div>
-          <div class="impact-card">
-            <p class="eyebrow">Position</p>
-            <p><strong id="position-state">Flat</strong></p>
-            <p>可用现金: <span id="cash-state">0</span></p>
-            <p>仓位占比: <span id="size-state">0%</span></p>
-            <p>Account Equity: <span id="equity-state">0</span></p>
-            <p>Net PnL: <span id="pnl-state">0</span></p>
-            <p>Unrealized: <span id="day-unrealized">0</span></p>
-            <p>Cost: <span id="cost-state">0</span></p>
-          </div>
         </aside>
+      </div>
+      <div class="market-grid">
+        <div class="noise-card">
+          <p class="eyebrow">市场焦点</p>
+          <strong id="noise-headline">-</strong>
+          <p id="noise-body">-</p>
+          <div class="noise-meta">
+            <span id="noise-sentiment">-</span>
+          </div>
+        </div>
+        <div class="impact-card">
+          <p class="eyebrow">持仓</p>
+          <p><strong id="position-state">Flat</strong></p>
+          <p>可用现金: <span id="cash-state">0</span></p>
+          <p>仓位占比: <span id="size-state">0%</span></p>
+          <p>账户权益: <span id="equity-state">0</span></p>
+          <p>净盈亏: <span id="pnl-state">0</span></p>
+          <p>浮动盈亏: <span id="day-unrealized">0</span></p>
+          <p>成本: <span id="cost-state">0</span></p>
+        </div>
+        <div class="headline-card">
+          <p class="eyebrow">新闻</p>
+          <div id="headline-feed" class="headline-feed">
+            <article class="headline-item">
+              <strong>等待新闻流。</strong>
+              <p>开盘后这里会显示当天的重要资讯。</p>
+            </article>
+          </div>
+        </div>
+        <div class="discussion-card">
+          <p class="eyebrow">聊天与讨论</p>
+          <div id="discussion-feed" class="discussion-feed">
+            <article class="discussion-item">
+              <strong>等待讨论流。</strong>
+              <p>开盘后这里会显示社区讨论和盘中观点。</p>
+            </article>
+          </div>
+        </div>
       </div>
       <div class="metric-strip">
         <div class="mini-metric"><span>开盘价 / Open</span><strong id="day-open">0</strong></div>
@@ -174,8 +189,8 @@
       <div class="panel log-table-wrap">
         <div class="section-head">
           <div>
-            <p class="eyebrow">Daily Decision Log</p>
-            <h3>日度决策记录</h3>
+            <p class="eyebrow">Trade Log</p>
+            <h3>交易记录</h3>
           </div>
         </div>
         <table class="log-table">
