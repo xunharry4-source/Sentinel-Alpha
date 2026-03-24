@@ -27,7 +27,7 @@ def test_workflow_uses_local_history_backtest_when_available(tmp_path: Path) -> 
     provider_configs = dict(settings.market_data_provider_configs)
     provider_configs["local_file"] = {
         "enabled": True,
-        "api_key_env": "",
+        "api_key_envs": [],
         "base_path": str(tmp_path),
         "quote_filename": "{symbol}_quote.json",
         "history_filename": "{symbol}_{interval}.csv",

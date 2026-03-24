@@ -109,7 +109,7 @@ async function generateDataSourceRun() {
         provider_name: document.querySelector("#ds-provider-name").value,
         category: document.querySelector("#ds-category").value,
         base_url: document.querySelector("#ds-base-url").value,
-        api_key_env: document.querySelector("#ds-api-key-env").value || null,
+        api_key_envs: (document.querySelector("#ds-api-key-env").value || "").split(/[\n,]/).map((item) => item.trim()).filter(Boolean),
         docs_summary: document.querySelector("#ds-docs-summary").value || null,
         docs_url: document.querySelector("#ds-docs-url").value || null,
         sample_endpoint: document.querySelector("#ds-sample-endpoint").value || null,

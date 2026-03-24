@@ -15,7 +15,7 @@ class TradingTerminalIntegrationRequest:
     official_docs_url: str
     docs_search_url: str | None
     api_base_url: str
-    api_key_env: str | None
+    api_key_envs: list[str]
     auth_style: str
     order_endpoint: str
     cancel_endpoint: str
@@ -29,6 +29,9 @@ class TradingTerminalIntegrationRequest:
 
 class TradingTerminalIntegrationAgent:
     """Generates terminal adapter code, tests, config, and documentation context."""
+
+    def _normalized_api_key_envs(self, envs: list[str] | None) -> list[str]:
+        return [str(item).strip() for item in (envs or []) if str(item).strip()]
 
     def build_terminal_package(self, request: TradingTerminalIntegrationRequest) -> dict:
         slug = self._slugify(request.terminal_name)
@@ -261,10 +264,10 @@ class TradingTerminalIntegrationAgent:
         class_name: str,
         docs_context: dict,
     ) -> str:
+        envs = self._normalized_api_key_envs(request.api_key_envs)
         api_key_line = (
-            f'        self.api_key = os.getenv("{request.api_key_env}", "")\n'
-            if request.api_key_env
-            else '        self.api_key = ""\n'
+            f"        self.api_keys = [os.getenv(name, \"\") for name in {envs!r}]\n"
+            "        self.api_key = next((value for value in self.api_keys if value), \"\")\n"
         )
         auth_block = self._auth_injection(request.auth_style)
         docs_note = self._compact_text(request.docs_summary) or "No docs summary provided."
@@ -356,7 +359,7 @@ class TradingTerminalIntegrationAgent:
             "enabled": True,
             "terminal_type": request.terminal_type,
             "base_url": request.api_base_url,
-            "api_key_env": request.api_key_env or "",
+            "api_key_envs": self._normalized_api_key_envs(request.api_key_envs),
             "auth_style": request.auth_style,
             "official_docs_url": request.official_docs_url,
             "docs_search_url": request.docs_search_url or "",

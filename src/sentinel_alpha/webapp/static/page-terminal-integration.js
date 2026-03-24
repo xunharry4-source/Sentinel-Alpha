@@ -81,7 +81,7 @@ function renderTerminalIntegrationPage(snapshot) {
       "terminal-readiness-summary",
       run.integration_readiness_summary
         ? [
-            `runtime / ${run.terminal_runtime_summary?.status || "unknown"} / ${run.terminal_runtime_summary?.note || "无"}`,
+            `runtime / ${run.terminal_runtime_summary?.status || "unknown"} / ${run.terminal_runtime_summary?.note || "无"} / contract_confidence=${run.terminal_runtime_summary?.contract_confidence ?? "none"} / shape_confidence=${run.terminal_runtime_summary?.shape_confidence ?? "none"}`,
             `status / ${run.integration_readiness_summary.status || "unknown"}`,
             `base_url_ok / ${run.integration_readiness_summary.base_url_ok ? "yes" : "no"}`,
             `docs_fetch_ok / ${run.integration_readiness_summary.docs_fetch_ok ? "yes" : "no"}`,
@@ -89,7 +89,8 @@ function renderTerminalIntegrationPage(snapshot) {
             `endpoints / ${run.integration_readiness_summary.endpoint_count || 0}/${run.integration_readiness_summary.required_endpoint_count || 0}`,
             `missing / ${(run.integration_readiness_summary.missing_endpoints || []).join(", ") || "none"}`,
             `field_map / ${Object.entries(run.config_candidate?.provider_config?.response_field_map || {}).map(([key, value]) => `${key}=${value}`).join(", ") || "none"}`,
-            `next / ${run.terminal_runtime_summary?.next_action || "none"}`,
+            `next / ${(run.terminal_reliability_summary?.next_action || run.terminal_runtime_summary?.next_action) || "none"}`,
+            `reliability / ${run.terminal_reliability_summary?.status || "unknown"} / ${run.terminal_reliability_summary?.note || "无"} / revalidate=${run.terminal_reliability_summary?.revalidation_required ? "yes" : "no"}`,
             ...((run.integration_readiness_summary.actions || []).map((item) => `action / ${item}`)),
           ]
         : [],
@@ -184,7 +185,7 @@ async function generateTerminalRun() {
         official_docs_url: document.querySelector("#terminal-docs-url").value,
         docs_search_url: document.querySelector("#terminal-search-url").value || null,
         api_base_url: document.querySelector("#terminal-base-url").value,
-        api_key_env: document.querySelector("#terminal-api-key-env").value || null,
+        api_key_envs: (document.querySelector("#terminal-api-key-env").value || "").split(/[\n,]/).map((item) => item.trim()).filter(Boolean),
         auth_style: document.querySelector("#terminal-auth-style").value,
         order_endpoint: document.querySelector("#terminal-order-endpoint").value,
         cancel_endpoint: document.querySelector("#terminal-cancel-endpoint").value,

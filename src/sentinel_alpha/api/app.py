@@ -5,6 +5,7 @@ from uuid import UUID
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+import re
 
 from sentinel_alpha.api.schemas import (
     BehaviorEventIn,
@@ -51,13 +52,78 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
     config_validator = ConfigValidator()
     app.state.observability = initialize_observability(app, settings)
 
+    def _sanitize_llm_env_names(payload: object, provider_env_index: dict[str, dict[str, str]]) -> object:
+        """Mask configured env var names in externally exposed payloads.
+
+        We preserve the fact that multiple credentials exist and which numbered credential was used
+        (provider#keyN), but we do not leak the actual environment variable names.
+        """
+
+        def _mask_env_name(raw: object) -> object:
+            if raw is None:
+                return None
+            text = str(raw).strip()
+            if not text:
+                return text
+            for provider, mapping in provider_env_index.items():
+                if text in mapping:
+                    return mapping[text]
+            # Keep non-env style labels (like "google#invalid_1") but redact anything that looks like a secret.
+            if re.fullmatch(r"[A-Z_][A-Z0-9_]*", text):
+                return "<redacted_env>"
+            if "AIza" in text or len(text) > 64:
+                return "<redacted>"
+            return text
+
+        if isinstance(payload, dict):
+            sanitized: dict = {}
+            for key, value in payload.items():
+                if key in {
+                    "api_key_envs",
+                    "active_api_key_env",
+                    "attempted_api_key_envs",
+                    "active_api_key_envs",
+                    "available_api_key_envs",
+                    "configured_api_key_envs",
+                }:
+                    if isinstance(value, list):
+                        sanitized[key] = [_mask_env_name(item) for item in value]
+                        continue
+                    sanitized[key] = _mask_env_name(value)
+                    continue
+                sanitized[key] = _sanitize_llm_env_names(value, provider_env_index)
+            return sanitized
+        if isinstance(payload, list):
+            return [_sanitize_llm_env_names(item, provider_env_index) for item in payload]
+        return payload
+
+    def _sanitize_llm_config(cfg: dict) -> dict:
+        providers = cfg.get("providers") if isinstance(cfg, dict) else None
+        provider_env_index: dict[str, dict[str, str]] = {}
+        if isinstance(providers, dict):
+            for provider, info in providers.items():
+                if not isinstance(info, dict):
+                    continue
+                raw_envs = info.get("api_key_envs")
+                if not isinstance(raw_envs, list):
+                    continue
+                mapping: dict[str, str] = {}
+                for idx, raw in enumerate(raw_envs, 1):
+                    name = str(raw).strip()
+                    if not name:
+                        continue
+                    mapping[name] = f"{provider}#key{idx}"
+                provider_env_index[str(provider)] = mapping
+        sanitized = _sanitize_llm_env_names(cfg, provider_env_index)
+        return sanitized if isinstance(sanitized, dict) else cfg
+
     def health_payload() -> dict:
-        persistent = hasattr(resolved_service, "workflow_store")
-        database_status = "configured" if persistent else "not_configured"
+        backend = str(getattr(resolved_service, "session_store_backend", "memory"))
+        database_status = "configured" if backend in {"redis", "file"} else "not_configured"
         database_detail = (
-            "Persistent workflow service is enabled. PostgreSQL, TimescaleDB, Redis, and Qdrant adapters are attached."
-            if persistent
-            else "In-memory workflow service is active. No external database layer is attached."
+            f"Workflow sessions persist via {backend} backend."
+            if database_status == "configured"
+            else "In-memory workflow service is active. No persistence backend is attached."
         )
         return {
             "status": "ok",
@@ -87,6 +153,8 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
             starting_capital=session.starting_capital,
             scenarios=session.scenarios,
             behavioral_report=session.behavioral_report,
+            behavioral_user_report=session.behavioral_user_report,
+            behavioral_system_report=session.behavioral_system_report,
             trading_preferences=session.trading_preferences,
             trade_universe=session.trade_universe,
             strategy_package=session.strategy_package,
@@ -124,15 +192,63 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
 
     @app.get("/api/system-health")
     def system_health() -> dict:
-        return resolved_service.system_health()
+        # Mask any credential env var names that might appear in token usage snapshots.
+        health = resolved_service.system_health()
+        try:
+            cfg = resolved_service.llm_config()
+            provider_index = _sanitize_llm_config(cfg)
+            # Use the already-built provider mapping from the sanitized llm-config to mask health.
+            providers = provider_index.get("providers") if isinstance(provider_index, dict) else None
+            provider_env_index: dict[str, dict[str, str]] = {}
+            if isinstance(providers, dict):
+                for provider, info in providers.items():
+                    if not isinstance(info, dict):
+                        continue
+                    # Here api_key_envs are already masked as provider#keyN; build a "no-op" mapping.
+                    mapping: dict[str, str] = {}
+                    raw_envs = info.get("api_key_envs")
+                    if isinstance(raw_envs, list):
+                        for raw in raw_envs:
+                            name = str(raw).strip()
+                            if name:
+                                mapping[name] = name
+                    provider_env_index[str(provider)] = mapping
+            return _sanitize_llm_env_names(health, provider_env_index)  # type: ignore[return-value]
+        except Exception:
+            return health
 
     @app.get("/api/llm-config")
     def llm_config() -> dict:
-        return resolved_service.llm_config()
+        cfg = resolved_service.llm_config()
+        try:
+            return _sanitize_llm_config(cfg)
+        except Exception:
+            return cfg
 
     @app.get("/api/config")
     def get_config() -> dict:
-        payload = read_config_payload()
+        def _sanitize(obj):
+            if isinstance(obj, dict):
+                sanitized = {}
+                for key, value in obj.items():
+                    if key == "api_key_envs" and isinstance(value, list):
+                        rendered = []
+                        for item in value:
+                            raw = str(item or "").strip()
+                            if re.fullmatch(r"[A-Z_][A-Z0-9_]*", raw):
+                                rendered.append(raw)
+                            elif raw:
+                                # Never return inline secrets or invalid config entries.
+                                rendered.append("<redacted>")
+                        sanitized[key] = rendered
+                        continue
+                    sanitized[key] = _sanitize(value)
+                return sanitized
+            if isinstance(obj, list):
+                return [_sanitize(item) for item in obj]
+            return obj
+
+        payload = _sanitize(read_config_payload())
         validation = config_validator.validate(get_settings())
         return {"payload": payload, "validation": validation}
 
@@ -298,6 +414,8 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
                     noise_level=payload.noise_level,
                     sentiment_pressure=payload.sentiment_pressure,
                     latency_seconds=payload.latency_seconds,
+                    execution_status=payload.execution_status,
+                    execution_reason=payload.execution_reason,
                 ),
             )
             return snapshot(session_id)
@@ -313,6 +431,8 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Session not found.") from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @app.post("/api/sessions/{session_id}/trading-preferences", response_model=SessionSnapshot)
     def set_trading_preferences(session_id: UUID, payload: TradingPreferenceRequest) -> SessionSnapshot:
@@ -357,6 +477,8 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Session not found.") from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @app.post("/api/sessions/{session_id}/market-snapshots", response_model=SessionSnapshot)
     def append_market_snapshot(session_id: UUID, payload: MarketSnapshotIn) -> SessionSnapshot:
@@ -387,6 +509,8 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
             return snapshot(session_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Session not found.") from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @app.post("/api/sessions/{session_id}/intelligence/financials", response_model=SessionSnapshot)
     def fetch_financials_data(session_id: UUID, payload: MarketDataLookupRequest) -> SessionSnapshot:
@@ -490,7 +614,7 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
                 provider_name=payload.provider_name,
                 category=payload.category,
                 base_url=payload.base_url,
-                api_key_env=payload.api_key_env,
+                api_key_envs=payload.api_key_envs,
                 docs_summary=payload.docs_summary,
                 docs_url=payload.docs_url,
                 sample_endpoint=payload.sample_endpoint,
@@ -527,7 +651,7 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
                 official_docs_url=payload.official_docs_url,
                 docs_search_url=payload.docs_search_url,
                 api_base_url=payload.api_base_url,
-                api_key_env=payload.api_key_env,
+                api_key_envs=payload.api_key_envs,
                 auth_style=payload.auth_style,
                 order_endpoint=payload.order_endpoint,
                 cancel_endpoint=payload.cancel_endpoint,
@@ -600,7 +724,11 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
     def get_behavioral_report_json(session_id: UUID) -> dict:
         try:
             session = resolved_service.get_session(session_id)
-            return {"behavioral_report": session.behavioral_report}
+            return {
+                "behavioral_report": session.behavioral_report,
+                "behavioral_user_report": session.behavioral_user_report,
+                "behavioral_system_report": session.behavioral_system_report,
+            }
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Session not found.") from exc
 

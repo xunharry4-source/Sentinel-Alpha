@@ -108,8 +108,14 @@
             <strong id="token-provider-count">0</strong>
           </div>
         </div>
+        <ul id="token-usage-summary-list" class="result-list">
+          <li>当前还没有 token 汇总。</li>
+        </ul>
         <ul id="token-usage-list" class="result-list">
           <li>当前还没有 token 使用记录。</li>
+        </ul>
+        <ul id="llm-recent-calls-list" class="result-list">
+          <li>当前还没有 LLM 最近调用。</li>
         </ul>
       </article>
       <article class="panel">
@@ -137,6 +143,23 @@
         <ul id="data-health-list" class="result-list">
           <li>当前还没有数据健康摘要。</li>
         </ul>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Agent Debug</p>
+        <h3>DEBUG 节点视图</h3>
+        <div class="action-buttons secondary compact-actions">
+          <button id="toggle-debug-mode">开启 DEBUG 模式</button>
+        </div>
+        <div id="agent-debug-shell" hidden>
+          <p class="profiler-note">显示各 Agent 节点状态、最近执行链和失败焦点，便于像 Dify 一样定位卡点。</p>
+          <section class="check-grid" id="agent-debug-grid"></section>
+          <ul id="agent-debug-trace-list" class="result-list">
+            <li>当前还没有 DEBUG Trace。</li>
+          </ul>
+          <ul id="agent-debug-focus-list" class="result-list">
+            <li>当前还没有失败焦点。</li>
+          </ul>
+        </div>
       </article>
       <article class="panel">
         <p class="eyebrow">Recent Logs</p>

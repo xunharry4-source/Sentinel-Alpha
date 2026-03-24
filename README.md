@@ -30,6 +30,23 @@ Observability now includes:
 - Sentry error reporting integration
 - LangFuse tracing hooks for intelligence and strategy LLM tasks
 - runtime LLM health summary with live-vs-fallback task visibility
+- cumulative LLM API request and token totals in runtime health and page summaries
+- LLM runtime quality signals including fallback ratio, recent fallback pressure, and cache-hit efficiency
+- split-level backtest sample-density visibility for sparse validation/test windows
+- data-health staleness detection with stale-source and max-stale-hours visibility
+- runtime-health age tracking for research, repair, and terminal outputs so stale results degrade long-running confidence
+- runtime-health recovery actions so each weak chain exposes a next-step revalidation route, including explicit revalidation_required flags
+
+## No-Fabrication Policy (Must-Follow)
+
+This repo forbids “looks fine” claims when the system is not actually producing live outputs or when errors exist.
+
+- Never label template/heuristic results as live LLM analysis; reports must expose `report_generation_mode`, `analysis_status`, `analysis_warning`, and `llm_invocation`.
+- Never claim Redis-backed persistence unless Redis is running and verified (`redis-cli ping -> PONG`) and `SENTINEL_REDIS_URL` is active.
+- Never claim full-flow success unless the UI click chain is verified (not only API endpoints).
+- Never swallow errors: UI must surface request failures; backend must return explicit status and keep failure detail.
+
+Full policy: `docs/no-fabrication.md`.
 
 The code mutation layer now includes a controlled `Programmer Agent` backed by `Aider`-style local editing flow:
 
@@ -68,6 +85,15 @@ Additional free datasets now include:
 
 - behavioral stress scenario generation
 - behavioral profiling
+- execution-aware behavioral simulation with:
+  - real latency capture per segment
+  - execution status and execution reason
+  - execution-quality ratios
+  - high-noise execution vs hold ratios
+- simulation execution-quality tracking with:
+  - `execution_status`
+  - `execution_reason`
+  - executed / partial-fill / rejected / unfilled ratios
 - explicit trading-frequency and timeframe preference flow
 - behavior-based recommendation of trading rhythm
 - behavior-based recommendation of default strategy type
@@ -87,7 +113,7 @@ Additional free datasets now include:
 - terminal integration readiness summary before smoke testing
 - terminal response-shape checks for positions, balances, and order-status
 - configurable terminal `response_field_map` for provider-specific payload layouts
-- terminal runtime summary with status, next action, and primary repair route
+- terminal runtime summary with status, next action, primary repair route, contract confidence, and shape confidence
 - PostgreSQL / TimescaleDB / Qdrant / Redis persistence adapters
 - dedicated frontend web module
 
@@ -129,6 +155,15 @@ The largest remaining hard problems are:
 - making Programmer Agent more autonomous and harder to destabilize
 - pushing terminal integration from strong smoke-level integration toward stronger real-endpoint confidence
 - strengthening long-running platform recovery and sustained-operation behavior
+
+Behavioral simulation is no longer treated as coarse `buy / sell / hold` intent only. The current platform also preserves execution quality, so profiling can distinguish:
+
+- true executed behavior
+- partial execution under liquidity pressure
+- unfilled limit behavior
+- rejected order behavior
+
+That execution-quality summary is surfaced both in the behavioral report and in the downstream strategy input view.
 
 ## Main Docs
 
@@ -345,6 +380,7 @@ The reusable platform rule is:
 - change strategy logic, code, parameters, and prompts when evolving strategy families
 - avoid changing workflow phases, monitoring contracts, archival contracts, or approval gates unless the platform architecture itself is being redesigned
 - avoid changing risk, audit, and dataset-protocol contracts unless the platform architecture itself is being redesigned
+- treat testing as a tool for finding system errors, weaknesses, vulnerabilities, and possible latent defects as thoroughly as practical, not as a hurdle to bypass or a reason to hide problems
 
 The strategy evaluation protocol is:
 
@@ -356,6 +392,7 @@ The strategy evaluation protocol is:
   - `walk_forward`
   windows
 - prefer the strongest valid `test` score, then use validation and walk-forward stability as rejection guards
+- if tests expose breakage, instability, vulnerabilities, or weak assumptions, fix the underlying issue instead of narrowing, skipping, weakening, or gaming the test
 
 Every iteration writes:
 
@@ -398,3 +435,13 @@ PYTHONDONTWRITEBYTECODE=1 python -m py_compile src/sentinel_alpha/**/*.py tests/
 node --check src/sentinel_alpha/webapp/static/script.js
 node --check src/sentinel_alpha/webapp/static/session-shell.js
 ```
+
+- backtest quality signals such as concentration, exposure, and turnover should also influence robustness and release-gate decisions
+
+- Programmer Agent should emit a unified repair_chain_summary so promotion, rollback, review, and auto-continue decisions are readable as one chain-level conclusion
+
+- terminal integration should expose a unified terminal_reliability_summary so readiness, smoke status, field mapping, and contract confidence collapse into one sustained-use decision
+
+- research summaries should expose a unified research_reliability_summary so coverage, backtest binding, backtest quality, and robustness collapse into one trust decision
+
+- runtime health should expose a unified runtime_recovery_summary so overall continue/revalidate/stabilize/pause decisions are explicit

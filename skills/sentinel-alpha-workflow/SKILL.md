@@ -11,6 +11,82 @@ Use this skill when the task concerns the full product flow of Sentinel-Alpha ra
 
 Treat the product as a behavior-aligned trading system, not a generic backtester and not a questionnaire.
 
+## Anti-Fabrication Rule (No Cheating)
+
+This project forbids “looks fine” claims when the system is not actually producing live outputs or when errors exist.
+
+Testing rule:
+
+- the purpose of testing is to find real system errors, regressions, vulnerabilities, weak assumptions, and possible latent defects as thoroughly as practical
+- do not treat tests as a box-checking exercise or something to weaken just to get a passing result
+- testing should actively try to expose edge cases, failure paths, hidden coupling, and other likely defect surfaces rather than only confirming the happy path
+- if a test fails because it exposed a real problem, fix the problem or surface the limitation explicitly instead of hiding it
+
+### Banned behaviors
+
+- Do not claim “LLM analysis completed” when `report_generation_mode != live_llm`.
+- Do not claim “Redis persistence verified” unless Redis is actually running and `SENTINEL_REDIS_URL` is in effect.
+- Do not claim “full-flow tested” if only API calls were tested; UI click chains must be verified for user-facing claims.
+- Do not claim “no errors” if the frontend shows a global error banner or any API call returns non-2xx.
+- Do not label template/heuristic outputs as “analysis” without explicitly labeling the generation mode.
+- Do not hide or swallow failures; errors must surface in UI and in session logs.
+
+### Required evidence for any “works” claim
+
+- For any report output (behavioral / intelligence / research):
+  - record:
+    - `report_generation_mode`
+    - `analysis_status`
+    - `analysis_warning`
+    - `llm_invocation.actual_generation_mode`
+    - `llm_invocation.fallback_reason`
+- For any persistence claim:
+  - prove restart survival:
+    - create session
+    - restart API
+    - fetch the same `session_id` successfully
+- For any Docker/Redis claim:
+  - show:
+    - `docker compose ps redis`
+    - `docker compose exec -T redis redis-cli ping` returning `PONG`
+- For any UI claim:
+  - verify the page with a real `session_id`:
+    - the page shows `Current Session`
+    - the expected panel is populated
+    - no `Session not found` banner is shown
+
+### Known failure modes that must never recur
+
+- Behavioral report was rule-based while other agents used live LLM. This mismatch must be fixed, not explained away.
+- Sessions were stored only in memory; after API restart, refresh caused `Session not found`. This must be prevented via persistence.
+- Redis was not running, yet “Redis verified” was claimed. Redis must be started before asserting Redis-backed persistence.
+- UI pages ignored URL `?session_id=` and read only localStorage, causing hidden session mismatch. URL/cookie session source must be authoritative.
+- Frontend failures were silently swallowed without user-visible error. This must not happen.
+
+Behavior rule:
+
+- behavioral simulation is not complete if it only records coarse `buy / sell / hold`
+- the workflow should preserve both:
+  - user intent
+  - execution quality
+- simulation events should retain:
+  - `execution_status`
+  - `execution_reason`
+  - real `latency_seconds` from current segment dwell time
+- behavioral reporting should distinguish:
+  - true executed behavior
+  - partial execution under liquidity constraints
+  - unfilled limit behavior
+  - rejected order behavior
+  - impulsive fast execution
+  - hesitant delayed execution
+  - high-noise execution vs high-noise patience
+- execution-quality summaries should remain visible in:
+  - the behavioral report
+  - the report page
+  - the downstream strategy input view
+- simulation noise panels should not remain static decorations; they should reflect whether recent behavior was noise-driven execution, probing orders, or high-noise restraint
+
 ## Configuration Rule
 
 Do not hardcode runtime endpoints, DSNs, ports, or workflow thresholds inside application logic.
@@ -78,6 +154,7 @@ Required rule:
   - recent agent logs
   - recent errors
   - token usage summary
+  - output provenance (rule-based vs fallback vs live LLM)
 
 Production observability rule:
 
@@ -92,6 +169,12 @@ Production observability rule:
 - monitoring work is incomplete if the user still cannot tell which layer failed and why
 - production observability should include dashboards, alerting, tracing, and operator diagnosis paths
 - runtime-health summaries should also include LLM execution health so users can tell whether key tasks are running on live providers or fallback paths
+- LLM runtime summaries should expose cumulative API request count, total token count, and live-vs-fallback request counts
+- LLM runtime summaries should also expose quality signals such as fallback ratio, recent fallback pressure, and cache-hit efficiency
+- backtest coverage summaries should expose split-level sample density and sparse validation/test warnings, not only total bars and symbol counts
+- data-health summaries should expose data staleness, stale sources, and max stale age instead of only raw timestamps
+- runtime-health summaries should expose age-hours for research, repair, and terminal outputs so old results do not look falsely healthy
+- runtime-health summaries should also expose recovery actions so each weak chain has an explicit next-step revalidation route and explicit revalidation_required flags
 
 ## Web Module Rule
 
@@ -215,6 +298,8 @@ Required rule:
   - terminal health status
   - next action
   - primary repair route
+  - contract confidence
+  - shape confidence
 - terminal repair summaries should be visible on:
   - terminal integration page
   - system health page
@@ -958,3 +1043,13 @@ Use this handoff structure between phases:
   }
 }
 ```
+
+- Backtest quality signals such as concentration, exposure, and turnover should be treated as first-class research constraints, not only display metrics
+
+- Programmer Agent results should expose a unified repair_chain_summary so chain-level decisions do not require manual stitching across multiple sub-summaries
+
+- terminal integration results should expose a unified terminal_reliability_summary so long-running terminal decisions do not require manual stitching across readiness, runtime, and smoke-test summaries
+
+- research results should expose a unified research_reliability_summary so users do not need to manually stitch trust signals across coverage, binding, quality, and robustness blocks
+
+- runtime-health outputs should expose a unified runtime_recovery_summary so long-running decisions do not require manual stitching across five module summaries

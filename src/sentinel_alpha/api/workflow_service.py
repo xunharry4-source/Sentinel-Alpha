@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 import importlib.util
+import json
+import os
 from pathlib import Path
 import subprocess
 from uuid import UUID, uuid4
@@ -46,6 +48,8 @@ class WorkflowSession:
     scenarios: list[dict] = field(default_factory=list)
     behavior_events: list[BehaviorEvent] = field(default_factory=list)
     behavioral_report: dict | None = None
+    behavioral_user_report: dict | None = None
+    behavioral_system_report: dict | None = None
     trading_preferences: dict | None = None
     trade_universe: dict | None = None
     strategy_package: dict | None = None
@@ -75,6 +79,11 @@ class WorkflowService:
     def __init__(self) -> None:
         self.sessions: dict[UUID, WorkflowSession] = {}
         self.settings = get_settings()
+        self._session_store_dir = self._resolve_session_store_dir()
+        self._session_store_dir.mkdir(parents=True, exist_ok=True)
+        self._redis_client = self._resolve_redis_client()
+        self.session_store_backend = "redis" if self._redis_client is not None else "file"
+        self._load_persisted_sessions()
         self.generator = ScenarioGenerator(seed=11)
         self.scenario_director = ScenarioDirectorAgent(self.generator)
         self.noise_agent = NoiseAgent()
@@ -113,20 +122,157 @@ class WorkflowService:
             "intelligence_misses": 0,
         }
 
+    def _resolve_session_store_dir(self) -> Path:
+        # Default to a repo-local directory next to settings.toml so sessions survive API restarts.
+        # This is intentionally lightweight and avoids Postgres/Redis/Qdrant dependencies.
+        try:
+            config_path = Path(str(self.settings.config_path)).expanduser().resolve()
+            return config_path.parent / "session_store"
+        except Exception:
+            return Path.cwd() / "config" / "session_store"
+
+    def _session_store_path(self, session_id: UUID) -> Path:
+        return self._session_store_dir / f"{session_id}.json"
+
+    def _redis_key(self, session_id: UUID) -> str:
+        return f"sentinel_alpha:session:{session_id}"
+
+    def _redis_index_key(self) -> str:
+        return "sentinel_alpha:sessions:index"
+
+    def _resolve_redis_client(self):
+        redis_url = str(getattr(self.settings, "redis_url", "") or "").strip()
+        if not redis_url:
+            return None
+        try:
+            import redis  # type: ignore
+        except Exception:
+            return None
+        try:
+            client = redis.Redis.from_url(redis_url, socket_timeout=0.5, decode_responses=True)
+            client.ping()
+            return client
+        except Exception:
+            return None
+
+    def _serialize_session(self, session: WorkflowSession) -> dict:
+        payload = asdict(session)
+        payload["session_id"] = str(session.session_id)
+        return payload
+
+    def _deserialize_session(self, payload: dict) -> WorkflowSession | None:
+        if not isinstance(payload, dict) or "session_id" not in payload:
+            return None
+        try:
+            session_id = UUID(str(payload.get("session_id")))
+        except Exception:
+            return None
+        fields = WorkflowSession.__dataclass_fields__.keys()
+        data: dict[str, object] = {key: payload.get(key) for key in fields if key in payload}
+        data["session_id"] = session_id
+        events_raw = payload.get("behavior_events") or []
+        if isinstance(events_raw, list):
+            events: list[BehaviorEvent] = []
+            for item in events_raw:
+                if isinstance(item, dict):
+                    try:
+                        events.append(BehaviorEvent(**item))
+                    except Exception:
+                        continue
+            data["behavior_events"] = events
+        try:
+            return WorkflowSession(**data)  # type: ignore[arg-type]
+        except Exception:
+            return None
+
+    def _persist_session(self, session: WorkflowSession) -> None:
+        try:
+            path = self._session_store_path(session.session_id)
+            tmp_path = path.with_suffix(".json.tmp")
+            payload = self._serialize_session(session)
+            tmp_path.write_text(json.dumps(payload, ensure_ascii=False, default=str), encoding="utf-8")
+            os.replace(tmp_path, path)
+            if self._redis_client is not None:
+                key = self._redis_key(session.session_id)
+                self._redis_client.set(key, json.dumps(payload, ensure_ascii=False, default=str))
+                self._redis_client.sadd(self._redis_index_key(), str(session.session_id))
+        except Exception:
+            # Persistence must never break the workflow path.
+            return
+
+    def _load_persisted_sessions(self) -> None:
+        if self._redis_client is not None:
+            try:
+                ids = list(self._redis_client.smembers(self._redis_index_key()) or [])
+                for raw_id in ids:
+                    try:
+                        session_id = UUID(str(raw_id))
+                    except Exception:
+                        continue
+                    blob = self._redis_client.get(self._redis_key(session_id))
+                    if not blob:
+                        continue
+                    try:
+                        payload = json.loads(blob)
+                    except Exception:
+                        continue
+                    session = self._deserialize_session(payload)
+                    if session is not None:
+                        self.sessions[session.session_id] = session
+                return
+            except Exception:
+                # Fall back to file store
+                pass
+
+        try:
+            for path in sorted(self._session_store_dir.glob("*.json")):
+                try:
+                    payload = json.loads(path.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                session = self._deserialize_session(payload)
+                if session is not None:
+                    self.sessions[session.session_id] = session
+        except Exception:
+            return
+
     def create_session(self, user_name: str, starting_capital: float) -> WorkflowSession:
         session = WorkflowSession(session_id=uuid4(), user_name=user_name, starting_capital=starting_capital)
         self.sessions[session.session_id] = session
-        self._record_agent_activity("workflow_service", "ok", "create_session", "Created workflow session.", session.session_id)
+        self._record_agent_activity("workflow_service", "ok", "create_session", "Created workflow session.", session.session_id, request_payload={"user_name": user_name, "starting_capital": starting_capital}, response_payload={"session_id": str(session.session_id), "phase": session.phase, "status": session.status})
         self._append_history_event(
             session,
             "session_created",
             "会话已创建。",
             {"starting_capital": starting_capital, "user_name": user_name},
         )
+        self._persist_session(session)
         return session
 
     def get_session(self, session_id: UUID) -> WorkflowSession:
-        return self.sessions[session_id]
+        session = self.sessions.get(session_id)
+        if session is not None:
+            return session
+        # Lazy-load from disk in case the process restarted and a session is referenced by URL.
+        try:
+            if self._redis_client is not None:
+                blob = self._redis_client.get(self._redis_key(session_id))
+                if blob:
+                    payload = json.loads(blob)
+                    restored = self._deserialize_session(payload)
+                    if restored is not None:
+                        self.sessions[restored.session_id] = restored
+                        return restored
+            path = self._session_store_path(session_id)
+            if path.exists():
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                restored = self._deserialize_session(payload)
+                if restored is not None:
+                    self.sessions[restored.session_id] = restored
+                    return restored
+        except Exception:
+            pass
+        raise KeyError(session_id)
 
     def generate_scenarios(self, session_id: UUID) -> WorkflowSession:
         session = self.get_session(session_id)
@@ -142,7 +288,7 @@ class WorkflowService:
             for package in packages
         ]
         session.phase = "simulation_in_progress"
-        self._record_agent_activity("scenario_director", "ok", "generate_scenarios", f"Generated {len(session.scenarios)} scenarios.", session.session_id)
+        self._record_agent_activity("scenario_director", "ok", "generate_scenarios", f"Generated {len(session.scenarios)} scenarios.", session.session_id, request_payload={"campaign": "default"}, response_payload={"scenario_count": len(session.scenarios), "scenario_ids": [item["scenario_id"] for item in session.scenarios[:5]]})
         self._append_history_event(
             session,
             "scenarios_generated",
@@ -154,7 +300,7 @@ class WorkflowService:
     def append_behavior_event(self, session_id: UUID, event: BehaviorEvent) -> WorkflowSession:
         session = self.get_session(session_id)
         session.behavior_events.append(event)
-        self._record_agent_activity("behavioral_profiler", "ok", "append_behavior_event", f"Recorded action={event.action} for {event.scenario_id}.", session.session_id)
+        self._record_agent_activity("behavioral_profiler", "ok", "append_behavior_event", f"Recorded action={event.action} for {event.scenario_id}.", session.session_id, request_payload={"scenario_id": event.scenario_id, "action": event.action, "drawdown_pct": event.price_drawdown_pct, "noise_level": event.noise_level, "latency_seconds": event.latency_seconds, "execution_status": event.execution_status, "execution_reason": event.execution_reason}, response_payload={"phase": session.phase, "event_count": len(session.behavior_events)})
         self._append_history_event(
             session,
             "behavior_event_recorded",
@@ -178,13 +324,64 @@ class WorkflowService:
             confidence_level=0.5,
         )
         report = self.profiler.profile(session.behavior_events)
-        self._record_agent_activity("behavioral_profiler", "ok", "complete_simulation", "Generated behavioral report.", session.session_id)
         market = MarketSnapshot(symbol=symbol, expected_return_pct=16.0, realized_volatility_pct=35.0, trend_score=0.45, event_risk_score=0.35, liquidity_score=0.9)
         policy = self.evolver.derive_risk_policy(user, report)
         brief = self.evolver.synthesize(user, market, report, policy)
         trading_recommendation = self._recommend_trading_preferences(report)
         strategy_recommendation = self._recommend_strategy_type(report, trading_recommendation)
-        session.behavioral_report = {
+        total_events = max(1, len(session.behavior_events))
+        executed_events = [event for event in session.behavior_events if event.execution_status in {"filled", "partial_fill"}]
+        partial_events = [event for event in session.behavior_events if event.execution_status == "partial_fill"]
+        rejected_events = [event for event in session.behavior_events if event.execution_status == "rejected"]
+        unfilled_events = [event for event in session.behavior_events if event.execution_status == "unfilled"]
+        high_noise_events = [event for event in session.behavior_events if event.noise_level >= 0.7]
+        high_noise_executed_events = [event for event in high_noise_events if event.execution_status in {"filled", "partial_fill"}]
+        high_noise_hold_events = [event for event in high_noise_events if event.action == "hold" or event.execution_status == "hold"]
+        clean_execution_ratio = max(0.0, min(1.0, (len(executed_events) - len(partial_events)) / total_events))
+        fast_event_ratio = round(sum(1 for event in session.behavior_events if event.latency_seconds < 45) / total_events, 4)
+        slow_event_ratio = round(sum(1 for event in session.behavior_events if event.latency_seconds > 240) / total_events, 4)
+        behavior_tags: list[str] = []
+        if fast_event_ratio > 0.4:
+            behavior_tags.append("impulsive_execution")
+        if slow_event_ratio > 0.35:
+            behavior_tags.append("hesitant_execution")
+        if len(unfilled_events) / total_events > 0.3:
+            behavior_tags.append("probing_limit_orders")
+        if len(rejected_events) / total_events > 0.3:
+            behavior_tags.append("constraint_blind_submission")
+        if len(partial_events) / total_events > 0.2:
+            behavior_tags.append("size_liquidity_mismatch")
+        if len(high_noise_executed_events) / max(1, len(high_noise_events)) > 0.45:
+            behavior_tags.append("noise_driven_execution")
+        if len(high_noise_hold_events) / max(1, len(high_noise_events)) > 0.45:
+            behavior_tags.append("noise_resistant_patience")
+        if len(rejected_events) / total_events > 0.3:
+            execution_note = "用户存在较多被拒单行为，说明下单约束感知偏弱。"
+        elif len(unfilled_events) / total_events > 0.3:
+            execution_note = "用户频繁挂单未触发，更像试探式参与而非直接成交。"
+        elif len(partial_events) / total_events > 0.2:
+            execution_note = "用户成交经常受到流动性约束，交易规模与时段流动性匹配不足。"
+        elif len(high_noise_executed_events) / max(1, len(high_noise_events)) > 0.45:
+            execution_note = "用户在高噪音条件下仍频繁直接成交，存在明显的叙事驱动执行倾向。"
+        elif len(high_noise_hold_events) / max(1, len(high_noise_events)) > 0.45:
+            execution_note = "用户在高噪音条件下更常选择观望，说明对情绪叙事有一定抵抗力。"
+        elif fast_event_ratio > 0.4:
+            execution_note = "用户经常在短时间内快速出手，存在冲动执行倾向。"
+        elif slow_event_ratio > 0.35:
+            execution_note = "用户决策等待时间偏长，更像犹豫后再执行。"
+        else:
+            execution_note = "用户的成交质量总体稳定，执行结果与指令一致性较高。"
+        llm_strict = bool(getattr(self.settings, "llm_strict", True)) and bool(self.settings.llm_enabled)
+        rule_based_warning = (
+            None
+            if llm_strict
+            else "当前未经过 live LLM 个性化分析，以下内容仅为规则统计与启发式建议，不是完整智能分析。"
+        )
+        system_report = {
+            "report_generation_mode": "rule_based",
+            "source_of_truth": "behavior_event_statistics",
+            "analysis_status": "heuristic_only",
+            "analysis_warning": rule_based_warning,
             "loss_tolerance": -report.max_comfort_drawdown_pct,
             "noise_sensitivity": report.noise_susceptibility,
             "panic_sell_tendency": report.panic_sell_score,
@@ -199,10 +396,57 @@ class WorkflowService:
             "trading_preference_recommendation_note": trading_recommendation["note"],
             "recommended_strategy_type": strategy_recommendation["strategy_type"],
             "strategy_type_recommendation_note": strategy_recommendation["note"],
+            "execution_event_count": len(session.behavior_events),
+            "executed_trade_ratio": round(len(executed_events) / total_events, 4),
+            "partial_fill_ratio": round(len(partial_events) / total_events, 4),
+            "rejected_order_ratio": round(len(rejected_events) / total_events, 4),
+            "unfilled_order_ratio": round(len(unfilled_events) / total_events, 4),
+            "clean_execution_ratio": round(clean_execution_ratio, 4),
+            "fast_event_ratio": fast_event_ratio,
+            "slow_event_ratio": slow_event_ratio,
+            "behavior_tags": behavior_tags,
+            "high_noise_execution_ratio": round(len(high_noise_executed_events) / max(1, len(high_noise_events)), 4),
+            "high_noise_hold_ratio": round(len(high_noise_hold_events) / max(1, len(high_noise_events)), 4),
+            "execution_quality_note": execution_note,
         }
+        user_report = {
+            "report_generation_mode": "rule_based",
+            "source_of_truth": "behavior_event_statistics",
+            "analysis_status": "factual_summary_only",
+            "analysis_warning": rule_based_warning,
+            "user_summary": self._build_behavioral_user_summary(system_report),
+            "execution_event_count": system_report["execution_event_count"],
+            "executed_trade_ratio": system_report["executed_trade_ratio"],
+            "partial_fill_ratio": system_report["partial_fill_ratio"],
+            "rejected_order_ratio": system_report["rejected_order_ratio"],
+            "unfilled_order_ratio": system_report["unfilled_order_ratio"],
+            "clean_execution_ratio": system_report["clean_execution_ratio"],
+            "execution_quality_note": system_report["execution_quality_note"],
+            "behavior_tags": list(system_report["behavior_tags"]),
+            "high_noise_execution_ratio": system_report["high_noise_execution_ratio"],
+            "high_noise_hold_ratio": system_report["high_noise_hold_ratio"],
+            "fast_event_ratio": system_report["fast_event_ratio"],
+            "slow_event_ratio": system_report["slow_event_ratio"],
+        }
+        llm_user_report, llm_system_report = self._generate_behavioral_llm_reports(
+            symbol=symbol,
+            report=report,
+            system_report=system_report,
+            user_report=user_report,
+            behavior_events=session.behavior_events,
+        )
+        if llm_strict and (not llm_user_report or not llm_system_report):
+            raise RuntimeError("LLM strict mode is enabled but behavioral LLM reports were not produced.")
+        if llm_user_report:
+            user_report = llm_user_report
+        if llm_system_report:
+            system_report = llm_system_report
+        session.behavioral_report = system_report
+        session.behavioral_user_report = user_report
+        session.behavioral_system_report = system_report
         session.profile_evolution = {
-            "base_profile": dict(session.behavioral_report),
-            "effective_profile": dict(session.behavioral_report),
+            "base_profile": dict(system_report),
+            "effective_profile": dict(system_report),
             "confidence_level": user.confidence_level,
             "events": [
                 {
@@ -214,20 +458,229 @@ class WorkflowService:
             ],
         }
         session.phase = "profiler_ready"
+        self._record_agent_activity("behavioral_profiler", "ok", "complete_simulation", "Generated behavioral reports for user and system views.", session.session_id, request_payload={"symbol": symbol, "event_count": len(session.behavior_events)}, response_payload={"recommended_strategy_type": strategy_recommendation["strategy_type"], "recommended_frequency": trading_recommendation["trading_frequency"], "execution_quality_note": execution_note, "behavior_tags": behavior_tags, "user_report_ready": session.behavioral_user_report is not None, "system_report_ready": session.behavioral_system_report is not None})
         self._archive_report(
             session,
-            report_type="behavioral_profiler",
-            title="Behavioral Profiler Report",
-            body=session.behavioral_report or {},
+            report_type="behavioral_profiler_user",
+            title="Behavioral Profiler User Report",
+            body=session.behavioral_user_report or {},
+            related_refs=[symbol],
+        )
+        self._archive_report(
+            session,
+            report_type="behavioral_profiler_system",
+            title="Behavioral Profiler System Report",
+            body=session.behavioral_system_report or {},
             related_refs=[symbol],
         )
         self._append_history_event(
             session,
             "simulation_completed",
             "模拟测试完成并生成心理侧写报告。",
-            {"symbol": symbol},
+            {
+                "symbol": symbol,
+                "user_report_ready": session.behavioral_user_report is not None,
+                "system_report_ready": session.behavioral_system_report is not None,
+            },
         )
         return session
+
+    def _build_behavioral_user_summary(self, report: dict) -> str:
+        clean = float(report.get("clean_execution_ratio", 0.0))
+        fast = float(report.get("fast_event_ratio", 0.0))
+        noise_exec = float(report.get("high_noise_execution_ratio", 0.0))
+        if noise_exec >= 0.45:
+            style_note = "你在高噪音环境下更容易直接执行。"
+        elif fast >= 0.4:
+            style_note = "你的下单节奏偏快。"
+        elif clean >= 0.7:
+            style_note = "你的执行结果整体较稳定。"
+        else:
+            style_note = "你的执行行为存在明显波动。"
+        return f"当前报告仅展示规则统计结果，不代表完整智能分析。{style_note}"
+
+    def _generate_behavioral_llm_reports(
+        self,
+        *,
+        symbol: str,
+        report: BehavioralReport,
+        system_report: dict,
+        user_report: dict,
+        behavior_events: list[BehaviorEvent],
+    ) -> tuple[dict, dict]:
+        def _is_placeholder_rule_summary(summary: object) -> bool:
+            if not isinstance(summary, str):
+                return True
+            text = summary.strip()
+            if not text:
+                return True
+            # If the LLM output still contains our rule-based disclaimer, treat it as invalid output.
+            red_flags = [
+                "仅展示规则统计结果",
+                "不代表完整智能分析",
+                "未经过 live LLM",
+                "规则统计与启发式建议",
+            ]
+            return any(flag in text for flag in red_flags)
+
+        event_digest = [
+            {
+                "scenario_id": item.scenario_id,
+                "action": item.action,
+                "drawdown_pct": item.price_drawdown_pct,
+                "noise_level": item.noise_level,
+                "sentiment_pressure": item.sentiment_pressure,
+                "latency_seconds": item.latency_seconds,
+                "execution_status": item.execution_status,
+                "execution_reason": item.execution_reason,
+            }
+            for item in behavior_events[-12:]
+        ]
+        prompt_payload = {
+            "symbol": symbol,
+            "rule_report": system_report,
+            "behavioral_scores": {
+                "panic_sell_score": report.panic_sell_score,
+                "averaging_down_score": report.averaging_down_score,
+                "noise_susceptibility": report.noise_susceptibility,
+                "intervention_risk": report.intervention_risk,
+                "max_comfort_drawdown_pct": report.max_comfort_drawdown_pct,
+                "discipline_score": report.discipline_score,
+                "notes": list(report.notes),
+            },
+            "recent_events": event_digest,
+        }
+        # Seed user/system reports are used only for fallback; do not leak rule-based disclaimer into a "live_llm" result.
+        fallback_text = json.dumps({"user_report": user_report, "system_report": system_report}, ensure_ascii=False)
+        system_prompt = (
+            "Return strict JSON only with keys user_report and system_report (no markdown, no prose). "
+            "Write concise Chinese analysis grounded only in the provided behavior payload; do not invent data. "
+            "Do NOT repeat numeric metrics from rule_report; those will remain in the merged report. "
+            "Output MINIFIED JSON (no pretty printing, no indentation, no extra newlines). "
+            "Output only compact analysis fields with these allowed keys:\n"
+            "user_report: user_summary, recommended_trading_frequency, recommended_timeframe, recommended_strategy_type, "
+            "recommended_risk_ceiling, trading_pace_note, execution_quality_note, behavior_tags.\n"
+            "system_report: execution_quality_note, behavior_tags, risk_notes, guardrails.\n"
+            "user_report must include a non-empty user_summary that is personalized and MUST NOT contain any rule-based disclaimer "
+            "(forbidden phrases include: 仅展示规则统计结果 / 不代表完整智能分析 / 未经过 live LLM / 规则统计与启发式建议). "
+            "Keep values short. Set report_generation_mode=live_llm, source_of_truth=live_llm_behavior_analysis, analysis_status=live_llm_completed."
+        )
+        # Do not cache behavior_analysis: a single invalid formatting response would get stuck in cache and force rule-based fallback.
+        llm_result = self.llm_runtime.invoke_text_task(
+            "behavior_analysis",
+            json.dumps(prompt_payload, ensure_ascii=False),
+            fallback_agent="behavioral_profiler",
+            fallback_text=fallback_text,
+            system_prompt=system_prompt,
+        )
+        profile = llm_result["profile"]
+        invocation = llm_result["invocation"]
+        raw_text = str(llm_result.get("text", "") or "")
+        parsed = self._parse_llm_json(raw_text)
+        invalid_reason = None
+        if not isinstance(parsed, dict) or not isinstance(parsed.get("user_report"), dict) or not isinstance(parsed.get("system_report"), dict):
+            invalid_reason = "invalid_json_shape"
+        elif _is_placeholder_rule_summary(parsed["user_report"].get("user_summary")):
+            invalid_reason = "missing_or_placeholder_user_summary"
+
+        if invalid_reason:
+            # If the LLM call succeeded but formatting was invalid, try one strict repair attempt.
+            # This reduces intermittent formatting failures without pretending the output is valid.
+            if invocation.get("actual_generation_mode") == "live_llm" and invocation.get("fallback_reason") is None:
+                repair_payload = {
+                    "symbol": symbol,
+                    "original_payload": prompt_payload,
+                    "invalid_output_excerpt": raw_text[:2000],
+                    "instruction": "Repair the output into strict JSON only with keys user_report and system_report.",
+                }
+                repaired = self.llm_runtime.invoke_text_task(
+                    "behavior_analysis",
+                    json.dumps(repair_payload, ensure_ascii=False),
+                    fallback_agent="behavioral_profiler",
+                    fallback_text=fallback_text,
+                    system_prompt=system_prompt + " If you cannot comply, return an empty JSON object {}.",
+                )
+                raw_text = str(repaired.get("text", "") or "")
+                invocation = repaired["invocation"]
+                profile = repaired["profile"]
+                parsed = self._parse_llm_json(raw_text)
+                if isinstance(parsed, dict) and isinstance(parsed.get("user_report"), dict) and isinstance(parsed.get("system_report"), dict):
+                    if not _is_placeholder_rule_summary(parsed["user_report"].get("user_summary")):
+                        invalid_reason = None
+                    else:
+                        invalid_reason = "missing_or_placeholder_user_summary"
+                else:
+                    invalid_reason = "invalid_json_shape"
+
+            if invalid_reason:
+                if bool(getattr(self.settings, "llm_strict", True)) and bool(self.settings.llm_enabled):
+                    # Strict mode forbids silently returning rule-based reports when LLM output is invalid.
+                    raise ValueError(
+                        "Behavior analysis LLM returned invalid JSON. "
+                        f"reason={invalid_reason}; generation_mode={invocation.get('actual_generation_mode')}; "
+                        f"fallback_reason={invocation.get('fallback_reason')}; excerpt={raw_text[:200]}"
+                    )
+                invocation = dict(invocation)
+                invocation["raw_text_excerpt"] = raw_text[:800]
+                warning = (
+                    "行为分析 LLM 未成功完成，当前回退为规则统计。"
+                    f"reason={invalid_reason};fallback_reason={invocation.get('fallback_reason') or 'unknown'}。"
+                )
+                fallback_user = dict(user_report)
+                fallback_user["report_generation_mode"] = "rule_based"
+                fallback_user["analysis_status"] = "factual_summary_only"
+                fallback_user["analysis_warning"] = warning
+                fallback_user["source_of_truth"] = "behavior_event_statistics"
+                fallback_user["llm_invocation"] = invocation
+                fallback_system = dict(system_report)
+                fallback_system["report_generation_mode"] = "rule_based"
+                fallback_system["analysis_status"] = "heuristic_only"
+                fallback_system["analysis_warning"] = warning
+                fallback_system["source_of_truth"] = "behavior_event_statistics"
+                fallback_system["llm_invocation"] = invocation
+                return fallback_user, fallback_system
+        final_user = dict(user_report)
+        final_user.update(parsed["user_report"])
+        final_user["report_generation_mode"] = profile.generation_mode
+        final_user["source_of_truth"] = "live_llm_behavior_analysis" if profile.generation_mode == "live_llm" else "behavior_event_statistics"
+        final_user["analysis_status"] = "live_llm_completed" if profile.generation_mode == "live_llm" else "factual_summary_only"
+        final_user["analysis_warning"] = None if profile.generation_mode == "live_llm" else user_report.get("analysis_warning")
+        final_user["llm_invocation"] = invocation
+        final_system = dict(system_report)
+        final_system.update(parsed["system_report"])
+        final_system["report_generation_mode"] = profile.generation_mode
+        final_system["source_of_truth"] = "live_llm_behavior_analysis" if profile.generation_mode == "live_llm" else "behavior_event_statistics"
+        final_system["analysis_status"] = "live_llm_completed" if profile.generation_mode == "live_llm" else "heuristic_only"
+        final_system["analysis_warning"] = None if profile.generation_mode == "live_llm" else system_report.get("analysis_warning")
+        final_system["llm_invocation"] = invocation
+        return final_user, final_system
+
+    def _parse_llm_json(self, raw_text: str) -> dict | None:
+        text = (raw_text or "").strip()
+        if not text:
+            return None
+        if text.startswith("```"):
+            parts = [part.strip() for part in text.split("```") if part.strip()]
+            for part in parts:
+                if part.lower() == "json":
+                    continue
+                if part.lower().startswith("json\n"):
+                    part = part[5:]
+                text = part
+                break
+        try:
+            payload = json.loads(text)
+            return payload if isinstance(payload, dict) else None
+        except Exception:
+            start = text.find("{")
+            end = text.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                try:
+                    payload = json.loads(text[start : end + 1])
+                    return payload if isinstance(payload, dict) else None
+                except Exception:
+                    return None
+            return None
 
     def set_trading_preferences(
         self,
@@ -250,7 +703,7 @@ class WorkflowService:
             session.trading_preferences["conflict_warning"] = conflict["warning"]
             session.trading_preferences["conflict_level"] = conflict["level"]
         session.phase = "preferences_ready"
-        self._record_agent_activity("intent_aligner", "ok", "set_trading_preferences", "Updated trading preferences and checked conflicts.", session.session_id)
+        self._record_agent_activity("intent_aligner", "ok", "set_trading_preferences", "Updated trading preferences and checked conflicts.", session.session_id, request_payload={"trading_frequency": trading_frequency, "preferred_timeframe": preferred_timeframe}, response_payload={"preferences": session.trading_preferences})
         self._append_history_event(
             session,
             "trading_preferences_updated",
@@ -281,7 +734,7 @@ class WorkflowService:
             "expansion_reason": expansion_reason,
         }
         session.phase = "universe_ready"
-        self._record_agent_activity("intelligence_agent", "ok", "set_trade_universe", f"Prepared universe size={len(expanded)}.", session.session_id)
+        self._record_agent_activity("intelligence_agent", "ok", "set_trade_universe", f"Prepared universe size={len(expanded)}.", session.session_id, request_payload={"input_type": input_type, "symbols": symbols, "allow_overfit_override": allow_overfit_override}, response_payload={"expanded": expanded[:10], "expanded_count": len(expanded), "expansion_reason": expansion_reason})
         self._append_history_event(
             session,
             "trade_universe_updated",
@@ -325,7 +778,7 @@ class WorkflowService:
                 user = iteration_context["user"]
                 behavior = iteration_context["behavior"]
                 policy = iteration_context["policy"]
-                self._record_agent_activity("strategy_evolver", "ok", "derive_risk_policy", "Derived risk policy for iteration.", session.session_id)
+                self._record_agent_activity("strategy_evolver", "ok", "derive_risk_policy", "Derived risk policy for iteration.", session.session_id, request_payload={"strategy_type": strategy_type, "objective_metric": objective_metric, "feedback": feedback or ""}, response_payload={"selected_universe_size": len(expanded), "feature_snapshot": iteration_context["features"].get("meta", {})})
                 baseline_candidate = self.evolver.build_strategy_candidate(
                     user=user,
                     market=market,
@@ -350,7 +803,7 @@ class WorkflowService:
                 )
                 candidate_payload = asdict(candidate)
                 candidate_payload["version"] = self._strategy_version_label(1, iteration_no, 0, strategy_type)
-                self._record_agent_activity("strategy_evolver", "ok", "build_strategy_candidate", f"Built candidate {candidate_payload['version']}.", session.session_id)
+                self._record_agent_activity("strategy_evolver", "ok", "build_strategy_candidate", f"Built candidate {candidate_payload['version']}.", session.session_id, request_payload={"strategy_type": strategy_type, "objective_metric": objective_metric, "feedback": feedback or ""}, response_payload={"version": candidate_payload["version"], "signal_count": len(candidate_payload.get("signals", [])), "parameter_keys": list(candidate_payload.get("parameters", {}).keys())[:10]})
                 previous_failure = self._previous_failure_summary(session)
                 dataset_plan = self._build_strategy_dataset_plan(iteration_no)
                 analysis = self._analyze_strategy_iteration(
@@ -574,6 +1027,8 @@ class WorkflowService:
                         "gate_status": research_export.get("gate_status"),
                         "evaluation_source": research_export.get("evaluation_source"),
                         "robustness_grade": research_export.get("robustness_grade"),
+                        "research_reliability_status": research_export.get("research_reliability_summary", {}).get("status"),
+                        "research_reliability_confidence": research_export.get("research_reliability_summary", {}).get("confidence"),
                         "train_objective_score": research_export.get("research_summary", {}).get("evaluation_snapshot", {}).get("train", {}).get("objective_score"),
                         "validation_objective_score": research_export.get("research_summary", {}).get("evaluation_snapshot", {}).get("validation", {}).get("objective_score"),
                         "test_objective_score": research_export.get("research_summary", {}).get("evaluation_snapshot", {}).get("test", {}).get("objective_score"),
@@ -596,7 +1051,7 @@ class WorkflowService:
                     break
             except Exception as exc:
                 last_error = str(exc)
-                self._record_agent_activity("strategy_evolver", "error", "iterate_strategy", last_error, session.session_id)
+                self._record_agent_activity("strategy_evolver", "error", "iterate_strategy", last_error, session.session_id, request_payload={"strategy_type": strategy_type, "objective_metric": objective_metric, "feedback": feedback or "", "loop_index": loop_index + 1}, response_payload={"error": last_error})
                 session.strategy_training_log.append(
                     {
                         "timestamp": self._now_iso(),
@@ -1316,13 +1771,23 @@ class WorkflowService:
             coverage_summary=coverage_summary,
             robustness_grade="acceptable",
         )
+        backtest_quality_summary = self._assess_backtest_quality(
+            evaluation_source=check_target_eval.get("evaluation_source"),
+            dataset_evaluation=check_target_dataset,
+        )
         winner_gap = abs(float(winner_entry.get("train_test_gap") or 0.0))
         winner_stability = float(winner_entry.get("stability_score") or 0.0)
+        coverage_warnings = coverage_summary.get("coverage_warnings") or []
+        sparse_warning_present = any(item in {"sparse_validation_observations", "sparse_test_observations"} for item in coverage_warnings)
+        quality_warnings = backtest_quality_summary.get("warnings") or []
+        degraded_quality = backtest_quality_summary.get("grade") == "degraded"
         if (
             winner_stability >= 0.8
             and winner_gap <= 0.12
             and backtest_binding_summary.get("grade") == "strong"
             and coverage_summary.get("coverage_grade") == "healthy"
+            and backtest_quality_summary.get("grade") == "healthy"
+            and not sparse_warning_present
         ):
             robustness_grade = "strong"
             robustness_note = "The winner remains stable across out-of-sample evaluation and the train-test gap is controlled."
@@ -1331,12 +1796,14 @@ class WorkflowService:
             and winner_gap <= 0.2
             and backtest_binding_summary.get("grade") in {"strong", "partial"}
             and coverage_summary.get("coverage_grade") != "degraded"
+            and backtest_quality_summary.get("grade") != "degraded"
+            and "sparse_test_observations" not in coverage_warnings
         ):
             robustness_grade = "acceptable"
-            robustness_note = "The winner is usable, but stability or train-test dispersion still needs monitoring."
+            robustness_note = "The winner is usable, but stability, sample coverage, or portfolio concentration still needs monitoring."
         else:
             robustness_grade = "fragile"
-            robustness_note = "The winner is currently ahead, but robustness is weak and should be treated as research-only."
+            robustness_note = "The winner is currently ahead, but robustness is weak, sample coverage may be thin, and backtest quality signals still look too fragile for stronger confidence."
         rejection_summary = []
         for item in sorted_candidates:
             if item["name"] == winner_id:
@@ -1373,6 +1840,7 @@ class WorkflowService:
             "stability_score": check_target_eval.get("stability_score"),
             "train_test_gap": check_target_dataset.get("stability", {}).get("train_test_gap"),
             "coverage_summary": coverage_summary,
+            "backtest_quality_summary": backtest_quality_summary,
         }
         evaluation_highlights = []
         if evaluation_snapshot["test"]:
@@ -1396,6 +1864,20 @@ class WorkflowService:
             evaluation_highlights.append(
                 f"Coverage includes {coverage_summary.get('symbol_count', 'unknown')} symbols and {coverage_summary.get('walk_forward_window_count', 0)} walk-forward windows."
             )
+        if backtest_quality_summary:
+            evaluation_highlights.append(
+                f"Backtest quality is {backtest_quality_summary.get('grade', 'unknown')}: {backtest_quality_summary.get('note', 'no note')}"
+            )
+            evaluation_highlights.append(
+                f"Test active symbols {backtest_quality_summary.get('test_active_symbol_count', 'unknown')} / effective weights {backtest_quality_summary.get('effective_weight_count', 'unknown')} / concentration HHI {backtest_quality_summary.get('concentration_hhi', 'unknown')} / gross exposure {backtest_quality_summary.get('gross_exposure_pct', 'unknown')}% / turnover proxy {backtest_quality_summary.get('avg_daily_turnover_proxy_pct', 'unknown')}%."
+            )
+        if coverage_summary:
+            split_metrics = coverage_summary.get("split_metrics") or {}
+            test_metrics = split_metrics.get("test") or {}
+            if test_metrics.get("observation_count") is not None:
+                evaluation_highlights.append(
+                    f"Test observations {test_metrics.get('observation_count')} with sample density {test_metrics.get('sample_density', 'unknown')}."
+                )
             if coverage_summary.get("total_bar_count") is not None:
                 evaluation_highlights.append(f"Historical bars covered: {coverage_summary.get('total_bar_count')}.")
             if coverage_summary.get("coverage_grade"):
@@ -1405,6 +1887,13 @@ class WorkflowService:
         backtest_binding_summary = self._build_backtest_binding_summary(
             evaluation_source=check_target_eval.get("evaluation_source"),
             coverage_summary=coverage_summary,
+            robustness_grade=robustness_grade,
+        )
+        research_reliability_summary = self._build_research_reliability_summary(
+            evaluation_source=check_target_eval.get("evaluation_source"),
+            coverage_summary=coverage_summary,
+            backtest_quality_summary=backtest_quality_summary,
+            backtest_binding_summary=backtest_binding_summary,
             robustness_grade=robustness_grade,
         )
         return {
@@ -1446,6 +1935,7 @@ class WorkflowService:
             "evaluation_snapshot": evaluation_snapshot,
             "evaluation_highlights": evaluation_highlights,
             "backtest_binding_summary": backtest_binding_summary,
+            "research_reliability_summary": research_reliability_summary,
             "rejection_summary": rejection_summary,
             "candidate_rankings": [
                 {
@@ -1483,6 +1973,9 @@ class WorkflowService:
         split_bar_counts = coverage.get("split_bar_counts") or {}
         validation_bar_count = (split_bar_counts.get("validation") or {}).get("bar_count")
         test_bar_count = (split_bar_counts.get("test") or {}).get("bar_count")
+        train_observation_count = ((coverage.get("split_metrics") or {}).get("train") or {}).get("observation_count")
+        validation_observation_count = ((coverage.get("split_metrics") or {}).get("validation") or {}).get("observation_count")
+        test_observation_count = ((coverage.get("split_metrics") or {}).get("test") or {}).get("observation_count")
 
         if evaluation_source != "local_history_backtest":
             grade = "warning"
@@ -1499,6 +1992,10 @@ class WorkflowService:
                 warnings.append("short_validation_window")
             if test_bar_count is not None and test_bar_count < 20:
                 warnings.append("short_test_window")
+            if validation_observation_count is not None and validation_observation_count < 10:
+                warnings.append("sparse_validation_observations")
+            if test_observation_count is not None and test_observation_count < 10:
+                warnings.append("sparse_test_observations")
 
             if len(warnings) >= 3 or "limited_bar_history" in warnings:
                 grade = "degraded"
@@ -1511,6 +2008,121 @@ class WorkflowService:
         coverage["coverage_warnings"] = warnings
         coverage["coverage_health_note"] = note
         return coverage
+
+    def _assess_backtest_quality(self, evaluation_source: str | None, dataset_evaluation: dict | None) -> dict:
+        source = evaluation_source or "unknown"
+        dataset = dataset_evaluation or {}
+        test_metrics = dataset.get("test") or {}
+        validation_metrics = dataset.get("validation") or {}
+        warnings: list[str] = []
+        grade = "healthy"
+        note = "Backtest quality signals look consistent enough for research review."
+
+        if source != "local_history_backtest":
+            grade = "warning"
+            warnings.append("heuristic_quality_proxy_only")
+            note = "Backtest quality is inferred from surrogate evaluation, so concentration and turnover signals are only provisional."
+        else:
+            test_active_symbols = int(test_metrics.get("active_symbol_count") or 0)
+            validation_active_symbols = int(validation_metrics.get("active_symbol_count") or 0)
+            gross_exposure_pct = float(test_metrics.get("gross_exposure_pct") or 0.0)
+            net_exposure_pct = abs(float(test_metrics.get("net_exposure_pct") or 0.0))
+            turnover_proxy_pct = float(test_metrics.get("avg_daily_turnover_proxy_pct") or 0.0)
+            avg_volume = float(test_metrics.get("avg_volume") or 0.0)
+            concentration_hhi = float(test_metrics.get("concentration_hhi") or 0.0)
+            effective_weight_count = float(test_metrics.get("effective_weight_count") or 0.0)
+
+            if test_active_symbols and test_active_symbols < 2:
+                warnings.append("concentrated_test_book")
+            if validation_active_symbols and validation_active_symbols < 2:
+                warnings.append("concentrated_validation_book")
+            if concentration_hhi >= 0.6:
+                warnings.append("high_position_concentration")
+            if effective_weight_count and effective_weight_count < 2.0:
+                warnings.append("thin_effective_weight_count")
+            if gross_exposure_pct > 95.0 or net_exposure_pct > 90.0:
+                warnings.append("excessive_test_exposure")
+            if turnover_proxy_pct > 35.0:
+                warnings.append("excessive_turnover_proxy")
+            if avg_volume <= 0.0:
+                warnings.append("missing_volume_signal")
+
+            if any(item in warnings for item in ("excessive_test_exposure", "high_position_concentration")) or len(warnings) >= 3:
+                grade = "degraded"
+                note = "Backtest quality is weak because the evaluated book is too concentrated, too exposed, or too noisy in turnover."
+            elif warnings:
+                grade = "warning"
+                note = "Backtest quality is usable, but concentration, effective breadth, exposure, or turnover still limits confidence."
+
+        return {
+            "grade": grade,
+            "warnings": warnings,
+            "note": note,
+            "evaluation_source": source,
+            "test_active_symbol_count": (dataset.get("test") or {}).get("active_symbol_count"),
+            "validation_active_symbol_count": (dataset.get("validation") or {}).get("active_symbol_count"),
+            "gross_exposure_pct": (dataset.get("test") or {}).get("gross_exposure_pct"),
+            "net_exposure_pct": (dataset.get("test") or {}).get("net_exposure_pct"),
+            "avg_daily_turnover_proxy_pct": (dataset.get("test") or {}).get("avg_daily_turnover_proxy_pct"),
+            "avg_volume": (dataset.get("test") or {}).get("avg_volume"),
+            "concentration_hhi": (dataset.get("test") or {}).get("concentration_hhi"),
+            "effective_weight_count": (dataset.get("test") or {}).get("effective_weight_count"),
+        }
+
+    def _build_research_reliability_summary(
+        self,
+        *,
+        evaluation_source: str | None,
+        coverage_summary: dict,
+        backtest_quality_summary: dict,
+        backtest_binding_summary: dict,
+        robustness_grade: str,
+        gate_status: str | None = None,
+    ) -> dict:
+        coverage_grade = coverage_summary.get("coverage_grade") or "unknown"
+        quality_grade = backtest_quality_summary.get("grade") or "unknown"
+        binding_grade = backtest_binding_summary.get("grade") or "unknown"
+        coverage_warnings = coverage_summary.get("coverage_warnings") or []
+        quality_warnings = backtest_quality_summary.get("warnings") or []
+        warnings = list(dict.fromkeys([*coverage_warnings, *quality_warnings]))
+
+        if (
+            evaluation_source == "local_history_backtest"
+            and coverage_grade == "healthy"
+            and quality_grade == "healthy"
+            and binding_grade == "strong"
+            and robustness_grade == "strong"
+            and gate_status != "blocked"
+        ):
+            status = "healthy"
+            confidence = "high"
+            note = "Research is strongly backed by real historical coverage, healthy backtest quality, broad enough portfolio construction, and a robust winner."
+        elif (
+            evaluation_source == "heuristic_surrogate"
+            or coverage_grade == "degraded"
+            or quality_grade == "degraded"
+            or robustness_grade == "fragile"
+            or gate_status == "blocked"
+        ):
+            status = "fragile"
+            confidence = "low"
+            note = "Research is still too provisional because gate blockers, weak backtest quality, thin coverage, or surrogate evaluation remain in play."
+        else:
+            status = "warning"
+            confidence = "medium"
+            note = "Research is usable, but still needs another validation pass before it should be treated as a strong baseline, especially when breadth or concentration warnings remain."
+
+        return {
+            "status": status,
+            "confidence": confidence,
+            "evaluation_source": evaluation_source or "unknown",
+            "coverage_grade": coverage_grade,
+            "quality_grade": quality_grade,
+            "binding_grade": binding_grade,
+            "robustness_grade": robustness_grade,
+            "warnings": warnings,
+            "note": note,
+        }
 
     def _build_backtest_binding_summary(self, evaluation_source: str | None, coverage_summary: dict, robustness_grade: str) -> dict:
         source = evaluation_source or "unknown"
@@ -1537,16 +2149,34 @@ class WorkflowService:
     def _finalize_research_summary(self, research_summary: dict, strategy_checks: list[dict]) -> dict:
         failed_checks = [check for check in strategy_checks if check.get("status") == "fail"]
         passed_checks = [check for check in strategy_checks if check.get("status") != "fail"]
-        release_ready = not failed_checks
+        merged = dict(research_summary)
+        coverage_summary = merged.get("evaluation_snapshot", {}).get("coverage_summary") or {}
+        backtest_quality_summary = merged.get("evaluation_snapshot", {}).get("backtest_quality_summary") or merged.get("backtest_quality_summary") or {}
+        gate_blockers: list[str] = []
+        if coverage_summary.get("coverage_grade") == "degraded":
+            gate_blockers.append("degraded_backtest_coverage")
+        coverage_warnings = coverage_summary.get("coverage_warnings") or []
+        if "sparse_test_observations" in coverage_warnings:
+            gate_blockers.append("sparse_test_observations")
+        quality_grade = backtest_quality_summary.get("grade")
+        quality_warnings = backtest_quality_summary.get("warnings") or []
+        if quality_grade == "degraded":
+            gate_blockers.append("degraded_backtest_quality")
+        for warning in ("concentrated_test_book", "high_position_concentration", "excessive_test_exposure", "excessive_turnover_proxy"):
+            if warning in quality_warnings:
+                gate_blockers.append(warning)
+        release_ready = not failed_checks and not gate_blockers
         final_release_gate_summary = {
             "release_ready": release_ready,
             "failed_check_count": len(failed_checks),
             "passed_check_count": len(passed_checks),
             "gate_status": "passed" if release_ready else "blocked",
+            "coverage_gate_blocked": bool(gate_blockers),
+            "gate_blockers": gate_blockers,
             "reason": (
-                "The selected winner passed integrity and stress/overfit validation."
+                "The selected winner passed integrity, stress/overfit, and backtest-quality validation."
                 if release_ready
-                else "The selected winner is blocked by integrity and/or stress-overfit checks and must be reworked."
+                else "The selected winner is blocked by integrity, stress-overfit, and/or backtest-quality validation and must be reworked."
             ),
         }
         check_failure_summary = [
@@ -1561,10 +2191,17 @@ class WorkflowService:
         next_iteration_focus = []
         for check in failed_checks:
             next_iteration_focus.extend(list(check.get("required_fix_actions") or []))
-        merged = dict(research_summary)
         merged["final_release_gate_summary"] = final_release_gate_summary
         merged["check_failure_summary"] = check_failure_summary
         merged["next_iteration_focus"] = list(dict.fromkeys(next_iteration_focus))
+        merged["research_reliability_summary"] = self._build_research_reliability_summary(
+            evaluation_source=(merged.get("evaluation_snapshot") or {}).get("evaluation_source"),
+            coverage_summary=coverage_summary,
+            backtest_quality_summary=backtest_quality_summary,
+            backtest_binding_summary=merged.get("backtest_binding_summary") or {},
+            robustness_grade=(merged.get("robustness_summary") or {}).get("grade") or "unknown",
+            gate_status=final_release_gate_summary.get("gate_status"),
+        )
         return merged
 
     def _build_research_export_manifest(self, strategy_package: dict, training_log_entry: dict) -> dict:
@@ -1592,6 +2229,7 @@ class WorkflowService:
             "evaluation_source": check_target.get("evaluation_source"),
             "coverage_summary": check_target.get("coverage_summary") or {},
             "backtest_binding_summary": research.get("backtest_binding_summary") or {},
+            "research_reliability_summary": research.get("research_reliability_summary") or {},
             "next_iteration_focus": research.get("next_iteration_focus") or [],
             "repair_route_summary": research.get("repair_route_summary") or [],
             "primary_repair_route": (research.get("repair_route_summary") or [None])[0],
@@ -1885,12 +2523,49 @@ class WorkflowService:
                     "cache_hit": True,
                 }
             )
-            self._record_agent_activity("intelligence_agent", "ok", "search_intelligence", f"Cache hit for query={query}.", session.session_id)
+            self._record_agent_activity("intelligence_agent", "ok", "search_intelligence", f"Cache hit for query={query}.", session.session_id, request_payload={"query": query, "max_documents": max_documents}, response_payload={"cache_hit": True, "document_count": cached_run.get("document_count"), "source_urls": (cached_run.get("report") or {}).get("source_urls", [])[:5]})
             return session
-        documents = [asdict(item) for item in self.intelligence.search(query, max_documents)]
+        try:
+            documents = [asdict(item) for item in self.intelligence.search(query, max_documents)]
+        except Exception as exc:
+            error_detail = f"{exc.__class__.__name__}: {exc}"
+            run = {
+                "run_id": f"intel-{len(session.intelligence_runs) + 1}",
+                "query": query,
+                "generated_at": self._now_iso(),
+                "document_count": 0,
+                "documents": [],
+                "report": {
+                    "query": query,
+                    "summary": "Intelligence search failed before any documents were collected.",
+                    "generation_mode": "error",
+                    "error": error_detail,
+                    "source_urls": [],
+                    "factors": {},
+                },
+                "cache_hit": False,
+                "status": "error",
+                "error": error_detail,
+            }
+            session.intelligence_runs.append(run)
+            self._record_agent_activity("intelligence_agent", "error", "search_intelligence", error_detail, session.session_id, request_payload={"query": query, "max_documents": max_documents}, response_payload={"status": "error", "error": error_detail})
+            self._archive_report(
+                session,
+                report_type="intelligence_summary_error",
+                title=f"Intelligence Summary Failed: {query}",
+                body=run["report"],
+                related_refs=[query],
+            )
+            self._append_history_event(
+                session,
+                "intelligence_search_failed",
+                "情报搜索失败。",
+                {"query": query, "error": error_detail},
+            )
+            return session
         report = self.llm_runtime.summarize_intelligence(query, documents)
         report["factors"] = self._extract_intelligence_factors(documents, report)
-        self._record_agent_activity("intelligence_agent", "ok", "search_intelligence", f"Collected {len(documents)} documents for query={query}.", session.session_id)
+        self._record_agent_activity("intelligence_agent", "ok", "search_intelligence", f"Collected {len(documents)} documents for query={query}.", session.session_id, request_payload={"query": query, "max_documents": max_documents}, response_payload={"cache_hit": False, "document_count": len(documents), "source_urls": report.get("source_urls", [])[:5], "factors": report.get("factors") or {}})
         session.intelligence_documents = documents
         run = {
             "run_id": f"intel-{len(session.intelligence_runs) + 1}",
@@ -1954,9 +2629,41 @@ class WorkflowService:
                 "fetch_financials_data",
                 f"Cache hit for financials {symbol} via {cached_run.get('provider')}.",
                 session.session_id,
+                request_payload={"symbol": symbol, "provider": provider},
+                response_payload={"cache_hit": True, "provider": cached_run.get("provider"), "has_payload": bool(cached_run.get("payload"))},
             )
             return session
-        payload = self.market_data.fetch_financials(symbol=symbol, provider=provider)
+        try:
+            payload = self.market_data.fetch_financials(symbol=symbol, provider=provider)
+        except Exception as exc:
+            error_detail = f"{exc.__class__.__name__}: {exc}"
+            run = {
+                "run_id": f"financials-{len(session.financials_runs) + 1}",
+                "symbol": symbol,
+                "provider": provider,
+                "generated_at": self._now_iso(),
+                "payload": None,
+                "factors": {},
+                "cache_hit": False,
+                "status": "error",
+                "error": error_detail,
+            }
+            session.financials_runs.append(run)
+            self._record_agent_activity("intelligence_agent", "error", "fetch_financials_data", error_detail, session.session_id, request_payload={"symbol": symbol, "provider": provider}, response_payload={"status": "error", "error": error_detail})
+            self._archive_report(
+                session,
+                report_type="financials_summary_error",
+                title=f"Financials Data Failed: {symbol}",
+                body={"symbol": symbol, "provider": provider, "error": error_detail},
+                related_refs=[symbol],
+            )
+            self._append_history_event(
+                session,
+                "financials_data_failed",
+                "财报数据查询失败。",
+                {"symbol": symbol, "provider": provider, "error": error_detail},
+            )
+            return session
         factors = self._extract_financial_factors(payload)
         run = {
             "run_id": f"financials-{len(session.financials_runs) + 1}",
@@ -2004,6 +2711,8 @@ class WorkflowService:
             "fetch_financials_data",
             f"Fetched financials for {symbol} via {payload.get('provider')}.",
             session.session_id,
+            request_payload={"symbol": symbol, "provider": provider},
+            response_payload={"provider": payload.get("provider"), "factors": factors},
         )
         return session
 
@@ -2026,9 +2735,41 @@ class WorkflowService:
                 "fetch_dark_pool_data",
                 f"Cache hit for dark-pool {symbol} via {cached_run.get('provider')}.",
                 session.session_id,
+                request_payload={"symbol": symbol, "provider": provider},
+                response_payload={"cache_hit": True, "provider": cached_run.get("provider"), "has_payload": bool(cached_run.get("payload"))},
             )
             return session
-        payload = self.market_data.fetch_dark_pool(symbol=symbol, provider=provider)
+        try:
+            payload = self.market_data.fetch_dark_pool(symbol=symbol, provider=provider)
+        except Exception as exc:
+            error_detail = f"{exc.__class__.__name__}: {exc}"
+            run = {
+                "run_id": f"dark-pool-{len(session.dark_pool_runs) + 1}",
+                "symbol": symbol,
+                "provider": provider,
+                "generated_at": self._now_iso(),
+                "payload": None,
+                "factors": {},
+                "cache_hit": False,
+                "status": "error",
+                "error": error_detail,
+            }
+            session.dark_pool_runs.append(run)
+            self._record_agent_activity("market_asset_monitor", "error", "fetch_dark_pool_data", error_detail, session.session_id, request_payload={"symbol": symbol, "provider": provider}, response_payload={"status": "error", "error": error_detail})
+            self._archive_report(
+                session,
+                report_type="dark_pool_summary_error",
+                title=f"Dark Pool Data Failed: {symbol}",
+                body={"symbol": symbol, "provider": provider, "error": error_detail},
+                related_refs=[symbol],
+            )
+            self._append_history_event(
+                session,
+                "dark_pool_data_failed",
+                "暗池数据查询失败。",
+                {"symbol": symbol, "provider": provider, "error": error_detail},
+            )
+            return session
         factors = self._extract_dark_pool_factors(payload)
         run = {
             "run_id": f"dark-pool-{len(session.dark_pool_runs) + 1}",
@@ -2076,6 +2817,8 @@ class WorkflowService:
             "fetch_dark_pool_data",
             f"Fetched dark-pool data for {symbol} via {payload.get('provider')}.",
             session.session_id,
+            request_payload={"symbol": symbol, "provider": provider},
+            response_payload={"provider": payload.get("provider"), "factors": factors},
         )
         return session
 
@@ -2104,9 +2847,42 @@ class WorkflowService:
                 "fetch_options_data",
                 f"Cache hit for options {symbol} via {cached_run.get('provider')}.",
                 session.session_id,
+                request_payload={"symbol": symbol, "provider": provider, "expiration": expiration},
+                response_payload={"cache_hit": True, "provider": cached_run.get("provider"), "expiration": cached_run.get("expiration")},
             )
             return session
-        payload = self.market_data.fetch_options(symbol=symbol, provider=provider, expiration=expiration)
+        try:
+            payload = self.market_data.fetch_options(symbol=symbol, provider=provider, expiration=expiration)
+        except Exception as exc:
+            error_detail = f"{exc.__class__.__name__}: {exc}"
+            run = {
+                "run_id": f"options-{len(session.options_runs) + 1}",
+                "symbol": symbol,
+                "provider": provider,
+                "expiration": expiration,
+                "generated_at": self._now_iso(),
+                "payload": None,
+                "factors": {},
+                "cache_hit": False,
+                "status": "error",
+                "error": error_detail,
+            }
+            session.options_runs.append(run)
+            self._record_agent_activity("strategy_monitor", "error", "fetch_options_data", error_detail, session.session_id, request_payload={"symbol": symbol, "provider": provider, "expiration": expiration}, response_payload={"status": "error", "error": error_detail})
+            self._archive_report(
+                session,
+                report_type="options_summary_error",
+                title=f"Options Data Failed: {symbol}",
+                body={"symbol": symbol, "provider": provider, "expiration": expiration, "error": error_detail},
+                related_refs=[symbol],
+            )
+            self._append_history_event(
+                session,
+                "options_data_failed",
+                "期权数据查询失败。",
+                {"symbol": symbol, "provider": provider, "expiration": expiration, "error": error_detail},
+            )
+            return session
         factors = self._extract_options_factors(payload)
         run = {
             "run_id": f"options-{len(session.options_runs) + 1}",
@@ -2156,6 +2932,8 @@ class WorkflowService:
             "fetch_options_data",
             f"Fetched options data for {symbol} via {payload.get('provider')}.",
             session.session_id,
+            request_payload={"symbol": symbol, "provider": provider, "expiration": expiration},
+            response_payload={"provider": payload.get("provider"), "expiration": expiration, "factors": factors},
         )
         return session
 
@@ -2163,7 +2941,7 @@ class WorkflowService:
         session = self.get_session(session_id)
         normalized_events = self.noise_agent.normalize_events(events)
         session.information_events.extend(normalized_events)
-        self._record_agent_activity("noise_agent", "ok", "append_information_events", f"Stored {len(normalized_events)} information events.", session.session_id)
+        self._record_agent_activity("noise_agent", "ok", "append_information_events", f"Stored {len(normalized_events)} information events.", session.session_id, request_payload={"count": len(events)}, response_payload={"stored_count": len(normalized_events), "channels": [item.get("channel") for item in normalized_events[:5]]})
         self._append_history_event(
             session,
             "information_events_recorded",
@@ -2205,6 +2983,10 @@ class WorkflowService:
                 "status": result.get("status"),
                 "commit_hash": result.get("commit_hash"),
                 "changed_files": result.get("changed_files", []),
+                "repair_chain_status": (result.get("repair_chain_summary") or {}).get("chain_status"),
+                "repair_chain_decision": (result.get("repair_chain_summary") or {}).get("primary_decision"),
+                "repair_chain_next_mode": (result.get("repair_chain_summary") or {}).get("next_mode"),
+                "repair_chain_revalidate": bool((result.get("repair_chain_summary") or {}).get("revalidation_required")),
             },
         )
         self._record_agent_activity(
@@ -2213,6 +2995,8 @@ class WorkflowService:
             "execute_programmer_task",
             result.get("error") or f"Changed files: {', '.join(result.get('changed_files', [])) or 'none'}",
             session.session_id,
+            request_payload={"instruction": instruction, "target_files": target_files, "commit_changes": commit_changes},
+            response_payload={"status": result.get("status"), "commit_hash": result.get("commit_hash"), "changed_files": result.get("changed_files", []), "repair_chain_summary": result.get("repair_chain_summary") or {}},
         )
         return session
 
@@ -2222,7 +3006,7 @@ class WorkflowService:
         provider_name: str,
         category: str,
         base_url: str,
-        api_key_env: str | None,
+        api_key_envs: list[str],
         docs_summary: str | None,
         docs_url: str | None = None,
         sample_endpoint: str | None = None,
@@ -2234,7 +3018,7 @@ class WorkflowService:
             provider_name=provider_name,
             category=category,
             base_url=base_url,
-            api_key_env=api_key_env,
+            api_key_envs=api_key_envs,
             docs_summary=docs_summary,
             docs_url=docs_url,
             sample_endpoint=sample_endpoint,
@@ -2270,6 +3054,8 @@ class WorkflowService:
             "expand_data_source",
             f"Prepared adapter package for {provider_name} ({category}).",
             session.session_id,
+            request_payload=asdict(request),
+            response_payload={"target_module": result["target_module"], "target_test": result["target_test"], "validation": result["validation"]},
         )
         return session
 
@@ -2333,6 +3119,10 @@ class WorkflowService:
                 "status": result.get("status"),
                 "commit_hash": result.get("commit_hash"),
                 "changed_files": result.get("changed_files", []),
+                "repair_chain_status": (result.get("repair_chain_summary") or {}).get("chain_status"),
+                "repair_chain_decision": (result.get("repair_chain_summary") or {}).get("primary_decision"),
+                "repair_chain_next_mode": (result.get("repair_chain_summary") or {}).get("next_mode"),
+                "repair_chain_revalidate": bool((result.get("repair_chain_summary") or {}).get("revalidation_required")),
             },
         )
         self._record_agent_activity(
@@ -2341,6 +3131,8 @@ class WorkflowService:
             "apply_data_source_expansion",
             result.get("error") or f"Applied generated adapter for {selected_run['provider_name']}.",
             session.session_id,
+            request_payload={"run_id": selected_run["run_id"], "target_module": selected_run["target_module"], "target_test": selected_run["target_test"], "commit_changes": commit_changes},
+            response_payload={"status": result.get("status"), "commit_hash": result.get("commit_hash"), "repair_chain_summary": result.get("repair_chain_summary") or {}},
         )
         return session
 
@@ -2352,7 +3144,7 @@ class WorkflowService:
         official_docs_url: str,
         docs_search_url: str | None,
         api_base_url: str,
-        api_key_env: str | None,
+        api_key_envs: list[str],
         auth_style: str,
         order_endpoint: str,
         cancel_endpoint: str,
@@ -2370,7 +3162,7 @@ class WorkflowService:
             official_docs_url=official_docs_url,
             docs_search_url=docs_search_url,
             api_base_url=api_base_url,
-            api_key_env=api_key_env,
+            api_key_envs=api_key_envs,
             auth_style=auth_style,
             order_endpoint=order_endpoint,
             cancel_endpoint=cancel_endpoint,
@@ -2385,6 +3177,7 @@ class WorkflowService:
         result["run_id"] = f"terminal-{len(session.terminal_integration_runs) + 1}"
         result["timestamp"] = self._now_iso()
         result["terminal_runtime_summary"] = self._build_terminal_runtime_summary(result)
+        result["terminal_reliability_summary"] = self._build_terminal_reliability_summary(result)
         session.terminal_integration_runs.append(result)
         self._archive_report(
             session,
@@ -2412,6 +3205,8 @@ class WorkflowService:
             "expand_trading_terminal",
             f"Prepared terminal adapter package for {terminal_name} ({terminal_type}).",
             session.session_id,
+            request_payload=asdict(request),
+            response_payload={"target_module": result["target_module"], "target_test": result["target_test"], "validation": result["validation"], "integration_readiness_summary": result.get("integration_readiness_summary") or {}},
         )
         return session
 
@@ -2459,6 +3254,7 @@ class WorkflowService:
         result["applied_run_id"] = selected_run["run_id"]
         selected_run["programmer_apply"] = result
         selected_run["terminal_runtime_summary"] = self._build_terminal_runtime_summary(selected_run)
+        selected_run["terminal_reliability_summary"] = self._build_terminal_reliability_summary(selected_run)
         session.programmer_runs.append(result)
         self._archive_report(
             session,
@@ -2486,6 +3282,8 @@ class WorkflowService:
             "apply_trading_terminal_integration",
             result.get("error") or f"Applied terminal adapter for {selected_run['terminal_name']}.",
             session.session_id,
+            request_payload={"run_id": selected_run["run_id"], "terminal_name": selected_run["terminal_name"], "target_module": selected_run["target_module"], "target_test": selected_run["target_test"], "commit_changes": commit_changes},
+            response_payload={"status": result.get("status"), "commit_hash": result.get("commit_hash"), "repair_chain_summary": result.get("repair_chain_summary") or {}},
         )
         return session
 
@@ -2508,6 +3306,7 @@ class WorkflowService:
         result["run_id"] = selected_run["run_id"]
         selected_run["terminal_test"] = result
         selected_run["terminal_runtime_summary"] = self._build_terminal_runtime_summary(selected_run)
+        selected_run["terminal_reliability_summary"] = self._build_terminal_reliability_summary(selected_run)
         checks = result.get("checks", [])
         passed_check_count = sum(1 for item in checks if item.get("status") == "pass")
         readiness = selected_run.get("integration_readiness_summary", {})
@@ -2515,7 +3314,11 @@ class WorkflowService:
             session,
             report_type="trading_terminal_test",
             title=f"Trading Terminal Test: {selected_run['terminal_name']}",
-            body=result,
+            body={
+                **result,
+                "terminal_runtime_summary": selected_run.get("terminal_runtime_summary") or {},
+                "terminal_reliability_summary": selected_run.get("terminal_reliability_summary") or {},
+            },
             related_refs=[selected_run["target_module"], selected_run["target_test"]],
         )
         self._append_history_event(
@@ -2533,6 +3336,9 @@ class WorkflowService:
                 "summary": result.get("summary"),
                 "repair_route": result.get("repair_summary", {}).get("primary_route"),
                 "repair_priority": result.get("repair_summary", {}).get("priority"),
+                "reliability_status": (selected_run.get("terminal_reliability_summary") or {}).get("status"),
+                "reliability_revalidate": bool((selected_run.get("terminal_reliability_summary") or {}).get("revalidation_required")),
+                "reliability_next_action": (selected_run.get("terminal_reliability_summary") or {}).get("next_action"),
             },
         )
         self._record_agent_activity(
@@ -2541,8 +3347,83 @@ class WorkflowService:
             "test_trading_terminal_integration",
             result.get("summary") or f"Tested terminal adapter for {selected_run['terminal_name']}.",
             session.session_id,
+            request_payload={"run_id": selected_run["run_id"], "terminal_name": selected_run["terminal_name"]},
+            response_payload={"status": result.get("status"), "summary": result.get("summary"), "repair_summary": result.get("repair_summary") or {}, "terminal_reliability_summary": selected_run.get("terminal_reliability_summary") or {}},
         )
         return session
+
+    def _build_terminal_reliability_summary(self, run: dict) -> dict:
+        readiness = run.get("integration_readiness_summary") or {}
+        runtime = run.get("terminal_runtime_summary") or {}
+        test = run.get("terminal_test") or {}
+        repair = test.get("repair_summary") or {}
+        checks = test.get("checks") or []
+        shape_checks = [item for item in checks if str(item.get("name") or "").endswith("_shape")]
+        passed = sum(1 for item in checks if item.get("status") == "pass")
+        shape_passed = sum(1 for item in shape_checks if item.get("status") == "pass")
+        total = len(checks)
+        contract_confidence = runtime.get("contract_confidence")
+        if contract_confidence is None:
+            contract_confidence = round(passed / max(1, total), 4)
+        shape_confidence = runtime.get("shape_confidence")
+        if shape_confidence is None and shape_checks:
+            shape_confidence = round(shape_passed / max(1, len(shape_checks)), 4)
+
+        readiness_status = readiness.get("status") or runtime.get("readiness_status") or "unknown"
+        runtime_status = runtime.get("status") or "unknown"
+        test_status = test.get("status") or runtime.get("test_status") or "not_tested"
+        docs_fetch_ok = bool((run.get("docs_context") or {}).get("docs_fetch_ok"))
+        field_map = ((run.get("config_candidate") or {}).get("provider_config") or {}).get("response_field_map") or {}
+        field_map_ready = bool(field_map)
+
+        if (
+            readiness_status == "ready"
+            and runtime_status == "healthy"
+            and test_status == "ok"
+            and docs_fetch_ok
+            and field_map_ready
+            and float(contract_confidence or 0.0) >= 0.95
+            and (shape_confidence is None or float(shape_confidence) >= 1.0)
+        ):
+            status = "healthy"
+            note = "Terminal package is reliable enough for sustained integration work and stronger endpoint verification."
+            next_action = "Proceed to deeper endpoint verification while keeping periodic smoke-test revalidation."
+            revalidation_required = False
+        elif (
+            readiness_status == "blocked"
+            or runtime_status == "fragile"
+            or test_status in {"warning", "error"}
+            or not docs_fetch_ok
+            or not field_map_ready
+            or float(contract_confidence or 0.0) < 0.6
+            or (shape_confidence is not None and float(shape_confidence) < 0.67)
+        ):
+            status = "fragile"
+            note = "Terminal package is not reliable enough yet; fix readiness, contract failures, field mapping, or payload shape issues first."
+            next_action = (repair.get("actions") or [runtime.get("next_action") or "Return to the terminal integration page and repair failed contracts before depending on this package."])[0]
+            revalidation_required = True
+        else:
+            status = "warning"
+            note = "Terminal package is partially reliable, but still needs another controlled validation pass before stronger dependence."
+            next_action = runtime.get("next_action") or "Rerun readiness and smoke tests after reviewing endpoint coverage and field mapping."
+            revalidation_required = True
+
+        return {
+            "status": status,
+            "note": note,
+            "readiness_status": readiness_status,
+            "runtime_status": runtime_status,
+            "test_status": test_status,
+            "docs_fetch_ok": docs_fetch_ok,
+            "field_map_ready": field_map_ready,
+            "contract_confidence": contract_confidence,
+            "shape_confidence": shape_confidence,
+            "passed_check_count": passed,
+            "total_check_count": total,
+            "next_action": next_action,
+            "primary_route": runtime.get("primary_route") or repair.get("primary_route") or "none",
+            "revalidation_required": revalidation_required,
+        }
 
     def _build_terminal_runtime_summary(self, run: dict) -> dict:
         readiness = run.get("integration_readiness_summary") or {}
@@ -2550,27 +3431,36 @@ class WorkflowService:
         repair = test.get("repair_summary") or {}
         checks = test.get("checks") or []
         passed = sum(1 for item in checks if item.get("status") == "pass")
+        shape_checks = [item for item in checks if str(item.get("name") or "").endswith("_shape")]
+        shape_passed = sum(1 for item in shape_checks if item.get("status") == "pass")
         readiness_status = readiness.get("status") or "unknown"
         test_status = test.get("status") or "not_tested"
-        if test_status == "ok" and readiness_status == "ready":
+        total_count = len(checks)
+        contract_confidence = round(passed / max(1, total_count), 4)
+        shape_confidence = round(shape_passed / max(1, len(shape_checks)), 4) if shape_checks else None
+        if test_status == "ok" and readiness_status == "ready" and contract_confidence >= 0.95 and (shape_confidence is None or shape_confidence >= 1.0):
             return {
                 "status": "healthy",
                 "readiness_status": readiness_status,
                 "test_status": test_status,
                 "passed_check_count": passed,
-                "total_check_count": len(checks),
-                "note": "Terminal package is ready for the next connectivity stage.",
+                "total_check_count": total_count,
+                "contract_confidence": contract_confidence,
+                "shape_confidence": shape_confidence,
+                "note": "Terminal package is ready for the next connectivity stage with strong smoke-test coverage.",
                 "next_action": "Proceed to stronger endpoint verification or controlled local integration.",
                 "primary_route": repair.get("primary_route") or "none",
             }
-        if readiness_status == "blocked" or test_status in {"warning", "error"}:
+        if readiness_status == "blocked" or test_status in {"warning", "error"} or contract_confidence < 0.6 or (shape_confidence is not None and shape_confidence < 0.67):
             return {
                 "status": "fragile",
                 "readiness_status": readiness_status,
                 "test_status": test_status,
                 "passed_check_count": passed,
-                "total_check_count": len(checks),
-                "note": "Terminal package is not ready yet. Fix readiness gaps or failed smoke-test contracts first.",
+                "total_check_count": total_count,
+                "contract_confidence": contract_confidence,
+                "shape_confidence": shape_confidence,
+                "note": "Terminal package is not ready yet. Fix readiness gaps, failed smoke-test contracts, or weak payload-shape coverage first.",
                 "next_action": (repair.get("actions") or ["Return to the terminal integration page and fix the failed contract or endpoint."])[0],
                 "primary_route": repair.get("primary_route") or "data_shape_repair",
             }
@@ -2579,7 +3469,9 @@ class WorkflowService:
             "readiness_status": readiness_status,
             "test_status": test_status,
             "passed_check_count": passed,
-            "total_check_count": len(checks),
+            "total_check_count": total_count,
+            "contract_confidence": contract_confidence,
+            "shape_confidence": shape_confidence,
             "note": "Terminal package has partial readiness but still needs another validation pass.",
             "next_action": "Run or rerun smoke tests after reviewing endpoint coverage and field mapping.",
             "primary_route": repair.get("primary_route") or "readiness_review",
@@ -2666,8 +3558,8 @@ class WorkflowService:
             self._module_status(
                 "storage_layer",
                 "ok",
-                "In-memory workflow service is active. External persistence is optional in the current mode.",
-                "Switch to persistent_app only when you need PostgreSQL, TimescaleDB, Redis, and Qdrant persistence.",
+                f"Workflow sessions persist via {getattr(self, 'session_store_backend', 'memory')}.",
+                "No action required." if getattr(self, 'session_store_backend', 'memory') != "memory" else "Enable persistence to avoid Session not found after restarts.",
             ),
         ]
         modules.extend(self.programmer.health_modules())
@@ -2855,6 +3747,22 @@ class WorkflowService:
             "llm_cache": self.llm_runtime.cache_stats(),
         }
 
+    def _hours_since_iso(self, timestamp: str | None) -> float | None:
+        if not timestamp:
+            return None
+        raw = str(timestamp).strip()
+        if not raw:
+            return None
+        try:
+            normalized = raw.replace("Z", "+00:00")
+            dt = datetime.fromisoformat(normalized)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.astimezone(timezone.utc)
+            return round((datetime.now(timezone.utc) - dt).total_seconds() / 3600, 2)
+        except Exception:
+            return None
+
     def _data_health_snapshot(self) -> dict:
         latest_market = None
         latest_intelligence = None
@@ -2917,6 +3825,16 @@ class WorkflowService:
         for item in recent_data_failures:
             operation = item["operation"]
             failure_counts[operation] = failure_counts.get(operation, 0) + 1
+        age_map = {
+            "market": self._hours_since_iso(latest_market),
+            "intelligence": self._hours_since_iso(latest_intelligence),
+            "financials": self._hours_since_iso(latest_financials),
+            "dark_pool": self._hours_since_iso(latest_dark_pool),
+            "options": self._hours_since_iso(latest_options),
+        }
+        stale_sources = [name for name, hours in age_map.items() if hours is not None and hours > 24]
+        critical_stale_sources = [name for name, hours in age_map.items() if hours is not None and hours > 72]
+        known_hours = [hours for hours in age_map.values() if hours is not None]
         status = "healthy"
         note = "Recent data activity looks healthy."
         if (
@@ -2928,9 +3846,15 @@ class WorkflowService:
         ):
             status = "fragile"
             note = "No recent market, intelligence, financials, dark-pool, or options data has been recorded."
+        elif critical_stale_sources:
+            status = "fragile"
+            note = f"Critical data sources are stale: {', '.join(critical_stale_sources)}."
         elif len(recent_data_failures) >= 3:
             status = "warning"
             note = "Recent data fetches show repeated failures. Check providers, keys, network, or local file paths."
+        elif stale_sources:
+            status = "warning"
+            note = f"Some data sources are stale: {', '.join(stale_sources)}."
         elif recent_data_failures:
             status = "warning"
             note = "There are recent data fetch failures, but the data layer is still partially active."
@@ -2951,6 +3875,10 @@ class WorkflowService:
             "recent_failure_count": len(recent_data_failures),
             "recent_failure_operations": [item["operation"] for item in recent_data_failures],
             "recent_failure_counts": failure_counts,
+            "stale_sources": stale_sources,
+            "critical_stale_sources": critical_stale_sources,
+            "source_age_hours": age_map,
+            "max_stale_hours": max(known_hours) if known_hours else None,
         }
 
     def _runtime_health_summary(self) -> dict:
@@ -2959,6 +3887,8 @@ class WorkflowService:
         latest_strategy_ts = ""
         latest_terminal_run = None
         latest_terminal_ts = ""
+        latest_programmer_run = None
+        latest_programmer_ts = ""
         for session in self.sessions.values():
             for item in session.strategy_training_log:
                 ts = item.get("timestamp") or ""
@@ -2966,6 +3896,11 @@ class WorkflowService:
                     latest_strategy_ts = ts
                     latest_strategy_log = item
                     latest_strategy_session = session
+            for run in session.programmer_runs:
+                ts = run.get("timestamp") or ""
+                if ts >= latest_programmer_ts:
+                    latest_programmer_ts = ts
+                    latest_programmer_run = run
             for run in session.terminal_integration_runs:
                 test = run.get("terminal_test") or {}
                 ts = test.get("timestamp") or run.get("timestamp") or ""
@@ -2981,19 +3916,31 @@ class WorkflowService:
         terminal_note = "当前还没有终端测试记录。"
         llm_status = "warning"
         llm_note = "当前还没有 LLM 运行摘要。"
+        research_age_hours = self._hours_since_iso(latest_strategy_ts)
+        repair_age_hours = self._hours_since_iso(latest_programmer_ts or latest_strategy_ts)
+        terminal_age_hours = self._hours_since_iso(latest_terminal_ts)
 
         if latest_strategy_log:
             research = latest_strategy_log.get("research_summary") or {}
+            research_reliability = research.get("research_reliability_summary") or {}
             gate = (research.get("final_release_gate_summary") or {}).get("gate_status") or "unknown"
             robustness = (research.get("robustness_summary") or {}).get("grade") or "unknown"
-            if gate == "passed" and robustness == "strong":
+            coverage_blocked = bool((research.get("final_release_gate_summary") or {}).get("coverage_gate_blocked"))
+            if research_reliability.get("status") == "healthy":
                 research_status = "healthy"
-                research_note = "最新策略研究通过发布门，且稳健性较强。"
-            elif gate == "blocked" or robustness == "fragile":
+                research_note = str(research_reliability.get("note") or "最新策略研究可靠性较强。")
+            elif research_reliability.get("status") == "fragile" or gate == "blocked" or robustness == "fragile" or coverage_blocked:
                 research_status = "fragile"
-                research_note = "最新策略研究仍被发布门阻塞，或稳健性不足。"
+                research_note = str(research_reliability.get("note") or "最新策略研究仍被发布门阻塞，或稳健性/回测覆盖不足。")
             else:
-                research_note = "最新策略研究已完成，但仍需继续观察 gate 与稳健性。"
+                research_note = str(research_reliability.get("note") or "最新策略研究已完成，但仍需继续观察 gate 与稳健性。")
+
+            if research_age_hours is not None and research_age_hours > 72:
+                research_status = "fragile"
+                research_note = f"最近策略研究结果已过期（{research_age_hours}h），不适合继续长期依赖。"
+            elif research_age_hours is not None and research_age_hours > 24 and research_status == "healthy":
+                research_status = "warning"
+                research_note = f"最近策略研究结果已有一定时效性压力（{research_age_hours}h）。"
 
             if latest_strategy_session:
                 recent_logs = latest_strategy_session.strategy_training_log[-5:]
@@ -3008,44 +3955,157 @@ class WorkflowService:
                 else:
                     repair_note = "修复路线已有一定稳定性，但仍未完全收敛。"
 
+            if latest_programmer_run:
+                chain = latest_programmer_run.get("repair_chain_summary") or {}
+                chain_status = chain.get("chain_status")
+                if chain_status == "healthy":
+                    repair_status = "healthy"
+                elif chain_status == "fragile":
+                    repair_status = "fragile"
+                elif chain_status == "warning" and repair_status == "healthy":
+                    repair_status = "warning"
+                if chain.get("note"):
+                    repair_note = str(chain.get("note"))
+
+            if repair_age_hours is not None and repair_age_hours > 72:
+                repair_status = "fragile"
+                repair_note = f"最近修复链结果已过期（{repair_age_hours}h），需要重新验证当前修复基线。"
+            elif repair_age_hours is not None and repair_age_hours > 24 and repair_status == "healthy":
+                repair_status = "warning"
+                repair_note = f"最近修复链结果已有一定时效性压力（{repair_age_hours}h）。"
+
         latest_terminal_runtime = {}
+        latest_terminal_reliability = {}
         if latest_terminal_run:
             latest_terminal_runtime = latest_terminal_run.get("terminal_runtime_summary") or self._build_terminal_runtime_summary(latest_terminal_run)
-            terminal_status = latest_terminal_runtime.get("status") or "warning"
-            terminal_note = latest_terminal_runtime.get("note") or "终端接入已有测试记录，但仍建议继续检查返回结构和 endpoint 完整性。"
+            latest_terminal_reliability = latest_terminal_run.get("terminal_reliability_summary") or self._build_terminal_reliability_summary({**latest_terminal_run, "terminal_runtime_summary": latest_terminal_runtime})
+            terminal_status = latest_terminal_reliability.get("status") or latest_terminal_runtime.get("status") or "warning"
+            terminal_note = latest_terminal_reliability.get("note") or latest_terminal_runtime.get("note") or "终端接入已有测试记录，但仍建议继续检查返回结构和 endpoint 完整性。"
+            if terminal_age_hours is not None and terminal_age_hours > 72:
+                terminal_status = "fragile"
+                terminal_note = f"最近终端测试结果已过期（{terminal_age_hours}h），应重新执行 readiness 和 smoke test。"
+            elif terminal_age_hours is not None and terminal_age_hours > 24 and terminal_status == "healthy":
+                terminal_status = "warning"
+                terminal_note = f"最近终端测试结果已有一定时效性压力（{terminal_age_hours}h）。"
 
         data_health = self._data_health_snapshot()
-        data_status = "healthy"
-        data_note = "最近数据层没有明显失败。"
-        if data_health.get("recent_failure_count", 0) > 0:
-            data_status = "warning"
-            data_note = "最近存在数据查询失败，建议检查 provider、网络或本地路径。"
-        if (
-            not data_health.get("latest_market_timestamp")
-            and not data_health.get("latest_intelligence_timestamp")
-            and not data_health.get("latest_financials_timestamp")
-            and not data_health.get("latest_dark_pool_timestamp")
-            and not data_health.get("latest_options_timestamp")
-        ):
-            data_status = "fragile"
-            data_note = "当前还没有任何有效数据更新记录。"
+        data_status = str(data_health.get("status") or "warning")
+        data_note = str(data_health.get("note") or "当前还没有数据健康摘要。")
 
         llm_description = self.llm_runtime.describe()
+        llm_usage = self.llm_runtime.usage_snapshot()
+        llm_provider_runtime = self.llm_runtime.provider_runtime_summary()
+        llm_aggregate = llm_usage.get("aggregate") or {}
         llm_tasks = llm_description.get("tasks", {})
         fallback_tasks = [name for name, item in llm_tasks.items() if item.get("generation_mode") == "template_fallback"]
         live_tasks = [name for name, item in llm_tasks.items() if item.get("generation_mode") == "live_llm"]
+        api_request_count = int(llm_aggregate.get("api_request_count", 0))
+        total_tokens = int(llm_aggregate.get("total_tokens", 0))
+        fallback_ratio = float(llm_aggregate.get("fallback_ratio", 0.0))
+        recent_fallback_ratio = float(llm_aggregate.get("recent_fallback_ratio", 0.0))
+        cache_hit_ratio = float(llm_aggregate.get("cache_hit_ratio", 0.0))
         if not llm_description.get("enabled"):
             llm_status = "fragile"
             llm_note = "LLM runtime 当前被禁用，关键研究与总结任务将退回 fallback。"
         elif live_tasks and not fallback_tasks:
             llm_status = "healthy"
-            llm_note = "关键 LLM 任务当前都走 live provider。"
+            llm_note = f"关键 LLM 任务当前都走 live provider。累计请求 {api_request_count} 次，总 token {total_tokens}。"
         elif live_tasks and fallback_tasks:
             llm_status = "warning"
-            llm_note = "当前 LLM 任务处于 live 与 fallback 混合状态，建议补齐缺失凭据。"
+            llm_note = f"当前 LLM 任务处于 live 与 fallback 混合状态，建议补齐缺失凭据。累计请求 {api_request_count} 次，总 token {total_tokens}。"
         else:
             llm_status = "fragile"
-            llm_note = "当前所有 LLM 任务都在 fallback 模式下运行。"
+            llm_note = f"当前所有 LLM 任务都在 fallback 模式下运行。累计请求 {api_request_count} 次，总 token {total_tokens}。"
+
+        if llm_status == "healthy" and recent_fallback_ratio > 0.25:
+            llm_status = "warning"
+            llm_note = f"最近 LLM 调用 fallback 占比偏高（{recent_fallback_ratio:.0%}），建议检查 provider 稳定性。累计请求 {api_request_count} 次，总 token {total_tokens}。"
+        elif llm_status == "warning" and recent_fallback_ratio > 0.6:
+            llm_status = "fragile"
+            llm_note = f"最近 LLM 调用大多落到 fallback（{recent_fallback_ratio:.0%}），研究与总结质量存在明显风险。累计请求 {api_request_count} 次，总 token {total_tokens}。"
+
+        research_actions: list[str] = []
+        if gate == "blocked" if latest_strategy_log else False:
+            research_actions.append("回到策略页，先处理当前 winner 的 gate blockers 和 next_iteration_focus。")
+        if research_age_hours is not None and research_age_hours > 24:
+            research_actions.append("重新运行至少一轮策略研究，刷新当前 research baseline。")
+        if latest_strategy_log and ((latest_strategy_log.get("research_summary") or {}).get("final_release_gate_summary") or {}).get("coverage_gate_blocked"):
+            research_actions.append("优先扩充本地历史样本或更换更完整的数据包，再重新评估候选。")
+        if not research_actions:
+            research_actions.append("维持当前研究基线，继续观察新的训练输入变化。")
+
+        repair_actions: list[str] = []
+        latest_repair_chain = (latest_programmer_run or {}).get("repair_chain_summary") or {}
+        if latest_repair_chain.get("actions"):
+            repair_actions.extend(list(latest_repair_chain.get("actions") or []))
+        if repair_status == "fragile":
+            repair_actions.append("回到策略页查看 Programmer Agent 的 rollback、promotion 和 stability 结论。")
+        if repair_age_hours is not None and repair_age_hours > 24:
+            repair_actions.append("重新验证最近一次代码修复基线，避免沿用过期 patch。")
+        if not repair_actions:
+            repair_actions.append("当前修复链可继续沿既有主路线推进。")
+        repair_actions = list(dict.fromkeys(repair_actions))
+
+        terminal_actions: list[str] = []
+        if latest_terminal_reliability.get("next_action") or latest_terminal_runtime.get("next_action"):
+            terminal_actions.append(str(latest_terminal_reliability.get("next_action") or latest_terminal_runtime.get("next_action")))
+        if terminal_age_hours is not None and terminal_age_hours > 24:
+            terminal_actions.append("重新执行 terminal readiness 和 smoke test，刷新终端契约置信度。")
+        if not terminal_actions:
+            terminal_actions.append("当前终端接入状态稳定，可继续进入更强联通验证。")
+
+        data_actions: list[str] = []
+        if data_health.get("critical_stale_sources"):
+            data_actions.append(f"优先刷新过期最严重的数据源: {', '.join(data_health.get('critical_stale_sources') or [])}。")
+        elif data_health.get("stale_sources"):
+            data_actions.append(f"重新拉取这些 stale 数据源: {', '.join(data_health.get('stale_sources') or [])}。")
+        if data_health.get("recent_failure_count", 0) > 0:
+            data_actions.append("检查 provider、key、本地路径和网络状态，再重试数据抓取。")
+        if not data_actions:
+            data_actions.append("当前数据层新鲜度可接受，继续观察增量更新。")
+
+        llm_actions: list[str] = []
+        if recent_fallback_ratio > 0.25:
+            llm_actions.append("检查当前 live provider 凭据和可用性，降低近期 fallback 压力。")
+        if fallback_tasks:
+            llm_actions.append(f"优先补齐这些任务的 live provider: {', '.join(fallback_tasks[:5])}。")
+        if not llm_actions:
+            llm_actions.append("当前 LLM 运行质量可接受，继续监控 fallback 与缓存效率。")
+
+        research_revalidation_required = bool(
+            latest_strategy_log
+            and (
+                gate == "blocked"
+                or bool((latest_strategy_log.get("research_summary") or {}).get("final_release_gate_summary", {}).get("coverage_gate_blocked"))
+                or research_status != "healthy"
+                or (research_age_hours is not None and research_age_hours > 24)
+            )
+        )
+        repair_revalidation_required = bool(
+            latest_strategy_log
+            and (
+                repair_status != "healthy"
+                or (repair_age_hours is not None and repair_age_hours > 24)
+            )
+        )
+        terminal_revalidation_required = bool(
+            latest_terminal_run
+            and (
+                terminal_status != "healthy"
+                or (terminal_age_hours is not None and terminal_age_hours > 24)
+            )
+        )
+        data_revalidation_required = bool(
+            data_status != "healthy"
+            or data_health.get("stale_sources")
+            or data_health.get("critical_stale_sources")
+            or data_health.get("recent_failure_count", 0) > 0
+        )
+        llm_revalidation_required = bool(
+            llm_status != "healthy"
+            or recent_fallback_ratio > 0.25
+            or bool(fallback_tasks)
+        )
 
         statuses = [research_status, repair_status, terminal_status, data_status, llm_status]
         overall_status = "healthy"
@@ -3057,25 +4117,119 @@ class WorkflowService:
             overall_status = "warning"
             overall_note = "整体可用，但仍有链路需要继续观察和修复。"
 
+        overall_revalidation_required = any([
+            research_revalidation_required,
+            repair_revalidation_required,
+            terminal_revalidation_required,
+            data_revalidation_required,
+            llm_revalidation_required,
+        ])
+
+        recommended_actions = list(dict.fromkeys([
+            research_actions[0],
+            repair_actions[0],
+            terminal_actions[0],
+            data_actions[0],
+            llm_actions[0],
+        ]))
+
+        runtime_blockers: list[str] = []
+        if research_status == "fragile":
+            runtime_blockers.append("research")
+        if repair_status == "fragile":
+            runtime_blockers.append("repair")
+        if terminal_status == "fragile":
+            runtime_blockers.append("terminal")
+        if data_status == "fragile":
+            runtime_blockers.append("data")
+        if llm_status == "fragile":
+            runtime_blockers.append("llm")
+
+        if overall_status == "healthy" and not overall_revalidation_required:
+            recovery_status = "healthy"
+            next_mode = "continue"
+            recovery_note = "Current runtime posture is healthy enough to continue normal use without forced revalidation."
+        elif runtime_blockers:
+            recovery_status = "fragile"
+            next_mode = "pause_and_recover"
+            recovery_note = "At least one critical chain is too weak for sustained use; pause reliance on stale outputs and recover the blocked modules first."
+        elif overall_revalidation_required:
+            recovery_status = "warning"
+            next_mode = "revalidate"
+            recovery_note = "The platform is still usable, but one or more chains should be revalidated before continued reliance."
+        else:
+            recovery_status = "warning"
+            next_mode = "stabilize"
+            recovery_note = "The platform is usable, but should be stabilized further before long unattended operation."
+
+        runtime_recovery_summary = {
+            "status": recovery_status,
+            "next_mode": next_mode,
+            "revalidation_required": overall_revalidation_required,
+            "blockers": runtime_blockers,
+            "note": recovery_note,
+            "actions": recommended_actions,
+        }
+
         return {
             "status": overall_status,
             "note": overall_note,
-            "research": {"status": research_status, "note": research_note, "timestamp": latest_strategy_ts or None},
-            "repair": {"status": repair_status, "note": repair_note, "timestamp": latest_strategy_ts or None},
+            "recommended_actions": recommended_actions,
+            "revalidation_required": overall_revalidation_required,
+            "runtime_recovery_summary": runtime_recovery_summary,
+            "research": {
+                "status": research_status,
+                "note": research_note,
+                "timestamp": latest_strategy_ts or None,
+                "age_hours": research_age_hours,
+                "revalidation_required": research_revalidation_required,
+                "recovery_actions": research_actions,
+            },
+            "repair": {
+                "status": repair_status,
+                "note": repair_note,
+                "timestamp": latest_programmer_ts or latest_strategy_ts or None,
+                "age_hours": repair_age_hours,
+                "revalidation_required": repair_revalidation_required,
+                "recovery_actions": repair_actions,
+                "repair_chain_summary": (latest_programmer_run or {}).get("repair_chain_summary") or {},
+            },
             "terminal": {
                 "status": terminal_status,
                 "note": terminal_note,
                 "timestamp": latest_terminal_ts or None,
-                "next_action": latest_terminal_runtime.get("next_action"),
-                "primary_route": latest_terminal_runtime.get("primary_route"),
+                "age_hours": terminal_age_hours,
+                "next_action": latest_terminal_reliability.get("next_action") or latest_terminal_runtime.get("next_action"),
+                "primary_route": latest_terminal_reliability.get("primary_route") or latest_terminal_runtime.get("primary_route"),
+                "revalidation_required": terminal_revalidation_required or bool(latest_terminal_reliability.get("revalidation_required")),
+                "recovery_actions": terminal_actions,
+                "terminal_reliability_summary": latest_terminal_reliability,
             },
-            "data": {"status": data_status, "note": data_note},
+            "data": {
+                "status": data_status,
+                "note": data_note,
+                "revalidation_required": data_revalidation_required,
+                "recovery_actions": data_actions,
+            },
             "llm": {
                 "status": llm_status,
                 "note": llm_note,
                 "live_task_count": len(live_tasks),
                 "fallback_task_count": len(fallback_tasks),
                 "fallback_tasks": fallback_tasks[:8],
+                "api_request_count": api_request_count,
+                "total_tokens": total_tokens,
+                "live_request_count": int(llm_aggregate.get("live_request_count", 0)),
+                "fallback_request_count": int(llm_aggregate.get("fallback_request_count", 0)),
+                "fallback_ratio": fallback_ratio,
+                "recent_fallback_ratio": recent_fallback_ratio,
+                "cache_hit_ratio": cache_hit_ratio,
+                "recent_call_count": int(llm_aggregate.get("recent_call_count", 0)),
+                "rotated_credential_count": int(llm_aggregate.get("rotated_credential_count", 0)),
+                "active_api_key_envs": llm_aggregate.get("active_api_key_envs", []),
+                "provider_runtime": llm_provider_runtime,
+                "revalidation_required": llm_revalidation_required,
+                "recovery_actions": llm_actions,
             },
         }
 
@@ -3388,6 +4542,7 @@ class WorkflowService:
                 "phase": session.phase,
             }
         )
+        self._persist_session(session)
 
     def _archive_report(
         self,
@@ -3408,6 +4563,30 @@ class WorkflowService:
                 "body": body,
             }
         )
+        self._persist_session(session)
+
+
+    def _debug_preview(self, payload):
+        if payload is None:
+            return None
+        if isinstance(payload, dict):
+            items = list(payload.items())
+            preview = {str(key): self._debug_preview(value) for key, value in items[:10]}
+            if len(items) > 10:
+                preview["__more_keys__"] = len(items) - 10
+            return preview
+        if isinstance(payload, list):
+            preview = [self._debug_preview(value) for value in payload[:5]]
+            if len(payload) > 5:
+                preview.append({"__more_items__": len(payload) - 5})
+            return preview
+        if isinstance(payload, tuple):
+            return self._debug_preview(list(payload))
+        if isinstance(payload, str):
+            return payload if len(payload) <= 240 else f"{payload[:240]}..."
+        if isinstance(payload, (int, float, bool)):
+            return payload
+        return str(payload)
 
     def _record_agent_activity(
         self,
@@ -3416,6 +4595,8 @@ class WorkflowService:
         operation: str,
         detail: str,
         session_id: UUID | None = None,
+        request_payload=None,
+        response_payload=None,
     ) -> None:
         self.agent_activity_log.append(
             {
@@ -3425,6 +4606,8 @@ class WorkflowService:
                 "operation": operation,
                 "detail": detail,
                 "session_id": str(session_id) if session_id else None,
+                "request_payload": self._debug_preview(request_payload),
+                "response_payload": self._debug_preview(response_payload),
             }
         )
         self.agent_activity_log = self.agent_activity_log[-200:]

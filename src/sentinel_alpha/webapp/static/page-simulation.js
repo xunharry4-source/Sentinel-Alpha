@@ -1,5 +1,6 @@
 const CAMPAIGN_STORAGE_PREFIX = "sentinel-alpha:campaign:";
 const CAMPAIGN_STATE_PREFIX = "sentinel-alpha:campaign-state:";
+const REPORT_REDIRECT_NOTE_KEY = "sentinel-alpha:report-redirect-note";
 const DEFAULT_CAPITAL_BASE = 30000;
 const DAILY_SEGMENT_ENDS = [15, 31, 47, 63, 77];
 
@@ -242,8 +243,29 @@ const state = {
   chartFocusDayIndex: null,
 };
 
+function setSimulationNote(message, emphasize = false) {
+  const target = document.querySelector("#simulation-note");
+  if (!target) return;
+  target.textContent = message;
+  if (emphasize) {
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+}
+
 function activeSessionId() {
-  return loadStoredSnapshot()?.session_id || "anonymous";
+  return loadSnapshotSessionIdFromUrl() || loadStoredSnapshot()?.session_id || "anonymous";
+}
+
+function currentSessionSnapshot() {
+  const urlSessionId = loadSnapshotSessionIdFromUrl();
+  const stored = loadStoredSnapshot();
+  if (urlSessionId && stored?.session_id === urlSessionId) {
+    return stored;
+  }
+  if (urlSessionId) {
+    return { ...(stored || {}), session_id: urlSessionId };
+  }
+  return stored;
 }
 
 function campaignKey() {
@@ -707,6 +729,7 @@ function initialCampaignState() {
     realizedPnl: 0,
     accumulatedCost: 0,
     actionLog: [],
+    segmentEnteredAt: new Date().toISOString(),
     completed: false,
   };
 }
@@ -735,6 +758,9 @@ function loadCampaignState() {
       return reset;
     }
     stored.capitalLocked = true;
+    if (!stored.segmentEnteredAt) {
+      stored.segmentEnteredAt = new Date().toISOString();
+    }
     return stored;
   }
   const created = initialCampaignState();
@@ -744,6 +770,19 @@ function loadCampaignState() {
 
 function persistState() {
   writeJson(campaignStateKey(), state.campaignState);
+}
+
+function markSegmentEntry() {
+  state.campaignState.segmentEnteredAt = new Date().toISOString();
+}
+
+function currentDecisionLatencySeconds() {
+  const enteredAt = Date.parse(state.campaignState.segmentEnteredAt || "");
+  if (!Number.isFinite(enteredAt)) {
+    return 120;
+  }
+  const elapsed = Math.max(5, Math.round((Date.now() - enteredAt) / 1000));
+  return Math.min(21600, elapsed);
 }
 
 function resetCampaignProgress() {
@@ -1157,12 +1196,31 @@ function renderLog() {
     target.innerHTML = `<tr><td colspan="14">还没有日度决策记录。</td></tr>`;
     return;
   }
+  const statusLabel = (status) => ({
+    filled: "已成交",
+    partial_fill: "部分成交",
+    unfilled: "未触发",
+    rejected: "已拒绝",
+    hold: "观望",
+  }[status] || status);
+  const reasonLabel = (reason) => ({
+    no_order: "未下单",
+    hold: "主动观望",
+    filled: "正常成交",
+    liquidity_limited: "流动性受限",
+    limit_not_triggered: "限价未触发",
+    insufficient_liquidity: "流动性不足",
+    notional_too_small: "金额过小",
+    quantity_too_small: "数量过小",
+    insufficient_cash: "现金不足",
+    no_position: "无持仓可卖",
+  }[reason] || reason || "未说明");
   target.innerHTML = logs.map((entry, index) => `
     <tr>
       <td>${index + 1}</td>
       <td>${entry.dayLabel}</td>
       <td>${entry.action.toUpperCase()}</td>
-      <td>${entry.status.toUpperCase()}</td>
+      <td><span class="trade-status-badge trade-status-${entry.status}">${statusLabel(entry.status)}</span></td>
       <td>${entry.amount > 0 ? formatMoney(entry.amount) : "-"}</td>
       <td>${entry.shares > 0 ? entry.shares.toFixed(2) : "-"}</td>
       <td>${entry.limitPrice > 0 ? entry.limitPrice.toFixed(2) : "-"}</td>
@@ -1172,7 +1230,7 @@ function renderLog() {
       <td>${entry.regimeLabel}</td>
       <td>${formatPct(entry.dayReturnPct)}</td>
       <td>${formatPct(entry.dayDrawdownPct)}</td>
-      <td>${entry.note}</td>
+      <td>${entry.note}<div class="trade-log-subnote">请求 ${entry.requestedAmount > 0 ? formatMoney(entry.requestedAmount) : "-"} / 流动性上限 ${entry.liquidityCap > 0 ? formatMoney(entry.liquidityCap) : "-"} / 原因 ${reasonLabel(entry.executionReason)}</div></td>
     </tr>
   `).join("");
 }
@@ -1192,6 +1250,30 @@ function renderSummary() {
   const sentimentHeat = Math.round(Math.abs(day.noiseSentiment) * 100);
   const campaignStartClose = state.campaign.days[0].close;
   const campaignReturnPct = ((pauseSnapshot.close / campaignStartClose) - 1) * 100;
+  const currentLiquidityCap = estimateSegmentLiquidity(tradingDay, tradingPauseSnapshot.close);
+  const statusLabel = (status) => ({
+    filled: "已成交",
+    partial_fill: "部分成交",
+    unfilled: "未触发",
+    rejected: "已拒绝",
+    hold: "观望",
+  }[status] || status);
+  const latestExecution = state.campaignState.actionLog[state.campaignState.actionLog.length - 1];
+  const executionLabel = latestExecution
+    ? `${latestExecution.action.toUpperCase()} / ${statusLabel(latestExecution.status)} / ${latestExecution.note}`
+    : "暂无执行记录";
+  let noiseExecutionNote = `当前噪音热度 ${sentimentHeat}/100，市场叙事为 ${marketPulseLabel(day.noiseSentiment)}。`;
+  if (latestExecution?.executionReason === "limit_not_triggered") {
+    noiseExecutionNote = `当前噪音热度 ${sentimentHeat}/100，但最近一次操作属于试探挂单未触发，更像在观察情绪而非直接执行。`;
+  } else if (latestExecution?.executionReason === "liquidity_limited") {
+    noiseExecutionNote = `当前噪音热度 ${sentimentHeat}/100，最近一次成交被流动性限制切断，说明情绪动作与成交能力不匹配。`;
+  } else if (latestExecution?.executionReason === "insufficient_cash" || latestExecution?.executionReason === "no_position") {
+    noiseExecutionNote = `当前噪音热度 ${sentimentHeat}/100，最近一次操作被账户约束拦截，说明执行冲动已超过当前可行动作范围。`;
+  } else if (latestExecution?.status === "filled" && Math.abs(day.noiseSentiment) >= 0.7) {
+    noiseExecutionNote = `当前噪音热度 ${sentimentHeat}/100，最近一次在高情绪叙事下直接成交，需警惕噪音驱动执行。`;
+  } else if (latestExecution?.status === "hold" && Math.abs(day.noiseSentiment) >= 0.7) {
+    noiseExecutionNote = `当前噪音热度 ${sentimentHeat}/100，但最近一次选择观望，说明用户在高噪音时仍保持克制。`;
+  }
   document.querySelector("#campaign-chip").textContent = `${state.campaign.dayCount} 个交易日 / 5 分钟线`;
   document.querySelector("#step-chip").textContent = `Day ${state.campaignState.currentDayIndex + 1} / ${state.campaign.dayCount}`;
   document.querySelector("#segment-chip").textContent = `第 ${state.campaignState.currentSegmentIndex + 1} 时段 / 5`;
@@ -1210,7 +1292,7 @@ function renderSummary() {
   document.querySelector("#selected-k-low").textContent = Number(selectedSnapshot.low).toFixed(2);
   document.querySelector("#selected-k-close").textContent = Number(selectedSnapshot.close).toFixed(2);
   document.querySelector("#noise-headline").textContent = day.noiseHeadline;
-  document.querySelector("#noise-body").textContent = day.noiseBody;
+  document.querySelector("#noise-body").textContent = `${day.noiseBody} ${noiseExecutionNote}`;
   document.querySelector("#noise-channel").textContent = `regime:${day.regimeKey}`;
   document.querySelector("#noise-sentiment").textContent = `${marketPulseLabel(day.noiseSentiment)} · ${day.noiseSentiment.toFixed(2)}`;
   document.querySelector("#position-state").textContent = state.campaignState.shares > 0 ? `${state.campaignState.shares.toFixed(2)} 股 @ ${state.campaignState.avgEntry.toFixed(2)}` : "Flat";
@@ -1219,6 +1301,8 @@ function renderSummary() {
   document.querySelector("#pnl-state").textContent = formatMoney(netPnl);
   document.querySelector("#cost-state").textContent = formatMoney(state.campaignState.accumulatedCost);
   document.querySelector("#equity-state").textContent = formatMoney(equity);
+  document.querySelector("#liquidity-state").textContent = formatMoney(currentLiquidityCap);
+  document.querySelector("#execution-state").textContent = executionLabel;
   document.querySelector("#day-open").textContent = pauseSnapshot.open.toFixed(2);
   document.querySelector("#day-high").textContent = pauseSnapshot.high.toFixed(2);
   document.querySelector("#day-low").textContent = pauseSnapshot.low.toFixed(2);
@@ -1304,6 +1388,14 @@ function findLimitFillPrice(action, day, limitPrice) {
   return null;
 }
 
+function estimateSegmentLiquidity(day, referencePrice) {
+  const visibleBars = currentVisibleBars(day);
+  const tradedVolume = visibleBars.reduce((sum, bar) => sum + Math.max(0, Number(bar.volume || 0)), 0);
+  const participationRate = 0.18;
+  const liquidityShares = tradedVolume * participationRate;
+  return Math.max(0, liquidityShares * Math.max(0, referencePrice || 0));
+}
+
 function advanceSegmentOrDay() {
   const isLastSegment = state.campaignState.currentSegmentIndex >= DAILY_SEGMENT_ENDS.length - 1;
   const isLastDay = state.campaignState.currentDayIndex >= state.campaign.dayCount - 1;
@@ -1334,6 +1426,7 @@ function advanceToNextDay(noteWhenMoved, noteWhenCompleted) {
   }
   state.campaignState.currentDayIndex += 1;
   state.campaignState.currentSegmentIndex = 0;
+  markSegmentEntry();
   syncLimitPriceToCurrentClose();
   persistState();
   document.querySelector("#simulation-note").textContent = noteWhenMoved;
@@ -1348,55 +1441,103 @@ function applyTradeDecision(action, options = {}) {
   const limitPrice = resolveLimitPrice(referencePrice);
   const fillPrice = action === "hold" ? null : findLimitFillPrice(action, day, limitPrice);
   const requestedAmount = resolveRequestedNotional(fillPrice || limitPrice || referencePrice, options.forceAll === true);
+  const liquidityCap = action === "hold" ? 0 : estimateSegmentLiquidity(day, fillPrice || limitPrice || referencePrice);
   let executedAmount = 0;
   let executedShares = 0;
   let appliedFillPrice = 0;
   let success = false;
   let message = "本次未下单。";
   let status = "hold";
+  let executionReason = "no_order";
+
+  const pushActionLog = () => {
+    state.campaignState.actionLog.push({
+      dayIndex: day.dayIndex,
+      dayLabel: day.dateLabel,
+      action,
+      status,
+      amount: executedAmount,
+      requestedAmount,
+      liquidityCap,
+      shares: executedShares,
+      limitPrice,
+      fillPrice: appliedFillPrice,
+      orderMode: state.campaignState.orderMode,
+      cashAfter: state.campaignState.cash,
+      positionAfter: state.campaignState.shares,
+      regimeLabel: day.regimeLabel,
+      dayReturnPct: pauseSnapshot.returnPct,
+      dayDrawdownPct: pauseSnapshot.drawdownPct,
+      noiseSentiment: day.noiseSentiment,
+      executionReason,
+      note: message,
+    });
+  };
 
   if (action === "buy" && state.campaignState.cash > 0 && requestedAmount > 0) {
     if (!fillPrice) {
+      message = `买入限价 ${limitPrice.toFixed(2)} 今日未触发，订单未成交。`;
+      status = "unfilled";
+      executionReason = "limit_not_triggered";
+      pushActionLog();
       return {
         success: false,
-      message: `买入限价 ${limitPrice.toFixed(2)} 今日未触发，订单未成交。`,
+        message,
         executedAmount: 0,
         executedShares: 0,
         fillPrice: 0,
+        loggedAction: true,
       };
     }
-    const notional = Math.min(requestedAmount, state.campaignState.cash);
-    const cost = notional * costRate;
-    const shares = Math.max(0, (notional - cost) / fillPrice);
+    const desiredNotional = Math.min(requestedAmount, state.campaignState.cash);
+    const executableNotional = Math.min(desiredNotional, liquidityCap);
+    const cost = executableNotional * costRate;
+    const shares = Math.max(0, (executableNotional - cost) / fillPrice);
     if (shares > 0) {
       state.campaignState.capitalLocked = true;
-      const totalPositionCost = state.campaignState.avgEntry * state.campaignState.shares + notional;
-      state.campaignState.cash -= notional;
+      const totalPositionCost = state.campaignState.avgEntry * state.campaignState.shares + executableNotional;
+      state.campaignState.cash -= executableNotional;
       state.campaignState.shares += shares;
       state.campaignState.avgEntry = state.campaignState.shares > 0 ? totalPositionCost / state.campaignState.shares : 0;
       state.campaignState.accumulatedCost += cost;
-      executedAmount = notional;
+      executedAmount = executableNotional;
       executedShares = shares;
       appliedFillPrice = fillPrice;
       success = true;
-      message = `买入限价 ${limitPrice.toFixed(2)} 已触发，按 ${fillPrice.toFixed(2)} 成交 ${shares.toFixed(2)} 股。`;
-      status = "filled";
+      if (executableNotional + 1e-6 < desiredNotional) {
+        message = `买入限价 ${limitPrice.toFixed(2)} 已触发，但受当前时段流动性限制，仅按 ${fillPrice.toFixed(2)} 部分成交 ${shares.toFixed(2)} 股。`;
+        status = "partial_fill";
+        executionReason = "liquidity_limited";
+      } else {
+        message = `买入限价 ${limitPrice.toFixed(2)} 已触发，按 ${fillPrice.toFixed(2)} 成交 ${shares.toFixed(2)} 股。`;
+        status = "filled";
+        executionReason = "filled";
+      }
     } else {
-      message = "买入金额过小，未形成有效成交。";
+      message = liquidityCap <= 0
+        ? "当前时段流动性不足，买入指令被拒绝。"
+        : "买入金额过小，未形成有效成交。";
       status = "rejected";
+      executionReason = liquidityCap <= 0 ? "insufficient_liquidity" : "notional_too_small";
     }
   } else if (action === "sell" && state.campaignState.shares > 0 && requestedAmount > 0) {
     if (!fillPrice) {
+      message = `卖出限价 ${limitPrice.toFixed(2)} 今日未触发，订单未成交。`;
+      status = "unfilled";
+      executionReason = "limit_not_triggered";
+      pushActionLog();
       return {
         success: false,
-      message: `卖出限价 ${limitPrice.toFixed(2)} 今日未触发，订单未成交。`,
+        message,
         executedAmount: 0,
         executedShares: 0,
         fillPrice: 0,
+        loggedAction: true,
       };
     }
     const maxSellNotional = state.campaignState.shares * fillPrice;
-    const gross = Math.min(requestedAmount, maxSellNotional);
+    const desiredGross = Math.min(requestedAmount, maxSellNotional);
+    const gross = Math.min(desiredGross, liquidityCap);
     const cost = gross * costRate;
     const sharesToSell = Math.min(state.campaignState.shares, gross / fillPrice);
     if (sharesToSell > 0) {
@@ -1414,53 +1555,47 @@ function applyTradeDecision(action, options = {}) {
       executedShares = sharesToSell;
       appliedFillPrice = fillPrice;
       success = true;
-      message = options.forceAll
-        ? `卖出限价 ${limitPrice.toFixed(2)} 已触发，全部持仓按 ${fillPrice.toFixed(2)} 成交。`
-        : `卖出限价 ${limitPrice.toFixed(2)} 已触发，按 ${fillPrice.toFixed(2)} 卖出 ${sharesToSell.toFixed(2)} 股。`;
-      status = "filled";
+      if (gross + 1e-6 < desiredGross) {
+        message = `卖出限价 ${limitPrice.toFixed(2)} 已触发，但受当前时段流动性限制，仅按 ${fillPrice.toFixed(2)} 部分卖出 ${sharesToSell.toFixed(2)} 股。`;
+        status = "partial_fill";
+        executionReason = "liquidity_limited";
+      } else {
+        message = options.forceAll
+          ? `卖出限价 ${limitPrice.toFixed(2)} 已触发，全部持仓按 ${fillPrice.toFixed(2)} 成交。`
+          : `卖出限价 ${limitPrice.toFixed(2)} 已触发，按 ${fillPrice.toFixed(2)} 卖出 ${sharesToSell.toFixed(2)} 股。`;
+        status = "filled";
+        executionReason = "filled";
+      }
     } else {
-      message = "卖出数量不足，未形成有效成交。";
+      message = liquidityCap <= 0
+        ? "当前时段流动性不足，卖出指令被拒绝。"
+        : "卖出数量不足，未形成有效成交。";
       status = "rejected";
+      executionReason = liquidityCap <= 0 ? "insufficient_liquidity" : "quantity_too_small";
     }
   } else if (action === "hold") {
     success = true;
     state.campaignState.capitalLocked = true;
     message = "本次未下单。";
     status = "hold";
+    executionReason = "hold";
   } else if (action === "buy") {
     message = "可用现金不足，无法买入。";
     status = "rejected";
+    executionReason = "insufficient_cash";
   } else if (action === "sell") {
     message = "当前没有可卖出的持仓。";
     status = "rejected";
+    executionReason = "no_position";
   }
 
-  if (success) {
-    state.campaignState.actionLog.push({
-      dayIndex: day.dayIndex,
-      dayLabel: day.dateLabel,
-      action,
-      status,
-      amount: executedAmount,
-      shares: executedShares,
-      limitPrice,
-      fillPrice: appliedFillPrice,
-      orderMode: state.campaignState.orderMode,
-      cashAfter: state.campaignState.cash,
-      positionAfter: state.campaignState.shares,
-      regimeLabel: day.regimeLabel,
-      dayReturnPct: pauseSnapshot.returnPct,
-      dayDrawdownPct: pauseSnapshot.drawdownPct,
-      noiseSentiment: day.noiseSentiment,
-      note: message,
-    });
-  }
+  pushActionLog();
 
-  return { success, message, executedAmount, executedShares, fillPrice: appliedFillPrice };
+  return { success, message, executedAmount, executedShares, fillPrice: appliedFillPrice, loggedAction: true };
 }
 
-async function writeBehaviorEvent(action) {
-  const snapshot = loadStoredSnapshot();
+async function writeBehaviorEvent(action, executionStatus = "filled", executionReason = null) {
+  const snapshot = currentSessionSnapshot();
   if (!snapshot?.session_id) {
     return;
   }
@@ -1471,9 +1606,11 @@ async function writeBehaviorEvent(action) {
       scenario_id: `campaign-${day.regimeKey}-${day.dayIndex + 1}`,
       price_drawdown_pct: pauseDaySnapshot(day).drawdownPct,
       action,
+      execution_status: executionStatus,
+      execution_reason: executionReason,
       noise_level: Math.abs(day.noiseSentiment),
       sentiment_pressure: day.noiseSentiment,
-      latency_seconds: 120,
+      latency_seconds: currentDecisionLatencySeconds(),
     }),
   });
 }
@@ -1484,16 +1621,22 @@ async function handleDecision(action, options = {}) {
   }
   try {
     const result = applyTradeDecision(action, options);
+    if (result.loggedAction) {
+      const latestExecution = state.campaignState.actionLog[state.campaignState.actionLog.length - 1];
+      await writeBehaviorEvent(action, latestExecution?.status || "filled", latestExecution?.executionReason || null);
+    }
     if (!result.success) {
+      persistState();
       document.querySelector("#simulation-note").textContent = result.message;
       renderSummary();
       return;
     }
-    await writeBehaviorEvent(action);
     persistState();
     document.querySelector("#simulation-note").textContent = `${result.message} 如需继续，请点击“进入下一段”。`;
     renderSummary();
   } catch (error) {
+    persistState();
+    renderSummary();
     document.querySelector("#simulation-note").textContent = `写入测试行为失败：${error.message}`;
   }
 }
@@ -1507,6 +1650,7 @@ function nextSegment() {
   state.selectedIntradayBarIndex = null;
   state.selectedCampaignCandleIndex = null;
   if (!progress.completed) {
+    markSegmentEntry();
     syncLimitPriceToCurrentClose();
   }
   persistState();
@@ -1553,25 +1697,32 @@ async function skipEntireDay() {
 }
 
 async function completeSimulation() {
-  const snapshot = loadStoredSnapshot();
+  const snapshot = currentSessionSnapshot();
+  const button = document.querySelector("#complete-simulation");
   if (!snapshot?.session_id) {
-    document.querySelector("#simulation-note").textContent = "请先创建会话。";
+    setSimulationNote("请先创建会话。", true);
     return;
   }
   if (!state.campaignState.completed) {
-    document.querySelector("#simulation-note").textContent = "请先完成全部 30-60 天测试，再生成报告。";
+    setSimulationNote("请先完成全部 30-60 天测试，再生成报告。", true);
     return;
   }
   try {
+    if (button) button.disabled = true;
+    setSimulationNote("正在生成测试报告并准备跳转到报告页…", true);
     const latest = await apiRequest(`/api/sessions/${snapshot.session_id}/simulation/complete`, {
       method: "POST",
       body: JSON.stringify({ symbol: "SIM-5M-DAILY-CAMPAIGN" }),
     });
     storeSnapshot(latest);
-    document.querySelector("#simulation-note").textContent = "测试报告已生成。请前往测试报告页查看 Behavioral Profiler 结果。";
-    renderShell("simulation");
+    window.localStorage.setItem(REPORT_REDIRECT_NOTE_KEY, "模拟测试已完成，已自动跳转到测试报告页。");
+    window.location.href = `./report.html?session_id=${encodeURIComponent(latest.session_id)}`;
   } catch (error) {
-    document.querySelector("#simulation-note").textContent = `生成测试报告失败：${error.message}`;
+    const message = `生成测试报告失败：${error.message}`;
+    setSimulationNote(message, true);
+    window.alert(message);
+  } finally {
+    if (button) button.disabled = false;
   }
 }
 
@@ -1641,6 +1792,8 @@ document.querySelector("#order-mode-input")?.addEventListener("change", () => {
 });
 
 (async function bootstrapSimulationPage() {
+  renderShell("simulation");
+  await resolveCurrentSnapshot();
   renderShell("simulation");
   state.campaign = await loadCampaign();
   state.campaignState = loadCampaignState();

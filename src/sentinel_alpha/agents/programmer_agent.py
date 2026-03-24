@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -80,19 +81,10 @@ class ProgrammerAgent:
         prompt = instruction.strip()
         if context:
             prompt = f"{prompt}\n\nContext:\n{context.strip()}"
-        command = [
-            command_path,
-            *self.settings.programmer_agent_args,
-            "--message",
-            prompt,
-            *normalized_targets,
-        ]
-        result = subprocess.run(
-            command,
-            cwd=self.repo_path,
-            capture_output=True,
-            text=True,
-            timeout=self.settings.programmer_agent_timeout_seconds,
+        result, attempted_models, attempted_credentials = self._execute_aider_with_models(
+            command_path=command_path,
+            prompt=prompt,
+            normalized_targets=normalized_targets,
         )
         changed_files = self._changed_files()
         diff = self._git_diff(normalized_targets)
@@ -119,6 +111,8 @@ class ProgrammerAgent:
             "returncode": result.returncode,
             "diff": diff,
             "changed_files": changed_files,
+            "attempted_models": attempted_models,
+            "attempted_api_key_envs": attempted_credentials,
             "commit_hash": commit_hash,
             "commit_error": commit_error,
             "rollback_commit": before_head,
@@ -175,6 +169,7 @@ class ProgrammerAgent:
                 final["rollback_summary"] = self._build_rollback_summary(final)
                 final["promotion_summary"] = self._build_promotion_summary(final)
                 final["stability_summary"] = self._build_stability_summary(final)
+                final["repair_chain_summary"] = self._build_repair_chain_summary(final)
                 return final
             if self._detect_no_progress(attempts):
                 final = dict(result)
@@ -192,6 +187,7 @@ class ProgrammerAgent:
                 final["rollback_summary"] = self._build_rollback_summary(final)
                 final["promotion_summary"] = self._build_promotion_summary(final)
                 final["stability_summary"] = self._build_stability_summary(final)
+                final["repair_chain_summary"] = self._build_repair_chain_summary(final)
                 return final
             current_summary = self._build_failure_summary(attempts)
             current_plan = self._build_repair_plan(attempts, current_summary)
@@ -218,6 +214,7 @@ class ProgrammerAgent:
         final["rollback_summary"] = self._build_rollback_summary(final)
         final["promotion_summary"] = self._build_promotion_summary(final)
         final["stability_summary"] = self._build_stability_summary(final)
+        final["repair_chain_summary"] = self._build_repair_chain_summary(final)
         return final
 
     def _validate_targets(self, target_files: list[str]) -> list[str]:
@@ -244,6 +241,117 @@ class ProgrammerAgent:
             return True
         except ValueError:
             return False
+
+    def _execute_aider_with_models(
+        self,
+        command_path: str,
+        prompt: str,
+        normalized_targets: list[str],
+    ) -> tuple[subprocess.CompletedProcess[str], list[str], list[str]]:
+        provider = str(self.settings.llm_agent_configs.get("programmer_agent", {}).get("provider", self.settings.llm_default_provider))
+        raw_models = self.settings.llm_agent_configs.get("programmer_agent", {}).get("models", self.settings.llm_default_models)
+        models = [str(item) for item in raw_models if str(item).strip()] or list(self.settings.llm_default_models)
+        credentials = self._provider_credentials(provider)
+        attempted_models: list[str] = []
+        attempted_credentials: list[str] = []
+        if not credentials:
+            command = [
+                command_path,
+                *self.settings.programmer_agent_args,
+                "--message",
+                prompt,
+                *normalized_targets,
+            ]
+            result = subprocess.run(
+                command,
+                cwd=self.repo_path,
+                capture_output=True,
+                text=True,
+                timeout=self.settings.programmer_agent_timeout_seconds,
+            )
+            return result, attempted_models, attempted_credentials
+
+        last_result: subprocess.CompletedProcess[str] | None = None
+        for raw_model in models:
+            model_name = self._aider_model_name(provider, raw_model)
+            attempted_models.append(model_name)
+            for index, api_key in enumerate(credentials, start=1):
+                label = f"{provider}#{index}"
+                attempted_credentials.append(label)
+                env = os.environ.copy()
+                env.update(self._provider_env_overrides(provider, api_key))
+                command = [
+                    command_path,
+                    "--model",
+                    model_name,
+                    "--no-show-model-warnings",
+                    *self.settings.programmer_agent_args,
+                    "--message",
+                    prompt,
+                    *normalized_targets,
+                ]
+                result = subprocess.run(
+                    command,
+                    cwd=self.repo_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=self.settings.programmer_agent_timeout_seconds,
+                    env=env,
+                )
+                last_result = result
+                if result.returncode == 0:
+                    return result, attempted_models, attempted_credentials
+                if not self._should_retry_aider(result):
+                    return result, attempted_models, attempted_credentials
+        assert last_result is not None
+        return last_result, attempted_models, attempted_credentials
+
+    def _provider_credentials(self, provider: str) -> list[str]:
+        provider_config = self.settings.llm_provider_envs.get(provider, {})
+        entries = provider_config.get("api_key_envs", [])
+        if not isinstance(entries, list):
+            return []
+        resolved: list[str] = []
+        for item in entries:
+            raw = str(item).strip()
+            if not raw:
+                continue
+            if raw.isupper() and "_" in raw:
+                value = os.getenv(raw, "").strip()
+                if value:
+                    resolved.append(value)
+            else:
+                resolved.append(raw)
+        return resolved
+
+    def _provider_env_overrides(self, provider: str, api_key: str) -> dict[str, str]:
+        if provider == "google":
+            return {
+                "GOOGLE_API_KEY": api_key,
+                "GEMINI_API_KEY": api_key,
+            }
+        if provider == "openai":
+            return {"OPENAI_API_KEY": api_key}
+        return {}
+
+    def _aider_model_name(self, provider: str, raw_model: str) -> str:
+        if "/" in raw_model:
+            return raw_model
+        if provider == "google":
+            return f"gemini/{raw_model}"
+        return raw_model
+
+    def _should_retry_aider(self, result: subprocess.CompletedProcess[str]) -> bool:
+        output = f"{result.stdout}\n{result.stderr}".lower()
+        retryable_tokens = [
+            "rate limit",
+            "quota",
+            "resource exhausted",
+            "api key not valid",
+            "authenticationerror",
+            "api_key_invalid",
+        ]
+        return any(token in output for token in retryable_tokens)
 
     def _git_head(self) -> str | None:
         result = subprocess.run(
@@ -477,15 +585,29 @@ class ProgrammerAgent:
         commit_hash = result.get("commit_hash") or latest_attempt.get("commit_hash")
         validation_ok = bool(result.get("status") == "ok" and latest_attempt.get("validation_ok", True))
         changed_files = latest_attempt.get("changed_files") or result.get("changed_files") or []
-        if validation_ok and stop_reason == "success":
+        attempt_count = len(attempts)
+        converged_fast = attempt_count <= 2 and progress_status == "improving"
+        if validation_ok and stop_reason == "success" and converged_fast:
             return {
                 "acceptance_status": "accepted",
                 "acceptance_gate": "promote",
-                "note": "Latest patch passed the active validation gate and can be used as the current repair baseline.",
+                "note": "Latest patch passed the active validation gate and converged quickly enough to become the current repair baseline.",
                 "rollback_recommended": False,
                 "rollback_target": rollback_target,
                 "requires_human_review": False,
                 "should_promote": True,
+                "changed_file_count": len(changed_files),
+                "commit_hash": commit_hash,
+            }
+        if validation_ok and stop_reason == "success":
+            return {
+                "acceptance_status": "review",
+                "acceptance_gate": "slow_success_review",
+                "note": "The latest patch passed validation, but the repair chain took multiple attempts to converge. Keep it under review before promoting it.",
+                "rollback_recommended": False,
+                "rollback_target": rollback_target,
+                "requires_human_review": True,
+                "should_promote": False,
                 "changed_file_count": len(changed_files),
                 "commit_hash": commit_hash,
             }
@@ -567,20 +689,21 @@ class ProgrammerAgent:
         stop_reason = str(result.get("stop_reason") or "unknown")
         progress_status = str(result.get("progress_status") or failure_summary.get("progress_status") or "unknown")
         commit_hash = acceptance.get("commit_hash") or result.get("commit_hash")
+        attempt_count = len(result.get("attempts") or [])
         if acceptance.get("acceptance_status") == "accepted" and stop_reason == "success":
             return {
                 "promotion_status": "promote_candidate",
                 "promotion_gate": "stable_validated_fix",
-                "note": "This patch passed the active validation gate and can be treated as the next stable repair candidate.",
+                "note": "This patch passed the active validation gate and converged quickly enough to become the next stable repair candidate.",
                 "should_promote": True,
                 "requires_review": False,
                 "commit_hash": commit_hash,
             }
-        if acceptance.get("acceptance_status") == "review" or progress_status == "improving":
+        if acceptance.get("acceptance_status") == "review" or progress_status == "improving" or (stop_reason == "success" and attempt_count > 2):
             return {
                 "promotion_status": "hold_for_review",
                 "promotion_gate": "needs_review",
-                "note": "The patch shows some promise, but it should stay under review before becoming a stable baseline.",
+                "note": "The patch may be usable, but the repair chain did not converge cleanly enough to auto-promote it.",
                 "should_promote": False,
                 "requires_review": True,
                 "commit_hash": commit_hash,
@@ -601,6 +724,77 @@ class ProgrammerAgent:
             "should_promote": False,
             "requires_review": True,
             "commit_hash": commit_hash,
+        }
+
+    def _build_repair_chain_summary(self, result: dict) -> dict:
+        attempts = result.get("attempts") or []
+        failure_summary = result.get("failure_summary") or {}
+        repair_plan = result.get("repair_plan") or {}
+        acceptance = result.get("acceptance_summary") or {}
+        rollback = result.get("rollback_summary") or {}
+        promotion = result.get("promotion_summary") or {}
+        stability = result.get("stability_summary") or {}
+        progress_status = str(result.get("progress_status") or failure_summary.get("progress_status") or "unknown")
+        stop_reason = str(result.get("stop_reason") or "unknown")
+        attempt_count = len(attempts)
+
+        actions: list[str] = []
+        actions.extend(list(repair_plan.get("actions") or []))
+        if rollback.get("action"):
+            actions.append(str(rollback.get("action")))
+        if acceptance.get("note"):
+            actions.append(str(acceptance.get("note")))
+        if promotion.get("note"):
+            actions.append(str(promotion.get("note")))
+        if stability.get("note"):
+            actions.append(str(stability.get("note")))
+        deduped_actions = list(dict.fromkeys([item for item in actions if item]))[:6]
+
+        acceptance_status = acceptance.get("acceptance_status")
+        promotion_status = promotion.get("promotion_status")
+        rollback_status = rollback.get("rollback_status")
+        stability_status = stability.get("stability_status")
+
+        if acceptance_status == "accepted" and promotion_status == "promote_candidate" and stability_status == "stable":
+            chain_status = "healthy"
+            primary_decision = "promote"
+            next_mode = "promote_candidate"
+            auto_continue_recommended = False
+            revalidation_required = False
+            note = "Repair chain converged cleanly into a validated candidate that can serve as the next stable baseline."
+        elif rollback_status == "rollback_preferred" or stability_status == "fragile" or stop_reason in {"retry_exhausted", "no_progress_detected"}:
+            chain_status = "fragile"
+            primary_decision = "rollback" if rollback_status == "rollback_preferred" else "rethink"
+            next_mode = "rollback_and_rethink" if rollback_status == "rollback_preferred" else "manual_intervention"
+            auto_continue_recommended = bool(stop_reason == "retry_exhausted" and progress_status == "improving")
+            revalidation_required = True
+            note = "Repair chain is not reliable enough to accept automatically; prefer rollback or a materially different repair route."
+        else:
+            chain_status = "warning"
+            primary_decision = "review"
+            next_mode = "manual_review" if acceptance_status == "review" else "continue_under_review"
+            auto_continue_recommended = bool(stop_reason == "retry_exhausted" and progress_status == "improving")
+            revalidation_required = True
+            note = "Repair chain produced a potentially usable result, but it still requires review or another controlled validation pass."
+
+        return {
+            "chain_status": chain_status,
+            "primary_decision": primary_decision,
+            "next_mode": next_mode,
+            "auto_continue_recommended": auto_continue_recommended,
+            "revalidation_required": revalidation_required,
+            "attempt_count": attempt_count,
+            "stop_reason": stop_reason,
+            "progress_status": progress_status,
+            "dominant_failure_type": failure_summary.get("dominant_failure_type"),
+            "acceptance_status": acceptance_status,
+            "promotion_status": promotion_status,
+            "rollback_status": rollback_status,
+            "stability_status": stability_status,
+            "rollback_target": rollback.get("rollback_target"),
+            "current_commit_hash": rollback.get("current_commit_hash") or acceptance.get("commit_hash") or result.get("commit_hash"),
+            "note": note,
+            "actions": deduped_actions,
         }
 
     def _build_stability_summary(self, result: dict) -> dict:

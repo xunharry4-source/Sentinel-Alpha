@@ -218,6 +218,8 @@ function renderIntelligencePage(snapshot) {
   const latestDarkPoolRun = latestRun(snapshot?.dark_pool_runs);
   const latestOptionsRun = latestRun(snapshot?.options_runs);
   const cacheLines = [
+    report?.profile?.generation_mode ? `摘要来源: ${report.profile.generation_mode}` : null,
+    report?.profile?.generation_mode === "template_fallback" ? "警告: 当前摘要为模板回退，不是 live LLM 完整总结" : null,
     latestIntelRun ? `情报搜索: ${latestIntelRun.cache_hit ? "命中缓存" : "实时获取"}` : null,
     latestFinancialsRun ? `财报: ${latestFinancialsRun.cache_hit ? "命中缓存" : "实时获取"}` : null,
     latestDarkPoolRun ? `暗池: ${latestDarkPoolRun.cache_hit ? "命中缓存" : "实时获取"}` : null,
@@ -227,7 +229,7 @@ function renderIntelligencePage(snapshot) {
 }
 
 async function requireSession() {
-  const snapshot = loadStoredSnapshot();
+  const snapshot = loadCurrentSnapshot();
   if (!snapshot?.session_id) {
     setText("intelligence-note", "请先创建会话。");
     return null;
@@ -249,7 +251,8 @@ async function searchIntelligence() {
     storeSnapshot(latest);
     renderIntelligencePage(latest);
     const run = latestRun(latest.intelligence_runs);
-    setText("intelligence-note", run?.cache_hit ? "情报搜索命中缓存，已直接复用上次结果。" : "情报搜索、摘要分析与历史归档已完成。");
+    const mode = run?.report?.profile?.generation_mode || "unknown";
+    setText("intelligence-note", run?.cache_hit ? `情报搜索命中缓存，已直接复用上次结果。摘要来源=${mode}` : `情报搜索、摘要分析与历史归档已完成。摘要来源=${mode}`);
   } catch (error) {
     setText("intelligence-note", `情报搜索失败：${error.message}`);
   }
@@ -323,7 +326,8 @@ document.querySelector("#search-options")?.addEventListener("click", searchOptio
 document.querySelector("#jump-intel-to-strategy")?.addEventListener("click", () => jumpFromIntelligence("./strategy.html", "#strategy-research-summary-list"));
 document.querySelector("#jump-intel-to-config")?.addEventListener("click", () => jumpFromIntelligence("./configuration.html"));
 
-(function bootstrapIntelligencePage() {
-  renderIntelligencePage(loadStoredSnapshot());
+(async function bootstrapIntelligencePage() {
+  const snapshot = await resolveCurrentSnapshot();
+  renderIntelligencePage(snapshot || loadCurrentSnapshot());
   loadProviderOptions();
 })();

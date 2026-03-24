@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile.web
     ports:
-      - "8000:8000"
+      - "${SENTINEL_WEB_PORT:-8000}:8000"
     restart: unless-stopped
     environment:
       SENTINEL_FRONTEND_HOST: 0.0.0.0
@@ -19,10 +19,19 @@ services:
     environment:
       SENTINEL_API_HOST: 0.0.0.0
       SENTINEL_API_PORT: 8001
+      SENTINEL_REDIS_URL: redis://redis:6379/0
+      GOOGLE_API_KEY_1: ${GOOGLE_API_KEY_1:-}
+      GOOGLE_API_KEY_2: ${GOOGLE_API_KEY_2:-}
+      GOOGLE_API_KEY_3: ${GOOGLE_API_KEY_3:-}
+      GOOGLE_API_KEY_4: ${GOOGLE_API_KEY_4:-}
+      GOOGLE_API_BASE: ${GOOGLE_API_BASE:-}
     command: ["uvicorn", "sentinel_alpha.api.app:app", "--host", "0.0.0.0", "--port", "8001"]
     ports:
-      - "8001:8001"
+      - "${SENTINEL_API_PORT_PUBLIC:-8001}:8001"
     restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/api/health', timeout=3)"]
       interval: 15s
@@ -43,9 +52,14 @@ services:
       SENTINEL_QDRANT_URL: http://qdrant:6333
       SENTINEL_PROMETHEUS_ENABLED: "1"
       SENTINEL_LANGFUSE_HOST: http://langfuse-web:3000
+      GOOGLE_API_KEY_1: ${GOOGLE_API_KEY_1:-}
+      GOOGLE_API_KEY_2: ${GOOGLE_API_KEY_2:-}
+      GOOGLE_API_KEY_3: ${GOOGLE_API_KEY_3:-}
+      GOOGLE_API_KEY_4: ${GOOGLE_API_KEY_4:-}
+      GOOGLE_API_BASE: ${GOOGLE_API_BASE:-}
     command: ["uvicorn", "sentinel_alpha.api.persistent_app:app", "--host", "0.0.0.0", "--port", "8001"]
     ports:
-      - "8001:8001"
+      - "${SENTINEL_API_PORT_PUBLIC:-8001}:8001"
     depends_on:
       timescaledb:
         condition: service_healthy
@@ -161,7 +175,6 @@ services:
       retries: 10
 
   redis:
-    profiles: ["persistent"]
     image: redis:7-alpine
     ports:
       - "6379:6379"

@@ -22,6 +22,8 @@ class BehaviorEvent:
     noise_level: float
     sentiment_pressure: float
     latency_seconds: float
+    execution_status: str = "filled"
+    execution_reason: str | None = None
 
 
 @dataclass(slots=True)

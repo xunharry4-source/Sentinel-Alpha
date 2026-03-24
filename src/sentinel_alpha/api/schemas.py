@@ -19,6 +19,8 @@ class BehaviorEventIn(BaseModel):
     noise_level: float
     sentiment_pressure: float
     latency_seconds: float
+    execution_status: Literal["filled", "partial_fill", "unfilled", "rejected", "hold"] = "filled"
+    execution_reason: str | None = None
 
 
 class CompleteSimulationRequest(BaseModel):
@@ -117,7 +119,7 @@ class DataSourceExpansionRequestIn(BaseModel):
     provider_name: str
     category: Literal["market_data", "fundamentals", "dark_pool", "options"]
     base_url: str
-    api_key_env: str | None = None
+    api_key_envs: list[str] = Field(default_factory=list)
     docs_summary: str | None = None
     docs_url: str | None = None
     sample_endpoint: str | None = None
@@ -136,7 +138,7 @@ class TradingTerminalIntegrationRequestIn(BaseModel):
     official_docs_url: str
     docs_search_url: str | None = None
     api_base_url: str
-    api_key_env: str | None = None
+    api_key_envs: list[str] = Field(default_factory=list)
     auth_style: Literal["header", "query", "bearer"] = "header"
     order_endpoint: str
     cancel_endpoint: str
@@ -194,6 +196,8 @@ class SessionSnapshot(BaseModel):
     starting_capital: float
     scenarios: list[dict]
     behavioral_report: dict | None
+    behavioral_user_report: dict | None = None
+    behavioral_system_report: dict | None = None
     trading_preferences: dict | None
     trade_universe: dict | None
     strategy_package: dict | None

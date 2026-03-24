@@ -12,9 +12,14 @@ class BehavioralProfilerAgent:
         if not events:
             raise ValueError("Behavioral profiling requires at least one behavior event.")
 
-        sell_events = [e for e in events if e.action == "sell"]
-        buy_events = [e for e in events if e.action == "buy"]
+        executed_events = [e for e in events if e.execution_status in {"filled", "partial_fill"}]
+        sell_events = [e for e in executed_events if e.action == "sell"]
+        buy_events = [e for e in executed_events if e.action == "buy"]
         high_noise_events = [e for e in events if e.noise_level >= 0.7]
+        high_noise_executed_events = [e for e in high_noise_events if e.execution_status in {"filled", "partial_fill"}]
+        rejected_or_unfilled = [e for e in events if e.execution_status in {"rejected", "unfilled"}]
+        fast_events = [e for e in events if e.latency_seconds < 45]
+        slow_events = [e for e in events if e.latency_seconds > 240]
 
         panic_sell_score = min(
             1.0,
@@ -26,7 +31,7 @@ class BehavioralProfilerAgent:
         )
         noise_susceptibility = min(
             1.0,
-            sum(1 for e in high_noise_events if e.action in {"buy", "sell"}) / max(1, len(high_noise_events)),
+            sum(1 for e in high_noise_executed_events if e.action in {"buy", "sell"}) / max(1, len(high_noise_events)),
         )
         intervention_risk = min(
             1.0,
@@ -47,6 +52,12 @@ class BehavioralProfilerAgent:
             notes.append("User shows a tendency to add risk into weakness.")
         if noise_susceptibility > 0.5:
             notes.append("User is materially affected by narrative pressure.")
+        if rejected_or_unfilled and len(rejected_or_unfilled) / max(1, len(events)) > 0.35:
+            notes.append("User frequently submits orders that do not execute cleanly under current market conditions.")
+        if fast_events and len(fast_events) / max(1, len(events)) > 0.4:
+            notes.append("User reacts quickly and may be prone to impulse execution.")
+        if slow_events and len(slow_events) / max(1, len(events)) > 0.35:
+            notes.append("User often delays decisions and may hesitate before acting.")
 
         return BehavioralReport(
             panic_sell_score=panic_sell_score,

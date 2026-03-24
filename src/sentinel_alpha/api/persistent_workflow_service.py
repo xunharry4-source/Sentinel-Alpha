@@ -88,6 +88,8 @@ class PersistentWorkflowService(WorkflowService):
     def complete_simulation(self, session_id: UUID, symbol: str) -> WorkflowSession:
         session = super().complete_simulation(session_id, symbol)
         self.workflow_store.save_phase_payload(session_id, session.phase, "behavioral_report", session.behavioral_report)
+        self.workflow_store.save_phase_payload(session_id, session.phase, "behavioral_user_report", session.behavioral_user_report)
+        self.workflow_store.save_phase_payload(session_id, session.phase, "behavioral_system_report", session.behavioral_system_report)
 
         user = UserProfile(
             user_id=str(session.session_id),
@@ -111,7 +113,8 @@ class PersistentWorkflowService(WorkflowService):
         self.behavior_repo.save_behavioral_run(user, session.behavior_events, report, brief)
         self.memory_store.add_behavior_memory(user, report, brief)
         self.workflow_store.save_profile_evolution(session_id, session.profile_evolution or {})
-        self.workflow_store.save_report_snapshot(session_id, session.report_history[-1])
+        for report_snapshot in session.report_history[-2:]:
+            self.workflow_store.save_report_snapshot(session_id, report_snapshot)
         self.workflow_store.save_history_event(session_id, session.history_events[-1])
         self.runtime_bus.publish_agent_event("workflow.profiler.ready", {"session_id": str(session_id), "symbol": symbol})
         return session
@@ -325,7 +328,7 @@ class PersistentWorkflowService(WorkflowService):
         provider_name: str,
         category: str,
         base_url: str,
-        api_key_env: str | None,
+        api_key_envs: list[str],
         docs_summary: str | None,
         docs_url: str | None = None,
         sample_endpoint: str | None = None,
@@ -337,7 +340,7 @@ class PersistentWorkflowService(WorkflowService):
             provider_name=provider_name,
             category=category,
             base_url=base_url,
-            api_key_env=api_key_env,
+            api_key_envs=api_key_envs,
             docs_summary=docs_summary,
             docs_url=docs_url,
             sample_endpoint=sample_endpoint,
@@ -385,7 +388,7 @@ class PersistentWorkflowService(WorkflowService):
         official_docs_url: str,
         docs_search_url: str | None,
         api_base_url: str,
-        api_key_env: str | None,
+        api_key_envs: list[str],
         auth_style: str,
         order_endpoint: str,
         cancel_endpoint: str,
@@ -403,7 +406,7 @@ class PersistentWorkflowService(WorkflowService):
             official_docs_url=official_docs_url,
             docs_search_url=docs_search_url,
             api_base_url=api_base_url,
-            api_key_env=api_key_env,
+            api_key_envs=api_key_envs,
             auth_style=auth_style,
             order_endpoint=order_endpoint,
             cancel_endpoint=cancel_endpoint,

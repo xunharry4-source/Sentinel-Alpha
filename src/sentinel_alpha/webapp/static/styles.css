@@ -19,6 +19,7 @@ body {
   margin: 0;
   font-family: "Noto Sans SC", sans-serif;
   color: var(--ink);
+  overflow-x: hidden;
   background:
     radial-gradient(circle at top left, rgba(200, 92, 63, 0.18), transparent 30%),
     radial-gradient(circle at top right, rgba(31, 85, 81, 0.16), transparent 28%),
@@ -91,6 +92,20 @@ body {
 .page-grid {
   display: grid;
   gap: 24px;
+  min-width: 0;
+}
+
+.page-shell {
+  width: min(1180px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 40px 0 72px;
+  display: grid;
+  gap: 24px;
+  min-width: 0;
+}
+
+.page-shell > * {
+  min-width: 0;
 }
 
 .hero,
@@ -246,6 +261,19 @@ th {
 
 .panel {
   padding: 28px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.page-grid > *,
+.grid > *,
+.workflow-grid > *,
+.check-grid > *,
+.module-card-grid > *,
+.market-grid > *,
+.simulator-grid > *,
+.simulation-bottom > * {
+  min-width: 0;
 }
 
 .candidate-grid {
@@ -274,6 +302,7 @@ th {
   color: #eef7f3;
   overflow: auto;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
   word-break: break-word;
   font: 12px/1.6 "SFMono-Regular", "Menlo", monospace;
 }
@@ -302,6 +331,53 @@ th {
 
 .storage-table-wrap {
   overflow-x: auto;
+}
+
+.trade-status-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 78px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.2;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.trade-status-filled {
+  background: rgba(52, 125, 83, 0.14);
+  color: #2a6844;
+}
+
+.trade-status-partial_fill {
+  background: rgba(190, 122, 26, 0.16);
+  color: #8a5315;
+}
+
+.trade-status-unfilled {
+  background: rgba(79, 92, 118, 0.14);
+  color: #42506a;
+}
+
+.trade-status-rejected {
+  background: rgba(171, 61, 61, 0.15);
+  color: #8d3030;
+}
+
+.trade-status-hold {
+  background: rgba(90, 82, 66, 0.14);
+  color: #6d5d42;
+}
+
+.trade-log-subnote {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgba(31, 42, 42, 0.68);
+  overflow-wrap: anywhere;
 }
 
 .module-card-grid {
@@ -395,6 +471,19 @@ th {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
+}
+
+.two-column-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+}
+
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 12px;
 }
 
 .timeline-grid {
@@ -851,11 +940,13 @@ th {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
   margin-top: 12px;
+  min-width: 0;
 }
 
 .config-field {
   display: grid;
   gap: 8px;
+  min-width: 0;
 }
 
 .config-field span {
@@ -866,6 +957,8 @@ th {
 }
 
 .config-field input {
+  width: 100%;
+  min-width: 0;
   border-radius: 14px;
   border: 1px solid var(--line);
   padding: 11px 12px;
@@ -999,6 +1092,7 @@ button[data-action="HOLD"],
 .result-list {
   margin: 16px 0 0;
   padding-left: 20px;
+  overflow-wrap: anywhere;
 }
 
 .json-panel {
@@ -1012,10 +1106,50 @@ button[data-action="HOLD"],
   font-size: 13px;
   line-height: 1.6;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}
+
+.focus-highlight {
+  outline: 2px solid rgba(31, 85, 81, 0.32);
+  box-shadow: 0 0 0 6px rgba(31, 85, 81, 0.08);
+  transition: outline-color 180ms ease, box-shadow 180ms ease;
+}
+
+.global-error-stack {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: min(520px, calc(100vw - 32px));
+}
+
+.global-error-banner {
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(171, 61, 61, 0.28);
+  background: rgba(122, 31, 31, 0.94);
+  color: #fff7f5;
+  box-shadow: 0 18px 36px rgba(52, 20, 20, 0.22);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 180ms ease, transform 180ms ease;
+}
+
+.global-error-banner-hide {
+  opacity: 0;
+  transform: translateY(-6px);
 }
 
 .config-editor {
   width: 100%;
+  max-width: 100%;
   min-height: 540px;
   resize: vertical;
   margin-top: 12px;
@@ -1072,8 +1206,15 @@ button[data-action="HOLD"],
 }
 
 @media (max-width: 900px) {
+  .page,
+  .page-shell {
+    width: min(100%, calc(100% - 24px));
+    padding: 24px 0 48px;
+  }
+
   .hero,
   .two-up,
+  .two-column-grid,
   .architecture-grid,
   .workflow-grid,
   .simulator-grid,

@@ -49,13 +49,14 @@ class AppSettings:
     options_request_timeout_seconds: int
     options_provider_configs: dict[str, dict[str, str | bool]]
     llm_enabled: bool
+    llm_strict: bool
     llm_default_provider: str
-    llm_default_model: str
+    llm_default_models: list[str]
     llm_default_temperature: float
     llm_default_max_tokens: int
-    llm_provider_envs: dict[str, dict[str, str]]
-    llm_agent_configs: dict[str, dict[str, str | float | int]]
-    llm_task_configs: dict[str, dict[str, str | float | int]]
+    llm_provider_envs: dict[str, dict[str, str | list[str]]]
+    llm_agent_configs: dict[str, dict[str, object]]
+    llm_task_configs: dict[str, dict[str, object]]
     programmer_agent_enabled: bool
     programmer_agent_command: str
     programmer_agent_args: list[str]
@@ -81,6 +82,32 @@ class AppSettings:
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
+
+def _load_dotenv() -> None:
+    """Load repo-local .env into the process environment (non-destructive).
+
+    This keeps secrets out of settings.toml while allowing local dev/pytest to run without
+    manual `export` each time. Existing environment variables take precedence.
+    """
+    path = _repo_root() / ".env"
+    if not path.exists():
+        return
+    try:
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("export "):
+                line = line[7:].strip()
+            if "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+    except Exception:
+        return
 
 
 def _config_path() -> Path:
@@ -162,6 +189,7 @@ def _env_bool(name: str, default: bool) -> bool:
 
 @lru_cache(maxsize=1)
 def get_settings() -> AppSettings:
+    _load_dotenv()
     path = _config_path()
     with path.open("rb") as handle:
         payload = tomllib.load(handle)
@@ -232,8 +260,9 @@ def get_settings() -> AppSettings:
         options_request_timeout_seconds=int(_required(options_data, "request_timeout_seconds")),
         options_provider_configs={str(name): dict(config) for name, config in options_providers.items()},
         llm_enabled=_env_bool("SENTINEL_LLM_ENABLED", bool(llm.get("enabled", False))),
+        llm_strict=_env_bool("SENTINEL_LLM_STRICT", bool(llm.get("strict", True))),
         llm_default_provider=os.getenv("SENTINEL_LLM_DEFAULT_PROVIDER", str(llm.get("default_provider", "openai"))),
-        llm_default_model=os.getenv("SENTINEL_LLM_DEFAULT_MODEL", str(llm.get("default_model", "gpt-4.1-mini"))),
+        llm_default_models=[str(item) for item in llm.get("default_models", ["gpt-4.1-mini"]) if str(item).strip()],
         llm_default_temperature=float(os.getenv("SENTINEL_LLM_DEFAULT_TEMPERATURE", str(llm.get("default_temperature", 0.2)))),
         llm_default_max_tokens=int(os.getenv("SENTINEL_LLM_DEFAULT_MAX_TOKENS", str(llm.get("default_max_tokens", 1200)))),
         llm_provider_envs={str(name): dict(config) for name, config in llm_providers.items()},

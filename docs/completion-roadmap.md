@@ -21,6 +21,12 @@ The system already has:
 - strategy iteration history and report archive
 - programmer-agent and data-source-expansion-agent integration
 - in-memory and incremental performance optimizations
+- simulation execution-quality tracking with:
+  - `execution_status`
+  - `execution_reason`
+  - real latency capture per segment
+  - behavioral execution-quality ratios
+  - high-noise execution vs high-noise hold ratios
 
 Current implementation progress snapshot:
 
@@ -78,6 +84,8 @@ Current implementation progress snapshot:
       - terminal health status
       - next action
       - primary repair route
+      - contract confidence
+      - shape confidence
     - cross-page repair jumps from system-health and configuration pages back into terminal integration
     - terminal-page repair-note backfill into user notes
   - remaining:
@@ -116,6 +124,33 @@ Assessment:
 - this loop is already closed and usable for research iteration
 - it is stronger than a demo and already behaves like a real research workbench
 - its main remaining gap is not workflow shape, but engine depth
+
+#### 0. Behavioral simulation input quality
+
+Completed:
+
+- simulation events now preserve:
+  - coarse action
+  - execution status
+  - execution reason
+- behavioral reporting now separates:
+  - executed behavior
+  - partial-fill behavior
+  - unfilled limit behavior
+  - rejected order behavior
+  - impulsive fast execution
+  - hesitant delayed execution
+  - high-noise execution vs high-noise patience
+- execution-quality summaries now appear in:
+  - behavioral report
+  - report page
+  - strategy input view
+
+Assessment:
+
+- simulation is no longer treated as a naive action stream
+- the platform now distinguishes intent from execution quality
+- remaining simulation work is about realism depth, not missing execution-quality structure
 
 #### 2. Autoresearch-style strategy evolution
 
@@ -181,6 +216,12 @@ Completed:
 
 - module, library, agent, token, cache, and performance visibility
 - research, repair, terminal, data, and LLM runtime health summaries
+- cumulative LLM request/token totals in runtime health
+- LLM runtime quality signals such as fallback ratio, recent fallback pressure, and cache-hit efficiency
+- split-level backtest sample-density warnings for sparse validation/test windows
+- data-health staleness detection for long-running operation confidence
+- runtime-health age tracking so stale research, repair, and terminal results become visible operational risks
+- runtime-health recovery actions so long-running operation exposes revalidation and recovery routes instead of only statuses, plus explicit revalidation_required flags
 - cross-page jump-back repair navigation
 
 Assessment:
@@ -266,6 +307,96 @@ Still needed:
 - richer data refresh and failure recovery mechanics
 - stronger sustained-operation safeguards
 - more mature runtime and recovery playbooks
+
+## Final Execution Checklist
+
+This is the shortest remaining execution list for moving the platform from "high-completion research platform" toward "final hardened single-user system".
+
+### 1. Simulation finalization
+
+Goal:
+
+- make the behavioral test environment strong enough to produce higher-confidence behavioral inference
+
+Still needed:
+
+- deeper chart realism
+- stronger intraday and swing-state templates
+- richer order-state realism
+- stronger noise and pressure dynamics
+- deeper behavioral capture fields
+
+Exit condition:
+
+- simulation sessions look and behave like a credible stress environment rather than a structured approximation
+
+### 2. Real backtest finalization
+
+Goal:
+
+- make the evaluation engine strong enough to dominate research conclusions rather than merely support them
+
+Still needed:
+
+- deeper real-market execution constraints
+- stronger portfolio realism
+- more mature split execution detail
+- stronger research dependence on real-data evaluation instead of surrogate fallback
+
+Exit condition:
+
+- winner selection and research health are primarily driven by real-data backtest quality and not by shallow fallback conditions
+
+### 3. LLM production hardening
+
+Goal:
+
+- make live-provider execution reliable enough for long-running use
+
+Still needed:
+
+- stronger provider timeout and retry handling
+- cleaner error normalization
+- clearer degraded-mode handling
+- stronger visibility around live vs fallback usage
+
+Exit condition:
+
+- users can clearly tell when key LLM tasks are live, mixed, or degraded, and the runtime behaves predictably under provider failure
+
+### 4. Programmer Agent final hardening
+
+Goal:
+
+- move from a strong repair assistant toward a more reliable autonomous coding loop
+
+Still needed:
+
+- stronger rollback execution flow
+- broader validation matrix
+- stronger autonomous long-chain repair behavior
+- stronger criteria for stable promotion into the working baseline
+
+Exit condition:
+
+- code repair chains can be trusted to stop, reject, roll back, or promote patches for clear reasons under bounded automation
+
+### 5. Terminal integration and long-running operation finalization
+
+Goal:
+
+- make generated terminal integrations and runtime monitoring strong enough for sustained single-user operation
+
+Still needed:
+
+- deeper real endpoint verification
+- stronger account and order-state synchronization
+- richer data refresh and recovery behavior
+- stronger runtime and repair playbooks
+
+Exit condition:
+
+- the platform can sustain terminal-integration testing, diagnosis, and recovery without relying on ad hoc manual interpretation
 
 The system does not yet have:
 
@@ -605,3 +736,14 @@ Current answer to "is the project complete?":
 Current best label:
 
 - `MVP+ research platform`
+
+- backtest quality signals such as concentration, exposure, and turnover should also feed research robustness and release gates
+
+- unify Programmer Agent acceptance, rollback, promotion, and stability into a single repair_chain_summary for runtime and strategy visibility
+
+- unify terminal readiness, smoke status, field mapping, and contract confidence into a single terminal_reliability_summary for runtime and configuration visibility
+
+- unify coverage, backtest binding, backtest quality, and robustness into a single research_reliability_summary for strategy, report, and runtime visibility
+
+- unify runtime revalidation flags and recovery routes into a single runtime_recovery_summary for long-running operation control
+- archive research reliability, repair-chain decisions, and terminal reliability into history/report playback so final decisions remain visible outside the current live page

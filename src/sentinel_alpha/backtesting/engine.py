@@ -109,6 +109,11 @@ class SimpleBacktestEngine:
         active_weights = {symbol: weight for symbol, weight in target_exposure_map.items() if abs(weight) > 0}
         gross_target = sum(abs(weight) for weight in active_weights.values())
         net_target = sum(active_weights.values())
+        normalized_target_weights = {
+            symbol: abs(weight) / gross_target for symbol, weight in active_weights.items()
+        } if gross_target > 0 else {}
+        concentration_hhi = round(sum(weight * weight for weight in normalized_target_weights.values()), 4) if normalized_target_weights else 0.0
+        effective_weight_count = round(1.0 / concentration_hhi, 4) if concentration_hhi > 0 else 0.0
         turnover_series: list[float] = []
         avg_volume_series: list[float] = []
 
@@ -174,6 +179,9 @@ class SimpleBacktestEngine:
             "net_exposure_pct": round(net_target * 100.0, 2),
             "avg_daily_turnover_proxy_pct": round(sum(turnover_series) / len(turnover_series), 4) if turnover_series else 0.0,
             "avg_volume": round(sum(avg_volume_series) / len(avg_volume_series), 2) if avg_volume_series else 0.0,
+            "sample_density": round(len(returns) / max(1, min_length - 1), 4),
+            "concentration_hhi": concentration_hhi,
+            "effective_weight_count": effective_weight_count,
         }
 
     def _build_coverage_summary(self, bars: dict[str, list[dict]], split_plan: dict) -> dict:
@@ -183,6 +191,7 @@ class SimpleBacktestEngine:
         min_date = min((symbol_bars[0]["date"] for symbol_bars in bars.values() if symbol_bars), default=None)
         max_date = max((symbol_bars[-1]["date"] for symbol_bars in bars.values() if symbol_bars), default=None)
         split_bar_counts = {}
+        split_metrics = {}
         for split_name in ("train", "validation", "test"):
             window = split_plan.get(split_name, {})
             window_bars = self._slice_bars(bars, window.get("start"), window.get("end"))
@@ -190,6 +199,18 @@ class SimpleBacktestEngine:
                 "symbol_count": len(window_bars),
                 "bar_count": sum(len(symbol_bars) for symbol_bars in window_bars.values()),
             }
+            if window_bars:
+                min_length = min(len(symbol_bars) for symbol_bars in window_bars.values())
+                observation_count = max(0, min_length - 1)
+                split_metrics[split_name] = {
+                    "observation_count": observation_count,
+                    "sample_density": round(observation_count / max(1, min_length - 1), 4) if min_length >= 2 else 0.0,
+                }
+            else:
+                split_metrics[split_name] = {
+                    "observation_count": 0,
+                    "sample_density": 0.0,
+                }
         return {
             "symbol_count": len(symbols),
             "symbols": symbols,
@@ -201,4 +222,5 @@ class SimpleBacktestEngine:
             },
             "walk_forward_window_count": len(split_plan.get("walk_forward_windows", [])),
             "split_bar_counts": split_bar_counts,
+            "split_metrics": split_metrics,
         }

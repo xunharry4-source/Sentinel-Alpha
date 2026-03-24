@@ -40,23 +40,23 @@ class FreeMarketDataService:
         providers: list[dict] = []
         for name in self.settings.market_data_enabled_providers:
             config = self.settings.market_data_provider_configs.get(name, {})
-            api_key_env = str(config.get("api_key_env", ""))
-            api_key_present = bool(api_key_env and os.getenv(api_key_env))
+            api_key_envs = self._provider_api_key_envs(config)
+            api_key_present = any(os.getenv(env_name) for env_name in api_key_envs)
             enabled = bool(config.get("enabled", True))
             status = "ok"
             detail = "Provider is configured."
             if name == "akshare" and ak is None:
                 status = "warning"
                 detail = "akshare provider is enabled in config but akshare is not installed."
-            elif api_key_env and not api_key_present:
+            elif api_key_envs and not api_key_present:
                 status = "warning"
-                detail = f"{name} provider is enabled but {api_key_env} is not set."
+                detail = f"{name} provider is enabled but none of [{', '.join(api_key_envs)}] are set."
             providers.append(
                 {
                     "provider": name,
                     "enabled": enabled,
                     "status": status,
-                    "api_key_env": api_key_env,
+                    "api_key_envs": api_key_envs,
                     "api_key_present": api_key_present,
                     "detail": detail,
                     "base_url": str(config.get("base_url", "")),
@@ -229,8 +229,8 @@ class FreeMarketDataService:
         providers: list[dict] = []
         for name in enabled_providers:
             config = provider_configs.get(name, {})
-            api_key_env = str(config.get("api_key_env", ""))
-            api_key_present = bool(api_key_env and os.getenv(api_key_env))
+            api_key_envs = self._provider_api_key_envs(config)
+            api_key_present = any(os.getenv(env_name) for env_name in api_key_envs)
             enabled = bool(config.get("enabled", True))
             status = "ok"
             detail = "Provider is configured."
@@ -239,21 +239,34 @@ class FreeMarketDataService:
                 detail = "akshare provider is enabled in config but akshare is not installed."
             elif name == special_local_file_key:
                 detail = f"Local file provider rooted at {config.get('base_path', 'data/local_market_data')}."
-            elif api_key_env and not api_key_present:
+            elif api_key_envs and not api_key_present:
                 status = "warning"
-                detail = f"{name} provider is enabled but {api_key_env} is not set."
+                detail = f"{name} provider is enabled but none of [{', '.join(api_key_envs)}] are set."
             providers.append(
                 {
                     "provider": name,
                     "enabled": enabled,
                     "status": status,
-                    "api_key_env": api_key_env,
+                    "api_key_envs": api_key_envs,
                     "api_key_present": api_key_present,
                     "detail": detail,
                     "base_url": str(config.get("base_url", "")),
                 }
             )
         return providers
+
+    def _provider_api_key_envs(self, config: dict[str, str | bool]) -> list[str]:
+        raw = config.get("api_key_envs", [])
+        if not isinstance(raw, list):
+            return []
+        return [str(item).strip() for item in raw if str(item).strip()]
+
+    def _provider_api_key(self, config: dict[str, str | bool]) -> str | None:
+        for env_name in self._provider_api_key_envs(config):
+            value = os.getenv(env_name)
+            if value:
+                return value
+        return None
 
     def _request_json(self, url: str) -> dict:
         request = Request(url, headers={"User-Agent": "Sentinel-Alpha/0.1"})
@@ -308,7 +321,7 @@ class FreeMarketDataService:
 
     def _quote_alphavantage(self, symbol: str) -> dict:
         config = self.settings.market_data_provider_configs.get("alphavantage", {})
-        api_key = os.getenv(str(config.get("api_key_env", "")))
+        api_key = self._provider_api_key(config)
         if not api_key:
             raise ValueError("Alpha Vantage API key is not configured.")
         base = str(config.get("base_url", "")).rstrip("/")
@@ -329,7 +342,7 @@ class FreeMarketDataService:
 
     def _history_alphavantage(self, symbol: str, interval: str) -> dict:
         config = self.settings.market_data_provider_configs.get("alphavantage", {})
-        api_key = os.getenv(str(config.get("api_key_env", "")))
+        api_key = self._provider_api_key(config)
         if not api_key:
             raise ValueError("Alpha Vantage API key is not configured.")
         base = str(config.get("base_url", "")).rstrip("/")
@@ -359,7 +372,7 @@ class FreeMarketDataService:
 
     def _quote_finnhub(self, symbol: str) -> dict:
         config = self.settings.market_data_provider_configs.get("finnhub", {})
-        api_key = os.getenv(str(config.get("api_key_env", "")))
+        api_key = self._provider_api_key(config)
         if not api_key:
             raise ValueError("Finnhub API key is not configured.")
         base = str(config.get("base_url", "")).rstrip("/")
@@ -379,7 +392,7 @@ class FreeMarketDataService:
 
     def _history_finnhub(self, symbol: str, interval: str, lookback: str) -> dict:
         config = self.settings.market_data_provider_configs.get("finnhub", {})
-        api_key = os.getenv(str(config.get("api_key_env", "")))
+        api_key = self._provider_api_key(config)
         if not api_key:
             raise ValueError("Finnhub API key is not configured.")
         resolution_map = {"1m": "1", "5m": "5", "15m": "15", "1h": "60", "1d": "D", "1w": "W"}
@@ -576,7 +589,7 @@ class FreeMarketDataService:
 
     def _financials_alphavantage(self, symbol: str) -> dict:
         config = self.settings.fundamentals_provider_configs.get("alphavantage", {})
-        api_key = os.getenv(str(config.get("api_key_env", "")))
+        api_key = self._provider_api_key(config)
         if not api_key:
             raise ValueError("Alpha Vantage API key is not configured.")
         base = str(config.get("base_url", "")).rstrip("/")
@@ -588,7 +601,7 @@ class FreeMarketDataService:
 
     def _financials_finnhub(self, symbol: str) -> dict:
         config = self.settings.fundamentals_provider_configs.get("finnhub", {})
-        api_key = os.getenv(str(config.get("api_key_env", "")))
+        api_key = self._provider_api_key(config)
         if not api_key:
             raise ValueError("Finnhub API key is not configured.")
         base = str(config.get("base_url", "")).rstrip("/")
@@ -628,7 +641,7 @@ class FreeMarketDataService:
 
     def _options_finnhub(self, symbol: str, expiration: str | None) -> dict:
         config = self.settings.options_provider_configs.get("finnhub", {})
-        api_key = os.getenv(str(config.get("api_key_env", "")))
+        api_key = self._provider_api_key(config)
         if not api_key:
             raise ValueError("Finnhub API key is not configured.")
         base = str(config.get("base_url", "")).rstrip("/")

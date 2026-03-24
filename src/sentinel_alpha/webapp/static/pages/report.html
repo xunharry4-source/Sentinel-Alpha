@@ -20,22 +20,49 @@
       <div data-shell="summary"></div>
     </header>
     <section class="page-grid">
-      <article class="panel">
+      <article class="panel" id="report-user-panel">
         <p class="eyebrow">Behavioral Profiler</p>
         <h2>测试报告页面</h2>
         <p>这里独立展示用户心理侧写结果，包括风险承受、噪音敏感度、推荐交易节奏和推荐策略类型。</p>
       </article>
       <article class="panel">
         <p class="eyebrow">Profile</p>
-        <h3>结构化报告</h3>
+        <h3>用户报告</h3>
         <div class="action-buttons secondary compact-actions">
           <button id="refresh-report">刷新报告</button>
         </div>
-        <p class="profiler-note" id="report-note">这里展示 Behavioral Profiler 的正式输出。</p>
-        <ul id="report-list" class="result-list">
-          <li>当前还没有测试报告。</li>
+        <p class="profiler-note" id="report-note">这里展示给用户看的简化测试报告。</p>
+        <div class="storage-table-wrap">
+          <table class="storage-table">
+            <thead>
+              <tr>
+                <th>项目</th>
+                <th>内容</th>
+              </tr>
+            </thead>
+            <tbody id="report-user-table-body">
+              <tr>
+                <td colspan="2">当前还没有用户测试报告。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">System</p>
+        <h3>系统报告</h3>
+        <p>这里展示给系统和策略链路使用的完整结构化报告。</p>
+        <ul id="report-system-list" class="result-list">
+          <li>当前还没有系统测试报告。</li>
         </ul>
-        <pre id="report-json-panel" class="json-panel">{}</pre>
+        <pre id="report-system-json-panel" class="json-panel">{}</pre>
+      </article>
+      <article class="panel">
+        <p class="eyebrow">Execution Quality</p>
+        <h3>成交质量摘要</h3>
+        <ul id="report-execution-quality-list" class="result-list">
+          <li>当前还没有成交质量信息。</li>
+        </ul>
       </article>
       <article class="panel">
         <p class="eyebrow">Archive</p>

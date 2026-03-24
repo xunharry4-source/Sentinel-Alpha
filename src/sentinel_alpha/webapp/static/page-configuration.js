@@ -1,3 +1,10 @@
+function hoursSince(timestamp) {
+  if (!timestamp) return null;
+  const value = Date.parse(timestamp);
+  if (Number.isNaN(value)) return null;
+  return Math.round(((Date.now() - value) / 3600000) * 100) / 100;
+}
+
 const STRATEGY_FOCUS_KEY = "sentinel-alpha:strategy-focus-target";
 const TERMINAL_FOCUS_KEY = "sentinel-alpha:terminal-focus-target";
 
@@ -17,6 +24,22 @@ function populateConfigForm(payload) {
   setValue("cfg-fundamentals-local-path", payload?.fundamentals?.providers?.local_file?.base_path || "");
   setValue("cfg-dark-pool-local-path", payload?.dark_pool?.providers?.local_file?.base_path || "");
   setValue("cfg-options-local-path", payload?.options_data?.providers?.local_file?.base_path || "");
+}
+
+function renderLlmHealth(llmConfig, systemHealth) {
+  const llm = systemHealth?.runtime_health?.llm || {};
+  const providers = llm.provider_runtime || {};
+  const lines = [
+    `default / ${llmConfig?.default?.provider || "unknown"} / ${(llmConfig?.default?.models || [llmConfig?.default?.model || "unknown"]).join(" -> ")} / enabled=${llmConfig?.enabled ? "yes" : "no"}`,
+    `runtime / ${llm.status || "unknown"} / ${llm.note || "无"} / rotated=${llm.rotated_credential_count ?? 0}`,
+    `usage / api_requests=${llm.api_request_count ?? 0} / total_tokens=${llm.total_tokens ?? 0} / fallback=${llm.fallback_request_count ?? 0}`,
+  ];
+  Object.entries(providers).forEach(([provider, info]) => {
+    lines.push(
+      `provider / ${provider} / configured=${(info.configured_api_key_envs || []).join(", ") || "none"} / available=${(info.available_api_key_envs || []).join(", ") || "none"} / active=${info.active_api_key_env || "none"} / creds=${info.credential_count ?? 0} / rotations=${info.rotated_credential_count ?? 0}`
+    );
+  });
+  renderList("config-llm-health-list", lines, "当前还没有 LLM 运行摘要。");
 }
 
 function mergeFormIntoPayload(payload) {
@@ -68,13 +91,15 @@ function renderTerminalHealth(snapshot) {
   const latest = runs[runs.length - 1] || {};
   const test = latest.terminal_test || {};
   const runtime = latest.terminal_runtime_summary || {};
+  const reliability = latest.terminal_reliability_summary || {};
   const checks = test.checks || [];
   const passed = checks.filter((item) => item.status === "pass").length;
   renderList(
     "config-terminal-health-list",
     [
       `latest_run / ${latest.run_id || "unknown"} / ${latest.terminal_name || "unknown"} / ${latest.terminal_type || "unknown"}`,
-      `runtime / ${runtime.status || "unknown"} / ${runtime.note || "无"}`,
+      `runtime / ${runtime.status || "unknown"} / ${runtime.note || "无"} / contract_confidence=${runtime.contract_confidence ?? "none"} / shape_confidence=${runtime.shape_confidence ?? "none"}`,
+      `reliability / ${reliability.status || "unknown"} / ${reliability.note || "无"} / revalidate=${reliability.revalidation_required ? "yes" : "no"}`,
       `readiness / ${latest.integration_readiness_summary?.status || "unknown"} / endpoints=${latest.integration_readiness_summary?.endpoint_count || 0}/${latest.integration_readiness_summary?.required_endpoint_count || 0}`,
       `docs / ${latest.docs_context?.docs_fetch_ok ? "ok" : "fail"} / ready=${latest.validation?.ready_for_programmer_agent ? "yes" : "no"}`,
       `test / ${test.status || "not_tested"} / passed=${passed}/${checks.length || 0}`,
@@ -96,6 +121,14 @@ function renderDataHealth(snapshot) {
   const latestFinancials = financialsRuns[financialsRuns.length - 1];
   const latestDarkPool = darkPoolRuns[darkPoolRuns.length - 1];
   const latestOptions = optionsRuns[optionsRuns.length - 1];
+  const sourceAges = {
+    intelligence: hoursSince(latestIntelligence?.timestamp),
+    financials: hoursSince(latestFinancials?.timestamp),
+    dark_pool: hoursSince(latestDarkPool?.timestamp),
+    options: hoursSince(latestOptions?.timestamp),
+  };
+  const staleSources = Object.entries(sourceAges).filter(([, hours]) => hours !== null && hours > 24).map(([name]) => name);
+  const maxStaleHours = Object.values(sourceAges).filter((hours) => hours !== null).reduce((max, hours) => Math.max(max, hours), 0);
   renderList(
     "config-data-health-list",
     [
@@ -103,8 +136,9 @@ function renderDataHealth(snapshot) {
       `financials / ${latestFinancials?.timestamp || "none"} / ${latestFinancials?.symbol || "none"} / ${latestFinancials?.provider || "none"}`,
       `dark_pool / ${latestDarkPool?.timestamp || "none"} / ${latestDarkPool?.symbol || "none"} / ${latestDarkPool?.provider || "none"}`,
       `options / ${latestOptions?.timestamp || "none"} / ${latestOptions?.symbol || "none"} / ${latestOptions?.provider || "none"}`,
+      `freshness / max_stale_hours=${maxStaleHours || "none"} / stale=${staleSources.join(", ") || "none"}`,
       `run_counts / intelligence=${intelligenceRuns.length} / financials=${financialsRuns.length} / dark_pool=${darkPoolRuns.length} / options=${optionsRuns.length}`,
-      `health / ${intelligenceRuns.length || financialsRuns.length || darkPoolRuns.length || optionsRuns.length ? "active" : "fragile"} / 数据查询层建议优先检查最近 provider、时间戳和本地路径是否还有效。`,
+      `health / ${intelligenceRuns.length || financialsRuns.length || darkPoolRuns.length || optionsRuns.length ? (staleSources.length ? "warning" : "active") : "fragile"} / 数据查询层建议优先检查最近 provider、时间戳和本地路径是否还有效。`,
     ],
     "当前还没有数据更新健康摘要。"
   );
@@ -238,18 +272,23 @@ function currentEditorPayload() {
 async function loadConfigPage() {
   renderShell("configuration");
   try {
-    let snapshot = loadStoredSnapshot();
+    let snapshot = loadCurrentSnapshot();
     if (snapshot?.session_id) {
       try {
         snapshot = await refreshSnapshot();
       } catch (error) {
-        snapshot = loadStoredSnapshot();
+        snapshot = loadCurrentSnapshot();
       }
     }
-    const payload = await apiRequest("/api/config");
+    const [payload, llmConfig, systemHealth] = await Promise.all([
+      apiRequest("/api/config"),
+      apiRequest("/api/llm-config"),
+      apiRequest("/api/system-health"),
+    ]);
     document.querySelector("#config-editor").value = JSON.stringify(payload.payload, null, 2);
     populateConfigForm(payload.payload);
     renderValidation(payload.validation);
+    renderLlmHealth(llmConfig, systemHealth);
     renderGeneratedCandidates(snapshot);
     renderTerminalHealth(snapshot);
     renderDataHealth(snapshot);

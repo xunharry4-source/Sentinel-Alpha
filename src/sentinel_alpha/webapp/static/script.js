@@ -235,6 +235,10 @@ function renderTimeframeNote() {
 }
 
 function applyBehaviorRecommendation(report) {
+  if (report?.report_generation_mode !== "live_llm") {
+    els.recommendationNote.textContent = report?.analysis_warning || "当前只有规则统计，不自动应用为智能推荐。";
+    return;
+  }
   if (!report?.recommended_trading_frequency || !report?.recommended_timeframe) {
     return;
   }
@@ -685,7 +689,7 @@ function applySnapshot(snapshot) {
     els.resultRisk.textContent = `${(snapshot.behavioral_report.recommended_risk_ceiling * 100).toFixed(0)}% ceiling`;
     els.resultHold.textContent = snapshot.behavioral_report.hold_strength.toFixed(2);
     els.resultOvertrade.textContent = snapshot.behavioral_report.overtrading_tendency.toFixed(2);
-    els.resultNote.textContent = "Behavioral Profiler 已输出结构化性格报告。";
+    els.resultNote.textContent = snapshot.behavioral_report.analysis_warning || "Behavioral Profiler 已输出规则统计结果。";
     els.resultList.innerHTML = Object.entries(snapshot.behavioral_report)
       .map(([key, value]) => `<li>${key}: ${typeof value === "number" ? value.toFixed(2) : value}</li>`)
       .join("");
@@ -693,6 +697,7 @@ function applySnapshot(snapshot) {
       {
         user_id: snapshot.session_id,
         behavioral_profile: snapshot.behavioral_report,
+        behavioral_user_report: snapshot.behavioral_user_report || null,
       },
       null,
       2,
@@ -922,6 +927,7 @@ els.applyRecommendation.addEventListener("click", () => {
     const payload = JSON.parse(reportText);
     applyBehaviorRecommendation(payload.behavioral_profile || {});
   } catch (error) {
+    window.saReportError?.(`解析测试推荐失败：${error.message || error}`);
     els.recommendationNote.textContent = "当前还没有可应用的测试推荐，请先完成模拟测试。";
   }
 });
@@ -929,27 +935,40 @@ els.applyStrategyRecommendation.addEventListener("click", () => {
   const reportText = els.profilerJsonPanel.textContent || "{}";
   try {
     const payload = JSON.parse(reportText);
-    const report = payload.behavioral_profile || {};
+    const report = payload.behavioral_user_report || payload.behavioral_profile || {};
+    if (report.report_generation_mode !== "live_llm") {
+      els.strategyRecommendationNote.textContent = report.analysis_warning || "当前没有可直接应用的智能策略推荐。";
+      return;
+    }
     if (report.recommended_strategy_type) {
       els.strategyTypeInput.value = report.recommended_strategy_type;
       els.strategyRecommendationNote.textContent = report.strategy_type_recommendation_note || "系统已应用默认策略类型推荐。";
       return;
     }
   } catch (error) {
+    window.saReportError?.(`解析测试推荐失败：${error.message || error}`);
   }
   els.strategyRecommendationNote.textContent = "当前还没有可应用的策略类型推荐，请先完成模拟测试。";
 });
 els.completeSimulation.addEventListener("click", async () => {
   if (!state.sessionId) return;
+  els.completeSimulation.disabled = true;
+  els.resultNote.textContent = "正在生成测试报告并准备跳转到报告页…";
   try {
     const snapshot = await api(`/api/sessions/${state.sessionId}/simulation/complete`, {
       method: "POST",
       body: JSON.stringify({ symbol: "SIM" }),
     });
     applySnapshot(snapshot);
+    window.localStorage.setItem("sentinel-alpha:report-redirect-note", "模拟测试已完成，已自动跳转到测试报告页。");
+    window.location.href = `./pages/report.html?session_id=${encodeURIComponent(latest.session_id)}`;
   } catch (error) {
     checkApiHealth();
-    els.resultNote.textContent = `生成测试报告失败: ${error.message}`;
+    const message = `生成测试报告失败: ${error.message}`;
+    els.resultNote.textContent = message;
+    window.alert(message);
+  } finally {
+    els.completeSimulation.disabled = false;
   }
 });
 els.submitUniverse.addEventListener("click", async () => {

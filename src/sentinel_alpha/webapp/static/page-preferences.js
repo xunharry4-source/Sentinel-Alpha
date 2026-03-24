@@ -44,6 +44,10 @@ function renderTimeframeNote() {
 }
 
 function applyRecommendation(report) {
+  if (report?.report_generation_mode !== "live_llm") {
+    setText("recommendation-note", report?.analysis_warning || "当前只有规则统计，不自动应用为智能推荐。");
+    return;
+  }
   if (!report?.recommended_trading_frequency) {
     setText("recommendation-note", "当前还没有可应用的测试推荐。");
     return;
@@ -56,7 +60,7 @@ function applyRecommendation(report) {
 }
 
 async function savePreferences() {
-  const snapshot = loadStoredSnapshot();
+  const snapshot = loadCurrentSnapshot();
   if (!snapshot?.session_id) {
     setText("preferences-note", "请先创建会话。");
     return;
@@ -84,14 +88,14 @@ async function savePreferences() {
 document.querySelector("#frequency-input")?.addEventListener("change", renderTimeframeOptions);
 document.querySelector("#timeframe-input")?.addEventListener("change", renderTimeframeNote);
 document.querySelector("#apply-recommendation")?.addEventListener("click", () => {
-  const snapshot = loadStoredSnapshot();
-  applyRecommendation(snapshot?.behavioral_report || {});
+  const snapshot = loadCurrentSnapshot();
+  applyRecommendation(snapshot?.behavioral_user_report || snapshot?.behavioral_report || {});
 });
 document.querySelector("#save-preferences")?.addEventListener("click", savePreferences);
 
-(function bootstrapPreferencesPage() {
+(async function bootstrapPreferencesPage() {
   renderShell("preferences");
-  const snapshot = loadStoredSnapshot();
+  const snapshot = await resolveCurrentSnapshot();
   renderTimeframeOptions();
   if (snapshot?.trading_preferences) {
     document.querySelector("#frequency-input").value = snapshot.trading_preferences.trading_frequency;
@@ -103,10 +107,10 @@ document.querySelector("#save-preferences")?.addEventListener("click", savePrefe
   formatJsonIntoList("preference-list", snapshot?.trading_preferences || null, "当前还没有偏好设置。");
   renderList(
     "preference-rec-list",
-    snapshot?.behavioral_report?.recommended_trading_frequency ? [
-      `recommended_trading_frequency: ${snapshot.behavioral_report.recommended_trading_frequency}`,
-      `recommended_timeframe: ${snapshot.behavioral_report.recommended_timeframe}`,
-      snapshot.behavioral_report.trading_preference_recommendation_note || "无说明",
+    (snapshot?.behavioral_user_report || snapshot?.behavioral_report)?.report_generation_mode ? [
+      `generation_mode: ${(snapshot?.behavioral_user_report || snapshot?.behavioral_report)?.report_generation_mode || "unknown"}`,
+      `analysis_status: ${(snapshot?.behavioral_user_report || snapshot?.behavioral_report)?.analysis_status || "unknown"}`,
+      (snapshot?.behavioral_user_report || snapshot?.behavioral_report)?.analysis_warning || "无说明",
     ] : [],
     "等待行为测试推荐。"
   );

@@ -1,4 +1,5 @@
 const STRATEGY_FOCUS_KEY = "sentinel-alpha:strategy-focus-target";
+const REPORT_REDIRECT_NOTE_KEY = "sentinel-alpha:report-redirect-note";
 
 function jumpToStrategyFocus(target) {
   window.localStorage.setItem(STRATEGY_FOCUS_KEY, target);
@@ -287,8 +288,12 @@ function renderHistoryTimeline(snapshot) {
         const gate = item.payload?.gate_status ? ` / gate=${item.payload.gate_status}` : "";
         const source = item.payload?.evaluation_source ? ` / source=${item.payload.evaluation_source}` : "";
         const robustness = item.payload?.robustness_grade ? ` / robustness=${item.payload.robustness_grade}` : "";
+        const researchReliability = item.payload?.research_reliability_status ? ` / research=${item.payload.research_reliability_status}${item.payload?.research_reliability_confidence ? `(${item.payload.research_reliability_confidence})` : ""}` : "";
         const repairRoute = item.payload?.repair_route_lane ? ` / repair=${item.payload.repair_route_lane}` : "";
         const repairPriority = item.payload?.repair_route_priority ? ` / repair_priority=${item.payload.repair_route_priority}` : "";
+        const repairChain = item.payload?.repair_chain_status ? ` / repair_chain=${item.payload.repair_chain_status}` : "";
+        const repairDecision = item.payload?.repair_chain_decision ? ` / decision=${item.payload.repair_chain_decision}` : "";
+        const repairNext = item.payload?.repair_chain_next_mode ? ` / next=${item.payload.repair_chain_next_mode}` : "";
         const terminalName = item.payload?.terminal_name ? ` / terminal=${item.payload.terminal_name}` : "";
         const terminalType = item.payload?.terminal_type ? ` / type=${item.payload.terminal_type}` : "";
         const readiness = item.payload?.readiness_status ? ` / readiness=${item.payload.readiness_status}` : "";
@@ -296,13 +301,19 @@ function renderHistoryTimeline(snapshot) {
           typeof item.payload?.passed_check_count !== "undefined"
             ? ` / terminal_checks=${item.payload.passed_check_count}/${item.payload?.total_check_count ?? 0}`
             : "";
+        const reliability = item.payload?.reliability_status ? ` / reliability=${item.payload.reliability_status}` : "";
+        const reliabilityRevalidate =
+          typeof item.payload?.reliability_revalidate !== "undefined"
+            ? ` / revalidate=${item.payload.reliability_revalidate ? "yes" : "no"}`
+            : "";
+        const terminalNext = item.payload?.reliability_next_action ? ` / terminal_next=${item.payload.reliability_next_action}` : "";
         const splitScores =
           typeof item.payload?.test_objective_score !== "undefined"
             ? ` / T/Va/Te=${item.payload?.train_objective_score ?? "unknown"}/${item.payload?.validation_objective_score ?? "unknown"}/${item.payload?.test_objective_score ?? "unknown"}`
             : "";
         const walkForward = typeof item.payload?.walk_forward_score !== "undefined" ? ` / wf=${item.payload.walk_forward_score}` : "";
         const gap = typeof item.payload?.train_test_gap !== "undefined" ? ` / gap=${item.payload.train_test_gap}` : "";
-        return `${item.timestamp} / ${item.event_type} / ${item.summary}${strategyType}${feedback}${item.payload?.data_bundle_id ? ` / bundle=${item.payload.data_bundle_id}` : ""}${item.payload?.quality_grade ? ` / grade=${item.payload.quality_grade}` : ""}${item.payload?.training_readiness ? ` / training=${item.payload.training_readiness}` : ""}${winner}${gate}${source}${robustness}${terminalName}${terminalType}${readiness}${testCounts}${repairRoute}${repairPriority}${splitScores}${walkForward}${gap}`;
+        return `${item.timestamp} / ${item.event_type} / ${item.summary}${strategyType}${feedback}${item.payload?.data_bundle_id ? ` / bundle=${item.payload.data_bundle_id}` : ""}${item.payload?.quality_grade ? ` / grade=${item.payload.quality_grade}` : ""}${item.payload?.training_readiness ? ` / training=${item.payload.training_readiness}` : ""}${winner}${gate}${source}${robustness}${researchReliability}${terminalName}${terminalType}${readiness}${testCounts}${reliability}${reliabilityRevalidate}${terminalNext}${repairRoute}${repairPriority}${repairChain}${repairDecision}${repairNext}${splitScores}${walkForward}${gap}`;
       }),
     "当前还没有历史记录。"
   );
@@ -356,6 +367,9 @@ function renderLatestResearch(snapshot) {
   const evaluation = research.evaluation_snapshot || {};
   const coverage = evaluation.coverage_summary || {};
   const backtestBinding = research.backtest_binding_summary || {};
+  const researchReliability = research.research_reliability_summary || {};
+  const backtestQuality = evaluation.backtest_quality_summary || research.backtest_quality_summary || {};
+  const splitMetrics = coverage.split_metrics || {};
   const checks = research.check_failure_summary || [];
   const lines = [];
   if (pkg.version_label) {
@@ -367,9 +381,17 @@ function renderLatestResearch(snapshot) {
   if (robustness.grade) {
     lines.push(`robustness / grade=${robustness.grade} / stability=${robustness.stability_score ?? "unknown"} / gap=${robustness.train_test_gap ?? "unknown"}`);
   }
+  if (researchReliability.status || researchReliability.confidence) {
+    lines.push(`research_reliability / status=${researchReliability.status || "unknown"} / confidence=${researchReliability.confidence || "unknown"} / warnings=${(researchReliability.warnings || []).join(", ") || "none"}`);
+    lines.push(`research_reliability / ${researchReliability.note || "无"}`);
+  }
   if (backtestBinding.grade || evaluation.evaluation_source) {
     lines.push(`backtest_binding / grade=${backtestBinding.grade || "unknown"} / source=${backtestBinding.evaluation_source || evaluation.evaluation_source || "unknown"} / coverage=${backtestBinding.coverage_grade || coverage.coverage_grade || "unknown"}`);
     lines.push(`backtest_binding / ${backtestBinding.note || "无"}`);
+  }
+  if (backtestQuality.grade || backtestQuality.warnings?.length) {
+    lines.push(`backtest_quality / grade=${backtestQuality.grade || "unknown"} / active_symbols=${backtestQuality.test_active_symbol_count ?? "unknown"} / gross=${backtestQuality.gross_exposure_pct ?? "unknown"}% / turnover=${backtestQuality.avg_daily_turnover_proxy_pct ?? "unknown"}%`);
+    lines.push(`backtest_quality / warnings=${(backtestQuality.warnings || []).join(", ") || "none"} / ${backtestQuality.note || "无"}`);
   }
   if (evaluation.evaluation_source || evaluation.test || evaluation.validation) {
     lines.push(`evaluation / source=${evaluation.evaluation_source || "unknown"} / train=${evaluation.train?.objective_score ?? "unknown"} / validation=${evaluation.validation?.objective_score ?? "unknown"} / test=${evaluation.test?.objective_score ?? "unknown"}`);
@@ -377,8 +399,10 @@ function renderLatestResearch(snapshot) {
     lines.push(`evaluation / gross=${evaluation.test?.gross_exposure_pct ?? "unknown"} / net=${evaluation.test?.net_exposure_pct ?? "unknown"} / turnover=${evaluation.test?.avg_daily_turnover_proxy_pct ?? "unknown"} / obs=${evaluation.test?.observation_count ?? "unknown"}`);
     lines.push(`coverage / symbols=${coverage.symbol_count ?? "unknown"} / bars=${coverage.total_bar_count ?? "unknown"} / wf_windows=${coverage.walk_forward_window_count ?? 0}`);
     lines.push(`coverage_health / ${coverage.coverage_grade || "unknown"} / ${coverage.coverage_health_note || "无"}`);
+    lines.push(`coverage_density / validation=${splitMetrics.validation?.sample_density ?? "unknown"} / test=${splitMetrics.test?.sample_density ?? "unknown"} / test_obs=${splitMetrics.test?.observation_count ?? "unknown"}`);
     lines.push(`coverage_warnings / ${(coverage.coverage_warnings || []).join("，") || "无"}`);
   }
+  lines.push(`release_gate / coverage_blocked=${gate.coverage_gate_blocked ? "yes" : "no"} / blockers=${(gate.gate_blockers || []).join("，") || "无"}`);
   if (gate.reason) {
     lines.push(`release_gate / ${gate.reason}`);
   }
@@ -591,9 +615,67 @@ function renderReportReleaseSnapshot(snapshot) {
   );
 }
 
+function renderExecutionQuality(snapshot) {
+  const report = snapshot?.behavioral_system_report || snapshot?.behavioral_report || {};
+  renderList(
+    "report-execution-quality-list",
+    report.execution_event_count
+      ? [
+          `events / ${report.execution_event_count}`,
+          `executed_trade_ratio / ${report.executed_trade_ratio ?? "unknown"}`,
+          `partial_fill_ratio / ${report.partial_fill_ratio ?? "unknown"}`,
+          `rejected_order_ratio / ${report.rejected_order_ratio ?? "unknown"}`,
+          `unfilled_order_ratio / ${report.unfilled_order_ratio ?? "unknown"}`,
+          `clean_execution_ratio / ${report.clean_execution_ratio ?? "unknown"}`,
+          `pace / fast=${report.fast_event_ratio ?? "unknown"} / slow=${report.slow_event_ratio ?? "unknown"}`,
+          `behavior_tags / ${(report.behavior_tags || []).join(", ") || "none"}`,
+          `noise_profile / execute=${report.high_noise_execution_ratio ?? "unknown"} / hold=${report.high_noise_hold_ratio ?? "unknown"}`,
+          report.execution_quality_note || "无说明",
+        ]
+      : [],
+    "当前还没有成交质量信息。"
+  );
+}
+
+function renderUserReportTable(snapshot) {
+  const tbody = document.querySelector("#report-user-table-body");
+  if (!tbody) return;
+  const report = snapshot?.behavioral_user_report || {};
+  const systemReport = snapshot?.behavioral_system_report || snapshot?.behavioral_report || {};
+  const fallbackSummary = systemReport.analysis_warning || systemReport.execution_quality_note || null;
+  const rows = [
+    ["生成方式", report.report_generation_mode || systemReport.report_generation_mode],
+    ["来源", report.source_of_truth || systemReport.source_of_truth],
+    ["状态", report.analysis_status || systemReport.analysis_status],
+    ["说明", report.analysis_warning || systemReport.analysis_warning],
+    ["用户结论", report.user_summary || fallbackSummary],
+    ["事件数", report.execution_event_count ?? systemReport.execution_event_count],
+    ["实际成交比例", report.executed_trade_ratio ?? systemReport.executed_trade_ratio],
+    ["部分成交比例", report.partial_fill_ratio ?? systemReport.partial_fill_ratio],
+    ["拒单比例", report.rejected_order_ratio ?? systemReport.rejected_order_ratio],
+    ["未成交比例", report.unfilled_order_ratio ?? systemReport.unfilled_order_ratio],
+    ["净执行质量", report.clean_execution_ratio ?? systemReport.clean_execution_ratio],
+    ["执行质量说明", report.execution_quality_note ?? systemReport.execution_quality_note],
+    ["行为标签", (report.behavior_tags || systemReport.behavior_tags || []).join(", ")],
+    ["噪音下执行比例", report.high_noise_execution_ratio ?? systemReport.high_noise_execution_ratio],
+    ["噪音下观望比例", report.high_noise_hold_ratio ?? systemReport.high_noise_hold_ratio],
+    ["快速决策比例", report.fast_event_ratio ?? systemReport.fast_event_ratio],
+    ["慢速决策比例", report.slow_event_ratio ?? systemReport.slow_event_ratio],
+  ].filter(([, value]) => value !== undefined && value !== null && value !== "");
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="2">当前还没有用户测试报告。</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows
+    .map(([label, value]) => `<tr><th>${label}</th><td>${value}</td></tr>`)
+    .join("");
+}
+
 function renderReportPage(snapshot) {
   renderShell("report");
-  formatJsonIntoList("report-list", snapshot?.behavioral_report || null, "当前还没有测试报告。");
+  renderUserReportTable(snapshot);
+  formatJsonIntoList("report-system-list", snapshot?.behavioral_system_report || snapshot?.behavioral_report || null, "当前还没有系统测试报告。");
+  renderExecutionQuality(snapshot);
   renderList(
     "evolution-list",
     (snapshot?.profile_evolution?.events || [])
@@ -617,19 +699,33 @@ function renderReportPage(snapshot) {
   renderReportResearchHealth(snapshot);
   renderReportReleaseSnapshot(snapshot);
   runResearchCompare(snapshot);
-  const panel = document.querySelector("#report-json-panel");
+  const panel = document.querySelector("#report-system-json-panel");
   if (panel) {
-    panel.textContent = JSON.stringify(snapshot?.behavioral_report || {}, null, 2);
+    panel.textContent = JSON.stringify(snapshot?.behavioral_system_report || snapshot?.behavioral_report || {}, null, 2);
   }
 }
 
 async function reloadReportPage() {
   try {
     const snapshot = await refreshSnapshot();
+    renderShell("report");
     renderReportPage(snapshot);
     setText("report-note", "测试报告、归档与历史记录已刷新。");
   } catch (error) {
     setText("report-note", `刷新测试报告失败：${error.message}`);
+  }
+}
+
+function applyRedirectNote() {
+  const note = window.localStorage.getItem(REPORT_REDIRECT_NOTE_KEY);
+  if (!note) return;
+  setText("report-note", note);
+  window.localStorage.removeItem(REPORT_REDIRECT_NOTE_KEY);
+  const panel = document.querySelector("#report-user-panel");
+  if (panel) {
+    panel.scrollIntoView({ behavior: "smooth", block: "start" });
+    panel.classList.add("focus-highlight");
+    window.setTimeout(() => panel.classList.remove("focus-highlight"), 2200);
   }
 }
 
@@ -642,4 +738,14 @@ document.querySelector("#report-detail-version")?.addEventListener("change", () 
 
 (async function bootstrapReportPage() {
   renderReportPage(loadStoredSnapshot());
+  applyRedirectNote();
+  try {
+    const snapshot = await refreshSnapshot();
+    renderShell("report");
+    renderReportPage(snapshot);
+    applyRedirectNote();
+  } catch (error) {
+    window.saReportError?.(`报告页刷新失败：${error.message || error}`);
+    setText("report-note", `报告页刷新失败：${error.message || error}`);
+  }
 })();

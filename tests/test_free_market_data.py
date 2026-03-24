@@ -34,7 +34,7 @@ def test_local_file_market_data_provider_reads_quote_and_history(tmp_path: Path)
     provider_configs = dict(settings.market_data_provider_configs)
     provider_configs["local_file"] = {
         "enabled": True,
-        "api_key_env": "",
+        "api_key_envs": [],
         "base_path": str(tmp_path),
         "quote_filename": "{symbol}_quote.json",
         "history_filename": "{symbol}_{interval}.csv",

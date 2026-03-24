@@ -1,15 +1,19 @@
 from fastapi.testclient import TestClient
 
+import pytest
+
 from sentinel_alpha.api.app import create_app
 from sentinel_alpha.api.workflow_service import WorkflowService
 from sentinel_alpha.domain.models import IntelligenceDocument
 from sentinel_alpha.infra.free_market_data import FreeMarketDataService
 
 
-client = TestClient(create_app(WorkflowService()))
+@pytest.fixture
+def client() -> TestClient:
+    return TestClient(create_app(WorkflowService()))
 
 
-def test_health_endpoint_exposes_frontend_api_and_database_status() -> None:
+def test_health_endpoint_exposes_frontend_api_and_database_status(client: TestClient) -> None:
     response = client.get("/api/health")
     assert response.status_code == 200
     payload = response.json()
@@ -19,7 +23,7 @@ def test_health_endpoint_exposes_frontend_api_and_database_status() -> None:
     assert payload["database"]["status"] in {"configured", "not_configured"}
 
 
-def test_system_health_endpoint_exposes_module_statuses() -> None:
+def test_system_health_endpoint_exposes_module_statuses(client: TestClient) -> None:
     response = client.get("/api/system-health")
     assert response.status_code == 200
     payload = response.json()
@@ -56,7 +60,7 @@ def test_system_health_endpoint_exposes_module_statuses() -> None:
     assert all("recommendation" in item for item in payload["modules"])
 
 
-def test_llm_config_endpoint_exposes_agent_and_task_models() -> None:
+def test_llm_config_endpoint_exposes_agent_and_task_models(client: TestClient) -> None:
     response = client.get("/api/llm-config")
     assert response.status_code == 200
     payload = response.json()
@@ -66,7 +70,7 @@ def test_llm_config_endpoint_exposes_agent_and_task_models() -> None:
     assert "strategy_codegen" in payload["tasks"]
 
 
-def test_config_endpoints_load_and_validate_payload() -> None:
+def test_config_endpoints_load_and_validate_payload(client: TestClient) -> None:
     loaded = client.get("/api/config")
     assert loaded.status_code == 200
     body = loaded.json()
@@ -88,7 +92,7 @@ def test_config_endpoints_load_and_validate_payload() -> None:
     assert len(single.json()["validation"]["checks"]) >= 1
 
 
-def test_market_data_provider_endpoint_exposes_free_provider_matrix() -> None:
+def test_market_data_provider_endpoint_exposes_free_provider_matrix(client: TestClient) -> None:
     response = client.get("/api/market-data/providers")
     assert response.status_code == 200
     payload = response.json()
@@ -103,7 +107,7 @@ def test_market_data_provider_endpoint_exposes_free_provider_matrix() -> None:
     assert {"yahoo_options", "finnhub", "local_file"}.issubset(options_provider_names)
 
 
-def test_market_data_quote_and_history_endpoints_use_provider_service(monkeypatch) -> None:
+def test_market_data_quote_and_history_endpoints_use_provider_service(client: TestClient, monkeypatch) -> None:
     monkeypatch.setattr(
         FreeMarketDataService,
         "fetch_quote",
@@ -130,7 +134,7 @@ def test_market_data_quote_and_history_endpoints_use_provider_service(monkeypatc
     assert history.json()["bars"][0]["close"] == 1.5
 
 
-def test_market_data_financials_dark_pool_and_options_endpoints(monkeypatch) -> None:
+def test_market_data_financials_dark_pool_and_options_endpoints(client: TestClient, monkeypatch) -> None:
     monkeypatch.setattr(
         FreeMarketDataService,
         "fetch_financials",
@@ -191,7 +195,7 @@ def test_market_data_financials_dark_pool_and_options_endpoints(monkeypatch) -> 
     assert options.json()["normalized"]["contracts"][0]["weighted"]["final_weight"] == 0.91
 
 
-def test_full_workflow_api() -> None:
+def test_full_workflow_api(client: TestClient) -> None:
     created = client.post("/api/sessions", json={"user_name": "Harry", "starting_capital": 500000})
     assert created.status_code == 200
     session = created.json()
@@ -222,7 +226,12 @@ def test_full_workflow_api() -> None:
     completed = client.post(f"/api/sessions/{session_id}/simulation/complete", json={"symbol": "QQQ"})
     assert completed.status_code == 200
     assert completed.json()["behavioral_report"] is not None
-    assert len(completed.json()["report_history"]) >= 1
+    assert completed.json()["behavioral_user_report"] is not None
+    assert completed.json()["behavioral_system_report"] is not None
+    assert completed.json()["behavioral_system_report"]["report_generation_mode"] == "live_llm"
+    assert completed.json()["behavioral_user_report"]["report_generation_mode"] == "live_llm"
+    assert len(completed.json()["report_history"]) >= 2
+    assert completed.json()["behavioral_user_report"]["user_summary"]
     assert completed.json()["behavioral_report"]["recommended_trading_frequency"] in {"low", "medium", "high"}
     assert completed.json()["behavioral_report"]["recommended_timeframe"] in {"minute", "daily", "weekly"}
     assert completed.json()["behavioral_report"]["recommended_strategy_type"] in {
@@ -369,7 +378,7 @@ def test_full_workflow_api() -> None:
     )
 
 
-def test_intelligence_information_events_are_recorded(monkeypatch) -> None:
+def test_intelligence_information_events_are_recorded(client: TestClient, monkeypatch) -> None:
     monkeypatch.setattr(
         "sentinel_alpha.agents.intelligence_agent.IntelligenceAgent.search",
         lambda self, query, max_documents=None: [
@@ -415,7 +424,7 @@ def test_intelligence_information_events_are_recorded(monkeypatch) -> None:
     assert any(item["anchor"] == "AAPL" and item["category"] == "financials" for item in payload["information_events"])
 
 
-def test_strategy_iteration_requires_rework_when_checks_fail() -> None:
+def test_strategy_iteration_requires_rework_when_checks_fail(client: TestClient) -> None:
     created = client.post("/api/sessions", json={"user_name": "Stress", "starting_capital": 500000})
     session_id = created.json()["session_id"]
 
@@ -453,7 +462,7 @@ def test_strategy_iteration_requires_rework_when_checks_fail() -> None:
     assert approved.status_code == 400
 
 
-def test_intelligence_search_attaches_documents_to_session() -> None:
+def test_intelligence_search_attaches_documents_to_session(client: TestClient) -> None:
     service = WorkflowService()
     service.intelligence.search = lambda query, max_documents=None: [  # type: ignore[method-assign]
         IntelligenceDocument(
@@ -487,7 +496,7 @@ def test_intelligence_search_attaches_documents_to_session() -> None:
     assert len(body["report_history"]) >= 1
 
 
-def test_financials_dark_pool_and_options_are_archived_on_session() -> None:
+def test_financials_dark_pool_and_options_are_archived_on_session(client: TestClient) -> None:
     service = WorkflowService()
     service.market_data.fetch_financials = lambda symbol, provider=None: {  # type: ignore[method-assign]
         "provider": provider or "sec",
@@ -541,7 +550,7 @@ def test_financials_dark_pool_and_options_are_archived_on_session() -> None:
     assert "options_summary" in report_types
 
 
-def test_programmer_agent_run_is_recorded_even_when_disabled() -> None:
+def test_programmer_agent_run_is_recorded_even_when_disabled(client: TestClient) -> None:
     local_client = TestClient(create_app(WorkflowService()))
     created = local_client.post("/api/sessions", json={"user_name": "Coder", "starting_capital": 300000})
     session_id = created.json()["session_id"]
@@ -562,7 +571,7 @@ def test_programmer_agent_run_is_recorded_even_when_disabled() -> None:
     assert body["programmer_runs"][0]["status"] in {"disabled", "misconfigured", "ok", "error"}
 
 
-def test_data_source_expansion_agent_run_is_recorded() -> None:
+def test_data_source_expansion_agent_run_is_recorded(client: TestClient) -> None:
     local_client = TestClient(create_app(WorkflowService()))
     created = local_client.post("/api/sessions", json={"user_name": "Source", "starting_capital": 300000})
     session_id = created.json()["session_id"]
@@ -573,7 +582,7 @@ def test_data_source_expansion_agent_run_is_recorded() -> None:
             "provider_name": "ExampleSource",
             "category": "market_data",
             "base_url": "https://api.example.com",
-            "api_key_env": "EXAMPLE_API_KEY",
+            "api_key_envs": ["EXAMPLE_API_KEY"],
             "docs_summary": "REST JSON API with symbol-based quote and history endpoints.",
             "docs_url": "https://docs.example.com/source",
             "sample_endpoint": "quote",
@@ -596,7 +605,7 @@ def test_data_source_expansion_agent_run_is_recorded() -> None:
     assert any(item["event_type"] == "data_source_expansion_generated" for item in body["history_events"])
 
 
-def test_data_source_expansion_output_is_handoff_ready_for_programmer_agent() -> None:
+def test_data_source_expansion_output_is_handoff_ready_for_programmer_agent(client: TestClient) -> None:
     local_client = TestClient(create_app(WorkflowService()))
     created = local_client.post("/api/sessions", json={"user_name": "Bridge", "starting_capital": 300000})
     session_id = created.json()["session_id"]
@@ -607,7 +616,7 @@ def test_data_source_expansion_output_is_handoff_ready_for_programmer_agent() ->
             "provider_name": "Provider Bridge",
             "category": "fundamentals",
             "base_url": "https://api.provider-bridge.example",
-            "api_key_env": "BRIDGE_KEY",
+            "api_key_envs": ["BRIDGE_KEY"],
             "docs_summary": "Financial data endpoint with JSON responses.",
             "docs_url": "https://provider-bridge.example/docs",
             "sample_endpoint": "fundamentals",
@@ -623,7 +632,7 @@ def test_data_source_expansion_output_is_handoff_ready_for_programmer_agent() ->
     assert run["config_candidate"]["provider_name"] == "provider_bridge"
 
 
-def test_data_source_expansion_can_be_applied_by_programmer_agent() -> None:
+def test_data_source_expansion_can_be_applied_by_programmer_agent(client: TestClient) -> None:
     local_client = TestClient(create_app(WorkflowService()))
     created = local_client.post("/api/sessions", json={"user_name": "BridgeApply", "starting_capital": 300000})
     session_id = created.json()["session_id"]
@@ -634,7 +643,7 @@ def test_data_source_expansion_can_be_applied_by_programmer_agent() -> None:
             "provider_name": "Bridge Apply",
             "category": "options",
             "base_url": "https://api.bridge-apply.example",
-            "api_key_env": "BRIDGE_APPLY_KEY",
+            "api_key_envs": ["BRIDGE_APPLY_KEY"],
             "docs_summary": "Options chain API with JSON payloads.",
             "docs_url": "https://bridge-apply.example/docs/options",
             "sample_endpoint": "options",
@@ -661,7 +670,7 @@ def test_data_source_expansion_can_be_applied_by_programmer_agent() -> None:
     )
 
 
-def test_trading_terminal_integration_agent_run_is_recorded() -> None:
+def test_trading_terminal_integration_agent_run_is_recorded(client: TestClient) -> None:
     service = WorkflowService()
     service.terminal_integrator._fetch_text = lambda url: {  # type: ignore[method-assign]
         "ok": True,
@@ -680,7 +689,7 @@ def test_trading_terminal_integration_agent_run_is_recorded() -> None:
             "official_docs_url": "https://example.com/docs",
             "docs_search_url": "https://example.com/search?q=orders",
             "api_base_url": "https://api.example.com",
-            "api_key_env": "EXAMPLE_BROKER_KEY",
+            "api_key_envs": ["EXAMPLE_BROKER_KEY"],
             "auth_style": "bearer",
             "order_endpoint": "orders/place",
             "cancel_endpoint": "orders/cancel",
@@ -710,7 +719,7 @@ def test_trading_terminal_integration_agent_run_is_recorded() -> None:
     assert any(item["event_type"] == "trading_terminal_integration_generated" for item in body["history_events"])
 
 
-def test_trading_terminal_integration_can_be_applied_by_programmer_agent() -> None:
+def test_trading_terminal_integration_can_be_applied_by_programmer_agent(client: TestClient) -> None:
     service = WorkflowService()
     service.terminal_integrator._fetch_text = lambda url: {  # type: ignore[method-assign]
         "ok": True,
@@ -729,7 +738,7 @@ def test_trading_terminal_integration_can_be_applied_by_programmer_agent() -> No
             "official_docs_url": "https://example.com/docs",
             "docs_search_url": "https://example.com/search?q=positions",
             "api_base_url": "https://api.example.com",
-            "api_key_env": "APPLY_BROKER_KEY",
+            "api_key_envs": ["APPLY_BROKER_KEY"],
             "auth_style": "header",
             "order_endpoint": "orders",
             "cancel_endpoint": "orders/cancel",
@@ -759,7 +768,7 @@ def test_trading_terminal_integration_can_be_applied_by_programmer_agent() -> No
     )
 
 
-def test_trading_terminal_integration_can_be_smoke_tested() -> None:
+def test_trading_terminal_integration_can_be_smoke_tested(client: TestClient) -> None:
     created = client.post("/api/sessions", json={"user_name": "TerminalTester", "starting_capital": 100000})
     session_id = created.json()["session_id"]
 
@@ -771,7 +780,7 @@ def test_trading_terminal_integration_can_be_smoke_tested() -> None:
             "official_docs_url": "https://example.com/docs",
             "docs_search_url": "https://example.com/search?q=order",
             "api_base_url": "https://api.example.com",
-            "api_key_env": "SMOKE_BROKER_KEY",
+            "api_key_envs": ["SMOKE_BROKER_KEY"],
             "auth_style": "header",
             "order_endpoint": "orders/place",
             "cancel_endpoint": "orders/cancel",

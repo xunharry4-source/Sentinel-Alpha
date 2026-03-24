@@ -5,7 +5,7 @@ mode = "development"
 [api]
 host = "127.0.0.1"
 port = 8001
-cors_origins = ["http://127.0.0.1:8000", "http://localhost:8000"]
+cors_origins = ["http://127.0.0.1:8000", "http://localhost:8000", "http://127.0.0.1:8010", "http://localhost:8010"]
 
 [frontend]
 host = "127.0.0.1"
@@ -47,27 +47,27 @@ request_timeout_seconds = 10
 [market_data.providers]
 [market_data.providers.yahoo]
 enabled = true
-api_key_env = ""
+api_key_envs = []
 base_url = "https://query1.finance.yahoo.com"
 
 [market_data.providers.alphavantage]
 enabled = true
-api_key_env = "ALPHAVANTAGE_API_KEY"
+api_key_envs = ["ALPHAVANTAGE_API_KEY"]
 base_url = "https://www.alphavantage.co"
 
 [market_data.providers.finnhub]
 enabled = true
-api_key_env = "FINNHUB_API_KEY"
+api_key_envs = ["FINNHUB_API_KEY"]
 base_url = "https://finnhub.io/api/v1"
 
 [market_data.providers.akshare]
 enabled = true
-api_key_env = ""
+api_key_envs = []
 base_url = ""
 
 [market_data.providers.local_file]
 enabled = true
-api_key_env = ""
+api_key_envs = []
 base_path = "data/local_market_data"
 quote_filename = "{symbol}_quote.json"
 history_filename = "{symbol}_{interval}.csv"
@@ -80,7 +80,7 @@ request_timeout_seconds = 12
 [fundamentals.providers]
 [fundamentals.providers.sec]
 enabled = true
-api_key_env = ""
+api_key_envs = []
 base_url = "https://data.sec.gov"
 submissions_base_url = "https://data.sec.gov/submissions"
 companyfacts_base_url = "https://data.sec.gov/api/xbrl/companyfacts"
@@ -89,17 +89,17 @@ user_agent = "Sentinel-Alpha/0.1 support@sentinel-alpha.local"
 
 [fundamentals.providers.alphavantage]
 enabled = true
-api_key_env = "ALPHAVANTAGE_API_KEY"
+api_key_envs = ["ALPHAVANTAGE_API_KEY"]
 base_url = "https://www.alphavantage.co"
 
 [fundamentals.providers.finnhub]
 enabled = true
-api_key_env = "FINNHUB_API_KEY"
+api_key_envs = ["FINNHUB_API_KEY"]
 base_url = "https://finnhub.io/api/v1"
 
 [fundamentals.providers.local_file]
 enabled = true
-api_key_env = ""
+api_key_envs = []
 base_path = "data/local_market_data"
 financials_filename = "{symbol}_financials.json"
 
@@ -111,13 +111,13 @@ request_timeout_seconds = 12
 [dark_pool.providers]
 [dark_pool.providers.finra]
 enabled = true
-api_key_env = ""
+api_key_envs = []
 base_url = "https://api.finra.org"
 dataset = "otcmarket/weeklySummary"
 
 [dark_pool.providers.local_file]
 enabled = true
-api_key_env = ""
+api_key_envs = []
 base_path = "data/local_market_data"
 dark_pool_filename = "{symbol}_dark_pool.json"
 
@@ -129,134 +129,141 @@ request_timeout_seconds = 12
 [options_data.providers]
 [options_data.providers.yahoo_options]
 enabled = true
-api_key_env = ""
+api_key_envs = []
 base_url = "https://query2.finance.yahoo.com"
 
 [options_data.providers.finnhub]
 enabled = true
-api_key_env = "FINNHUB_API_KEY"
+api_key_envs = ["FINNHUB_API_KEY"]
 base_url = "https://finnhub.io/api/v1"
 
 [options_data.providers.local_file]
 enabled = true
-api_key_env = ""
+api_key_envs = []
 base_path = "data/local_market_data"
 options_filename = "{symbol}_options.json"
 
 [llm]
-enabled = false
-default_provider = "openai"
-default_model = "gpt-4.1-mini"
+enabled = true
+strict = true
+default_provider = "google"
+default_models = ["gemini-2.5-flash", "gemini-2.5-pro"]
 default_temperature = 0.2
 default_max_tokens = 1200
 
 [llm.providers]
 [llm.providers.openai]
-api_key_env = "OPENAI_API_KEY"
+api_key_envs = ["OPENAI_API_KEY"]
 base_url_env = "OPENAI_BASE_URL"
 
 [llm.providers.anthropic]
-api_key_env = "ANTHROPIC_API_KEY"
+api_key_envs = ["ANTHROPIC_API_KEY"]
 base_url_env = "ANTHROPIC_BASE_URL"
 
 [llm.providers.google]
-api_key_env = "GOOGLE_API_KEY"
+api_key_envs = ["GOOGLE_API_KEY_1", "GOOGLE_API_KEY_2", "GOOGLE_API_KEY_3", "GOOGLE_API_KEY_4"]
 base_url_env = "GOOGLE_API_BASE"
 
 [llm.agents]
 [llm.agents.intent_aligner]
-provider = "openai"
-model = "gpt-4.1-mini"
+provider = "google"
+models = ["gemini-2.5-flash", "gemini-2.5-pro"]
 temperature = 0.2
 max_tokens = 1000
 
 [llm.agents.noise_agent]
-provider = "openai"
-model = "gpt-4.1-mini"
+provider = "google"
+models = ["gemini-2.5-flash", "gemini-2.5-pro"]
 temperature = 0.8
 max_tokens = 900
 
 [llm.agents.behavioral_profiler]
-provider = "openai"
-model = "gpt-4.1-mini"
+provider = "google"
+models = ["gemini-2.5-flash", "gemini-2.5-pro"]
 temperature = 0.1
 max_tokens = 1200
 
 [llm.agents.intelligence_agent]
-provider = "openai"
-model = "gpt-4.1-mini"
+provider = "google"
+models = ["gemini-2.5-flash", "gemini-2.5-pro"]
 temperature = 0.2
 max_tokens = 1200
 
 [llm.agents.strategy_evolver]
-provider = "openai"
-model = "gpt-4.1"
+provider = "google"
+models = ["gemini-2.5-pro", "gemini-2.5-flash"]
 temperature = 0.15
 max_tokens = 1800
 
 [llm.agents.intent_monitor]
-provider = "openai"
-model = "gpt-4.1-mini"
+provider = "google"
+models = ["gemini-2.5-flash", "gemini-2.5-pro"]
 temperature = 0.2
 max_tokens = 900
 
 [llm.agents.strategy_integrity_checker]
-provider = "openai"
-model = "gpt-4.1-mini"
+provider = "google"
+models = ["gemini-2.5-flash", "gemini-2.5-pro"]
 temperature = 0.0
 max_tokens = 1400
 
 [llm.agents.strategy_stress_checker]
-provider = "openai"
-model = "gpt-4.1-mini"
+provider = "google"
+models = ["gemini-2.5-flash", "gemini-2.5-pro"]
 temperature = 0.0
 max_tokens = 1400
 
+[llm.agents.programmer_agent]
+provider = "google"
+models = ["gemini-2.5-flash", "gemini-2.5-pro"]
+temperature = 0.1
+max_tokens = 1600
+
 [llm.tasks]
 [llm.tasks.intent_translation]
-provider = "openai"
-model = "gpt-4.1-mini"
+provider = "google"
+models = ["gemini-2.5-flash", "gemini-2.5-pro"]
 temperature = 0.2
 max_tokens = 1000
 
 [llm.tasks.noise_generation]
-provider = "openai"
-model = "gpt-4.1-mini"
+provider = "google"
+models = ["gemini-2.5-flash", "gemini-2.5-pro"]
 temperature = 0.85
 max_tokens = 1000
 
 [llm.tasks.behavior_analysis]
-provider = "openai"
-model = "gpt-4.1"
+provider = "google"
+models = ["gemini-2.5-pro", "gemini-2.5-flash"]
 temperature = 0.1
-max_tokens = 1400
+max_tokens = 2600
 
 [llm.tasks.market_summarization]
-provider = "openai"
-model = "gpt-4.1-mini"
+provider = "google"
+models = ["gemini-2.5-flash", "gemini-2.5-pro"]
 temperature = 0.2
 max_tokens = 1200
 
 [llm.tasks.strategy_analysis]
-provider = "anthropic"
-model = "claude-3-7-sonnet-latest"
+provider = "google"
+models = ["gemini-2.5-pro", "gemini-2.5-flash"]
 temperature = 0.15
 max_tokens = 1600
 
 [llm.tasks.strategy_codegen]
-provider = "openai"
-model = "gpt-4.1"
+provider = "google"
+models = ["gemini-2.5-pro", "gemini-2.5-flash"]
 temperature = 0.1
 max_tokens = 2200
 
 [llm.tasks.strategy_critic]
 provider = "google"
-model = "gemini-2.5-pro"
+models = ["gemini-2.5-pro", "gemini-2.5-flash"]
 temperature = 0.0
 max_tokens = 1800
 
 [programmer_agent]
-enabled = false
+enabled = true
 command = "aider"
 args = ["--yes-always"]
 repo_path = "/Users/harry/Documents/git/Sentinel-Alpha"

@@ -53,6 +53,7 @@ The intended rule is:
 
 - future strategy work should usually modify strategy logic only
 - the surrounding workflow should remain stable platform infrastructure
+- testing exists to reveal real errors, regressions, vulnerabilities, and possible latent defects in the system as thoroughly as practical; it must not be treated as something to bypass, soften, or explain away
 
 Stable platform layers:
 

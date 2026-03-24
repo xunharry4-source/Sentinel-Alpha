@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from urllib.parse import urlparse
+import re
 
 from sentinel_alpha.config import AppSettings
 
@@ -137,6 +138,15 @@ class ConfigValidator:
                 }
             )
             return checks
+        if getattr(settings, "llm_strict", True):
+            checks.append(
+                {
+                    "name": "llm.strict",
+                    "status": "ok",
+                    "detail": "LLM strict mode is enabled. Fallback outputs are forbidden for LLM-backed tasks.",
+                    "recommendation": "No action required.",
+                }
+            )
         provider_envs = settings.llm_provider_envs
         default_provider = settings.llm_default_provider
         if default_provider not in provider_envs:
@@ -149,17 +159,54 @@ class ConfigValidator:
                 }
             )
         else:
-            api_key_env = str(provider_envs[default_provider].get("api_key_env", ""))
-            api_key_present = bool(api_key_env and os.getenv(api_key_env))
+            provider_config = provider_envs[default_provider]
+            api_key_envs = provider_config.get("api_key_envs")
+            if isinstance(api_key_envs, list):
+                env_names = [str(item) for item in api_key_envs if str(item).strip()]
+            else:
+                env_names = []
+            invalid_entries = [item for item in env_names if not self._is_env_style_name(item)]
+            env_backed = [item for item in env_names if self._is_env_style_name(item) and os.getenv(item)]
+            api_key_present = bool(env_backed)
+            required_envs = ", ".join(item for item in env_names if self._is_env_style_name(item)) if env_names else "provider api key env"
             checks.append(
                 {
                     "name": "llm.default_provider",
-                    "status": "ok" if api_key_present else "warning",
+                    "status": "ok" if api_key_present else ("error" if getattr(settings, "llm_strict", True) else "warning"),
                     "detail": f"Default LLM provider is {default_provider}.",
-                    "recommendation": "No action required." if api_key_present else f"Set {api_key_env} to activate live LLM calls.",
+                    "recommendation": "No action required."
+                    if api_key_present
+                    else f"Set at least one of [{required_envs}] in the environment to activate live LLM calls.",
                 }
             )
+            if invalid_entries:
+                checks.append(
+                    {
+                        "name": "llm.api_key_envs",
+                        "status": "error",
+                        "detail": f"Invalid credential entries detected in llm.providers.{default_provider}.api_key_envs (must be ENV var names): {', '.join(invalid_entries[:4])}",
+                        "recommendation": "Replace raw keys with environment variable names (e.g. GOOGLE_API_KEY_1).",
+                    }
+                )
         return checks
+
+    def _is_env_style_name(self, value: str) -> bool:
+        return bool(re.fullmatch(r"[A-Z_][A-Z0-9_]*", (value or "").strip()))
+
+    def _looks_like_direct_secret(self, value: str) -> bool:
+        stripped = value.strip()
+        if not stripped:
+            return False
+        if stripped.startswith("AIza") and len(stripped) >= 20:
+            return True
+        if stripped.startswith(("sk-", "sk-ant-", "xai-")):
+            return True
+        return len(stripped) >= 24 and not self._is_env_style_name(stripped)
+
+    def _mask_credential(self, value: str, provider: str, index: int) -> str:
+        if self._is_env_style_name(value):
+            return value
+        return f"{provider}#{index + 1}"
 
     def _programmer_checks(self, settings: AppSettings) -> list[dict[str, str]]:
         path = Path(settings.programmer_agent_repo_path).expanduser()

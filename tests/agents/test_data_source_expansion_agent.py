@@ -13,7 +13,7 @@ def test_data_source_expansion_agent_generates_valid_code_and_test() -> None:
             provider_name="Example Data",
             category="market_data",
             base_url="https://api.example.com",
-            api_key_env="EXAMPLE_API_KEY",
+            api_key_envs=["EXAMPLE_API_KEY"],
             docs_summary="JSON API that accepts symbol and interval parameters.",
             docs_url="https://docs.example.com/market-data",
             sample_endpoint="quote",
@@ -38,7 +38,7 @@ def test_data_source_expansion_agent_accepts_docs_url_without_summary() -> None:
             provider_name="Docs Only Feed",
             category="market_data",
             base_url="https://api.docs-only.example",
-            api_key_env=None,
+            api_key_envs=[],
             docs_summary=None,
             docs_url="https://docs.docs-only.example/reference",
         )
@@ -57,7 +57,7 @@ def test_data_source_expansion_agent_generates_category_specific_methods() -> No
             provider_name="Sec Mirror",
             category="fundamentals",
             base_url="https://example.com/sec",
-            api_key_env=None,
+            api_key_envs=[],
             docs_summary="Financial statements and filing metadata.",
         )
     )
@@ -66,7 +66,7 @@ def test_data_source_expansion_agent_generates_category_specific_methods() -> No
             provider_name="Options Feed",
             category="options",
             base_url="https://example.com/options",
-            api_key_env="OPTIONS_KEY",
+            api_key_envs=["OPTIONS_KEY"],
             docs_summary="Option chain endpoint.",
         )
     )
@@ -75,7 +75,7 @@ def test_data_source_expansion_agent_generates_category_specific_methods() -> No
             provider_name="DarkPool Feed",
             category="dark_pool",
             base_url="https://example.com/darkpool",
-            api_key_env="DARKPOOL_KEY",
+            api_key_envs=["DARKPOOL_KEY"],
             docs_summary="Dark pool volume endpoint.",
         )
     )

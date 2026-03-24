@@ -10,7 +10,7 @@ class DataSourceExpansionRequest:
     provider_name: str
     category: str
     base_url: str
-    api_key_env: str | None
+    api_key_envs: list[str]
     docs_summary: str | None = None
     docs_url: str | None = None
     sample_endpoint: str | None = None
@@ -20,6 +20,9 @@ class DataSourceExpansionRequest:
 
 class DataSourceExpansionAgent:
     """Generates adapter code, tests, and config fragments for new data sources."""
+
+    def _normalized_api_key_envs(self, envs: list[str] | None) -> list[str]:
+        return [str(item).strip() for item in (envs or []) if str(item).strip()]
 
     def build_integration_package(self, request: DataSourceExpansionRequest) -> dict:
         slug = self._slugify(request.provider_name)
@@ -59,10 +62,10 @@ class DataSourceExpansionAgent:
         history_method = self._category_method(request.category, "history")
         request_notes = self._request_notes(request).replace('"""', "'''")
         docs_url_line = f"    Docs URL: {request.docs_url}\\n" if request.docs_url else ""
-        api_key_line = (
-            f'        self.api_key = os.getenv("{request.api_key_env}", "")\n'
-            if request.api_key_env
-            else '        self.api_key = ""\n'
+        envs = self._normalized_api_key_envs(request.api_key_envs)
+        api_key_lines = (
+            f"        self.api_keys = [os.getenv(name, \"\") for name in {envs!r}]\n"
+            "        self.api_key = next((value for value in self.api_keys if value), \"\")\n"
         )
         auth_injection = self._auth_injection(request.auth_style)
         return (
@@ -78,7 +81,7 @@ class DataSourceExpansionAgent:
             '    """\n\n'
             "    def __init__(self, base_url: str | None = None, timeout_seconds: int = 10) -> None:\n"
             f'        self.base_url = (base_url or "{request.base_url}").rstrip("/")\n'
-            f"{api_key_line}"
+            f"{api_key_lines}"
             "        self.timeout_seconds = timeout_seconds\n\n"
             "    def _request_json(self, path: str, params: dict[str, str] | None = None) -> dict:\n"
             "        params = dict(params or {})\n"
@@ -121,7 +124,8 @@ class DataSourceExpansionAgent:
         )
 
     def _build_config_fragment(self, request: DataSourceExpansionRequest, slug: str) -> str:
-        api_key_line = f'api_key_env = "{request.api_key_env}"\n' if request.api_key_env else 'api_key_env = ""\n'
+        envs = self._normalized_api_key_envs(request.api_key_envs)
+        api_key_line = f"api_key_envs = {envs!r}\n"
         docs_url_line = f'docs_url = "{request.docs_url}"\n' if request.docs_url else ""
         return (
             f"[generated_sources.providers.{slug}]\n"
@@ -143,7 +147,7 @@ class DataSourceExpansionAgent:
     ) -> dict:
         provider_config = {
             "enabled": True,
-            "api_key_env": request.api_key_env or "",
+            "api_key_envs": self._normalized_api_key_envs(request.api_key_envs),
             "base_url": request.base_url,
             "docs_url": request.docs_url or "",
             "auth_style": request.auth_style,

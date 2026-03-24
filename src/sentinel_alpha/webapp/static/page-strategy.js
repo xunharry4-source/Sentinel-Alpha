@@ -29,7 +29,7 @@ function saveStrategyLogs(sessionId, logs) {
 }
 
 function appendStrategyLog(level, message) {
-  const sessionId = loadStoredSnapshot()?.session_id || "anonymous";
+  const sessionId = loadCurrentSnapshot()?.session_id || "anonymous";
   const logs = loadStrategyLogs(sessionId);
   logs.unshift({
     timestamp: new Date().toLocaleString("zh-CN", { hour12: false }),
@@ -41,7 +41,7 @@ function appendStrategyLog(level, message) {
 }
 
 function renderStrategyLogs() {
-  const sessionId = loadStoredSnapshot()?.session_id || "anonymous";
+  const sessionId = loadCurrentSnapshot()?.session_id || "anonymous";
   const logs = loadStrategyLogs(sessionId);
   renderList(
     "training-log-list",
@@ -296,6 +296,10 @@ function renderResearchSummary(snapshot) {
   const evaluationSnapshot = summary.evaluation_snapshot || {};
   const evaluationHighlights = summary.evaluation_highlights || [];
   const backtestBinding = summary.backtest_binding_summary || {};
+  const researchReliability = summary.research_reliability_summary || {};
+  const backtestQuality = evaluationSnapshot.backtest_quality_summary || summary.backtest_quality_summary || {};
+  const coverage = evaluationSnapshot.coverage_summary || {};
+  const splitMetrics = coverage.split_metrics || {};
   renderList(
     "strategy-research-summary-list",
     [
@@ -307,11 +311,15 @@ function renderResearchSummary(snapshot) {
       `送检目标: ${checkTarget.variant_id || "unknown"} / source=${checkTarget.source || "unknown"} / eval_source=${checkTarget.evaluation_source || "unknown"} / test=${checkTarget.test_objective_score ?? "unknown"} / stability=${checkTarget.stability_score ?? "unknown"}`,
       `送检理由: ${checkTarget.reason || "无"}`,
       `稳健性结论: grade=${robustness.grade || "unknown"} / stability=${robustness.stability_score ?? "unknown"} / gap=${robustness.train_test_gap ?? "unknown"} / ${robustness.note || "无"}`,
+      `研究可靠性: status=${researchReliability.status || "unknown"} / confidence=${researchReliability.confidence || "unknown"} / warnings=${(researchReliability.warnings || []).join("，") || "无"} / ${researchReliability.note || "无"}`,
       `回测绑定: grade=${backtestBinding.grade || "unknown"} / source=${backtestBinding.evaluation_source || evaluationSnapshot.evaluation_source || "unknown"} / coverage=${backtestBinding.coverage_grade || evaluationSnapshot.coverage_summary?.coverage_grade || "unknown"} / ${backtestBinding.note || "无"}`,
+      `回测质量: grade=${backtestQuality.grade || "unknown"} / active_symbols=${backtestQuality.test_active_symbol_count ?? "unknown"} / breadth=${backtestQuality.effective_weight_count ?? "unknown"} / hhi=${backtestQuality.concentration_hhi ?? "unknown"} / gross=${backtestQuality.gross_exposure_pct ?? "unknown"}% / turnover=${backtestQuality.avg_daily_turnover_proxy_pct ?? "unknown"}% / warnings=${(backtestQuality.warnings || []).join("，") || "无"}`,
       `评估快照: source=${evaluationSnapshot.evaluation_source || "unknown"} / wf_windows=${evaluationSnapshot.walk_forward_windows ?? 0} / wf_score=${evaluationSnapshot.walk_forward_score ?? "unknown"} / gap=${evaluationSnapshot.train_test_gap ?? "unknown"}`,
       `Train/Validation/Test: ${evaluationSnapshot.train?.objective_score ?? "unknown"} / ${evaluationSnapshot.validation?.objective_score ?? "unknown"} / ${evaluationSnapshot.test?.objective_score ?? "unknown"}`,
       `测试细节: gross=${evaluationSnapshot.test?.gross_exposure_pct ?? "unknown"} / net=${evaluationSnapshot.test?.net_exposure_pct ?? "unknown"} / turnover=${evaluationSnapshot.test?.avg_daily_turnover_proxy_pct ?? "unknown"} / obs=${evaluationSnapshot.test?.observation_count ?? "unknown"}`,
+      `样本密度: validation=${splitMetrics.validation?.sample_density ?? "unknown"} / test=${splitMetrics.test?.sample_density ?? "unknown"} / warnings=${(coverage.coverage_warnings || []).join("，") || "无"}`,
       `发布门: status=${releaseGate.gate_status || "unknown"} / release_ready=${releaseGate.release_ready === true ? "yes" : releaseGate.release_ready === false ? "no" : "unknown"} / failed=${releaseGate.failed_check_count ?? 0} / passed=${releaseGate.passed_check_count ?? 0}`,
+      `门控阻塞: coverage=${releaseGate.coverage_gate_blocked ? "yes" : "no"} / blockers=${(releaseGate.gate_blockers || []).join("，") || "无"}`,
       `门控结论: ${releaseGate.reason || "无"}`,
       ...evaluationHighlights.map((item) => `评估结论: ${item}`),
       ...rankings.map((item) => `排名 ${item.rank}: ${item.name} / version=${item.version || "unknown"} / test=${item.test_objective_score ?? "unknown"} / validation=${item.validation_objective_score ?? "unknown"} / stability=${item.stability_score ?? "unknown"}${item.focus ? ` / focus=${item.focus}` : ""}`),
@@ -826,7 +834,13 @@ function renderFeatureSnapshot(snapshot) {
     lines.push(`lineage / dark_pool=${lineage.dark_pool?.run_id || "none"} / options=${lineage.options?.run_id || "none"}`);
   }
   if (features.behavioral) {
+    lines.push(`behavioral_mode / ${features.behavioral.report_generation_mode || "unknown"} / ${features.behavioral.analysis_status || "unknown"}`);
     lines.push(`behavioral / noise=${features.behavioral.noise_sensitivity ?? "unknown"} / panic=${features.behavioral.panic_sell_tendency ?? "unknown"} / overtrade=${features.behavioral.overtrading_tendency ?? "unknown"}`);
+    if (features.behavioral.executed_trade_ratio !== undefined) {
+      lines.push(`behavioral_execution / executed=${features.behavioral.executed_trade_ratio} / partial=${features.behavioral.partial_fill_ratio ?? "unknown"} / rejected=${features.behavioral.rejected_order_ratio ?? "unknown"} / unfilled=${features.behavioral.unfilled_order_ratio ?? "unknown"}`);
+      lines.push(`behavioral_tags / fast=${features.behavioral.fast_event_ratio ?? "unknown"} / slow=${features.behavioral.slow_event_ratio ?? "unknown"} / tags=${(features.behavioral.behavior_tags || []).join(", ") || "none"}`);
+      lines.push(`behavioral_noise / execute=${features.behavioral.high_noise_execution_ratio ?? "unknown"} / hold=${features.behavioral.high_noise_hold_ratio ?? "unknown"}`);
+    }
   }
   if (features.market) {
     lines.push(`market / symbol=${features.market.symbol || "unknown"} / timeframe=${features.market.timeframe || "unknown"} / regime=${features.market.regime_tag || "unknown"}`);
@@ -873,6 +887,13 @@ function renderInputManifest(snapshot) {
   }
   if ((manifest.data_quality?.alignment_warnings || []).length) {
     lines.push(`freshness / warnings=${manifest.data_quality.alignment_warnings.join(", ")}`);
+  }
+  if (snapshot?.behavioral_report?.execution_event_count) {
+    lines.push(`behavioral_source / mode=${snapshot.behavioral_report.report_generation_mode || "unknown"} / status=${snapshot.behavioral_report.analysis_status || "unknown"}`);
+    lines.push(`execution_quality / events=${snapshot.behavioral_report.execution_event_count} / clean=${snapshot.behavioral_report.clean_execution_ratio ?? "unknown"} / note=${snapshot.behavioral_report.execution_quality_note || "无说明"}`);
+    if (snapshot.behavioral_report.analysis_warning) {
+      lines.push(`behavioral_warning / ${snapshot.behavioral_report.analysis_warning}`);
+    }
   }
   if (lineage.market || lineage.intelligence || lineage.fundamentals || lineage.dark_pool || lineage.options) {
     lines.push(`lineage / market=${lineage.market?.source || "none"} / intel=${lineage.intelligence?.run_id || "none"} / financials=${lineage.fundamentals?.run_id || "none"}`);
@@ -1152,6 +1173,7 @@ function renderProgrammerRuns(snapshot) {
         const rollback = item.rollback_summary || {};
         const promotion = item.promotion_summary || {};
         const stability = item.stability_summary || {};
+        const chain = item.repair_chain_summary || {};
         const lines = [
           `${item.timestamp || "unknown"} / ${item.status || "unknown"} / failure=${item.failure_type || "none"} / commit=${item.commit_hash || "none"} / rollback=${item.rollback_commit || "none"} / files=${(item.changed_files || []).join(", ") || "none"}`,
         ];
@@ -1185,6 +1207,12 @@ function renderProgrammerRuns(snapshot) {
           lines.push(`stability / ${stability.stability_status} / retry_depth=${stability.retry_depth ?? "unknown"} / stop=${stability.stop_reason || "unknown"}`);
           if (stability.note) {
             lines.push(`stability_note / ${stability.note}`);
+          }
+        }
+        if (chain.chain_status) {
+          lines.push(`repair_chain / ${chain.chain_status} / decision=${chain.primary_decision || "unknown"} / next=${chain.next_mode || "unknown"} / auto_continue=${chain.auto_continue_recommended ? "yes" : "no"}`);
+          if (chain.note) {
+            lines.push(`repair_chain_note / ${chain.note}`);
           }
         }
         if (item.validation_detail) {
@@ -1221,6 +1249,9 @@ function renderProgrammerRuns(snapshot) {
       const stabilitySummary = latest.stability_summary
         ? JSON.stringify(latest.stability_summary, null, 2)
         : "";
+      const repairChainSummary = latest.repair_chain_summary
+        ? JSON.stringify(latest.repair_chain_summary, null, 2)
+        : "";
       const stopSummary = JSON.stringify(
         {
           progress_status: latest.progress_status,
@@ -1233,7 +1264,7 @@ function renderProgrammerRuns(snapshot) {
         null,
         2
       );
-      panel.textContent = [attemptSummary, failureSummary, repairPlan, acceptanceSummary, rollbackSummary, promotionSummary, stabilitySummary, stopSummary, latest.diff || "", latest.stderr || ""].filter(Boolean).join("\n\n");
+      panel.textContent = [attemptSummary, failureSummary, repairPlan, acceptanceSummary, rollbackSummary, promotionSummary, stabilitySummary, repairChainSummary, stopSummary, latest.diff || "", latest.stderr || ""].filter(Boolean).join("\n\n");
     }
   }
 }
@@ -1295,7 +1326,7 @@ function renderModelRouting(snapshot) {
             <strong>${agent}</strong>
             <span class="status-chip outline-chip">agent</span>
           </div>
-          <p class="check-summary">${info.provider || "unknown"} / ${info.model || "unknown"}</p>
+          <p class="check-summary">${info.provider || "unknown"} / ${(info.models || [info.model || "unknown"]).join(" -> ")}</p>
           <p class="check-label">fallback</p>
           <p>${info.fallback_provider || "n/a"} / ${info.fallback_model || "n/a"}</p>
         </article>
@@ -1306,7 +1337,7 @@ function renderModelRouting(snapshot) {
             <strong>${task}</strong>
             <span class="status-chip outline-chip">task</span>
           </div>
-          <p class="check-summary">${info.provider || "unknown"} / ${info.model || "unknown"}</p>
+          <p class="check-summary">${info.provider || "unknown"} / ${(info.models || [info.model || "unknown"]).join(" -> ")}</p>
           <p class="check-label">temperature</p>
           <p>${info.temperature ?? "default"}</p>
         </article>
@@ -1315,8 +1346,8 @@ function renderModelRouting(snapshot) {
     }
   }
   const lines = [
-    ...agentEntries.map(([agent, info]) => `Agent / ${agent}: ${info.provider || "unknown"} / ${info.model || "unknown"}${info.fallback_model ? ` / fallback=${info.fallback_provider || "unknown"}:${info.fallback_model}` : ""}`),
-    ...taskEntries.map(([task, info]) => `Task / ${task}: ${info.provider || "unknown"} / ${info.model || "unknown"} / temperature=${info.temperature ?? "default"}`),
+    ...agentEntries.map(([agent, info]) => `Agent / ${agent}: ${info.provider || "unknown"} / ${(info.models || [info.model || "unknown"]).join(" -> ")}`),
+    ...taskEntries.map(([task, info]) => `Task / ${task}: ${info.provider || "unknown"} / ${(info.models || [info.model || "unknown"]).join(" -> ")} / temperature=${info.temperature ?? "default"}`),
   ];
   renderList("strategy-model-list", lines, "还没有模型路由信息。");
 }
@@ -1324,11 +1355,13 @@ function renderModelRouting(snapshot) {
 function renderTokenUsage(snapshot) {
   const usage = snapshot?.token_usage || {};
   const totals = Object.values(usage?.totals || {});
+  const aggregate = usage?.aggregate || {};
   const recent = usage?.recent_calls || [];
-  const calls = totals.reduce((sum, item) => sum + Number(item.calls || 0), 0);
-  const inputTokens = totals.reduce((sum, item) => sum + Number(item.input_tokens || 0), 0);
-  const outputTokens = totals.reduce((sum, item) => sum + Number(item.output_tokens || 0), 0);
-  const cacheHits = totals.reduce((sum, item) => sum + Number(item.cache_hits || 0), 0);
+  const calls = Number(aggregate.api_request_count ?? totals.reduce((sum, item) => sum + Number(item.calls || 0), 0));
+  const inputTokens = Number(aggregate.input_tokens ?? totals.reduce((sum, item) => sum + Number(item.input_tokens || 0), 0));
+  const outputTokens = Number(aggregate.output_tokens ?? totals.reduce((sum, item) => sum + Number(item.output_tokens || 0), 0));
+  const cacheHits = Number(aggregate.cache_hits ?? totals.reduce((sum, item) => sum + Number(item.cache_hits || 0), 0));
+  const totalTokens = Number(aggregate.total_tokens ?? inputTokens + outputTokens);
   const grid = document.querySelector("#strategy-token-grid");
   if (grid) {
     if (!totals.length) {
@@ -1358,6 +1391,13 @@ function renderTokenUsage(snapshot) {
         </article>
         <article class="check-card">
           <div class="check-head">
+            <strong>Total Tokens</strong>
+            <span class="status-chip outline-chip">${totalTokens}</span>
+          </div>
+          <p class="check-summary">输入与输出 token 总消耗量。</p>
+        </article>
+        <article class="check-card">
+          <div class="check-head">
             <strong>Cache Hits</strong>
             <span class="status-chip outline-chip">${cacheHits}</span>
           </div>
@@ -1367,6 +1407,8 @@ function renderTokenUsage(snapshot) {
     }
   }
   const lines = [
+    `api_requests / ${aggregate.api_request_count ?? calls} / total_tokens=${aggregate.total_tokens ?? totalTokens} / live=${aggregate.live_request_count ?? 0} / fallback=${aggregate.fallback_request_count ?? 0}`,
+    `llm_quality / fallback_ratio=${aggregate.fallback_ratio ?? 0} / recent_fallback_ratio=${aggregate.recent_fallback_ratio ?? 0} / cache_hit_ratio=${aggregate.cache_hit_ratio ?? 0} / recent_calls=${aggregate.recent_call_count ?? 0}`,
     ...totals
       .slice()
       .sort((a, b) => Number(b.calls || 0) - Number(a.calls || 0))
@@ -1584,6 +1626,7 @@ function renderBacktestSummary(snapshot) {
       `覆盖摘要: 标的 ${coverage.symbol_count ?? "unknown"} / bars ${coverage.total_bar_count ?? "unknown"} / wf_windows ${coverage.walk_forward_window_count ?? 0}`,
       `覆盖健康: ${coverage.coverage_grade || "unknown"} / ${coverage.coverage_health_note || "无"}`,
       `覆盖警告: ${(coverage.coverage_warnings || []).join("，") || "无"}`,
+      `样本密度: validation=${coverage.split_metrics?.validation?.sample_density ?? "unknown"} / test=${coverage.split_metrics?.test?.sample_density ?? "unknown"} / test_obs=${coverage.split_metrics?.test?.observation_count ?? "unknown"}`,
       `覆盖区间: ${coverage.date_range?.start || "unknown"} -> ${coverage.date_range?.end || "unknown"}`,
       `Train: 收益 ${dataset.train.expected_return_pct}% / 胜率 ${dataset.train.win_rate_pct}% / 回撤 ${dataset.train.drawdown_pct}% / 最大亏损 ${dataset.train.max_loss_pct}% / 分数 ${dataset.train.objective_score}`,
       `Validation: 收益 ${dataset.validation.expected_return_pct}% / 胜率 ${dataset.validation.win_rate_pct}% / 回撤 ${dataset.validation.drawdown_pct}% / 最大亏损 ${dataset.validation.max_loss_pct}% / 分数 ${dataset.validation.objective_score}`,
@@ -1841,7 +1884,13 @@ document.querySelector("#apply-repair-and-programmer")?.addEventListener("click"
   appendStrategyLog("error", `自动回填并执行 Programmer Agent 失败：${error.message}`);
 }));
 document.querySelector("#apply-strategy-recommendation")?.addEventListener("click", () => {
-  const report = loadStoredSnapshot()?.behavioral_report || {};
+  const snapshot = loadStoredSnapshot() || {};
+  const report = snapshot.behavioral_user_report || snapshot.behavioral_report || {};
+  if (report.report_generation_mode !== "live_llm") {
+    setText("strategy-recommendation-note", report.analysis_warning || "当前没有可直接应用的智能策略推荐。");
+    appendStrategyLog("warning", report.analysis_warning || "策略推荐来源为规则统计，已阻止自动应用。");
+    return;
+  }
   if (report.recommended_strategy_type) {
     document.querySelector("#strategy-type-input").value = report.recommended_strategy_type;
     setText("strategy-recommendation-note", report.strategy_type_recommendation_note || "已应用策略推荐。");
@@ -1855,7 +1904,7 @@ document.querySelector("#apply-strategy-recommendation")?.addEventListener("clic
 (async function bootstrapStrategyPage() {
   renderShell("strategy");
   await ensureClientConfig();
-  const stored = loadStoredSnapshot();
+  const stored = loadCurrentSnapshot();
   let snapshot = stored;
   if (stored?.session_id) {
     try {
@@ -1867,8 +1916,6 @@ document.querySelector("#apply-strategy-recommendation")?.addEventListener("clic
   renderStrategy(snapshot || {});
   if (snapshot?.strategy_package?.strategy_type) {
     document.querySelector("#strategy-type-input").value = snapshot.strategy_package.strategy_type;
-  } else if (snapshot?.behavioral_report?.recommended_strategy_type) {
-    document.querySelector("#strategy-type-input").value = snapshot.behavioral_report.recommended_strategy_type;
   }
   if (snapshot?.strategy_package?.iteration_mode) {
     document.querySelector("#iteration-mode-input").value = snapshot.strategy_package.iteration_mode;

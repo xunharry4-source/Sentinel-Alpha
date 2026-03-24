@@ -48,6 +48,13 @@ Every strategy must produce:
 
 ## Optimization Iteration Rules
 
+Testing principle:
+
+- tests exist to expose strategy and system errors, vulnerabilities, and possible latent defects as thoroughly as practical, not to help the implementation avoid those errors
+- if integrity, stress, or overfit checks fail, treat that as useful signal about a real issue
+- strategy testing should actively probe weak assumptions, fragile parameterization, failure paths, and overfit surfaces rather than only validating expected success cases
+- do not narrow the test, mute the assertion, or reframe the failure away unless the test itself is demonstrably wrong
+- when a check reveals a flaw, fix the flaw or document the limitation explicitly before approval
 For each new strategy version:
 
 1. Start from the previous version or baseline implementation.
