@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import Literal
 from typing import Any
 from uuid import UUID
@@ -13,18 +14,30 @@ class CreateSessionRequest(BaseModel):
 
 
 class BehaviorEventIn(BaseModel):
-    scenario_id: str
-    price_drawdown_pct: float
+    scenario_id: str = "simulation-market"
+    price_drawdown_pct: float | None = None
     action: Literal["buy", "sell", "hold"]
-    noise_level: float
-    sentiment_pressure: float
-    latency_seconds: float
-    execution_status: Literal["filled", "partial_fill", "unfilled", "rejected", "hold"] = "filled"
+    noise_level: float | None = None
+    sentiment_pressure: float | None = None
+    latency_seconds: float | None = None
+    execution_status: Literal["filled", "partial_fill", "unfilled", "rejected", "hold"] | None = None
     execution_reason: str | None = None
 
 
 class CompleteSimulationRequest(BaseModel):
     symbol: str = "SIM"
+
+
+class SimulationMarketInitializeRequest(BaseModel):
+    symbol: str
+    provider: str | None = None
+    daily_lookback: str = "6mo"
+    intraday_lookback: str = "5d"
+    intraday_interval: Literal["1m", "5m", "15m"] = "5m"
+
+
+class SimulationMarketAdvanceRequest(BaseModel):
+    steps: int = Field(default=1, ge=1, le=96)
 
 
 class TradeUniverseRequest(BaseModel):
@@ -49,6 +62,8 @@ class StrategyIterationRequest(BaseModel):
     target_win_rate_pct: float | None = None
     target_drawdown_pct: float | None = None
     target_max_loss_pct: float | None = None
+    training_start_date: date | None = None
+    training_end_date: date | None = None
 
 
 class MarketSnapshotIn(BaseModel):
@@ -116,20 +131,28 @@ class ProgrammerTaskRequest(BaseModel):
 
 
 class DataSourceExpansionRequestIn(BaseModel):
-    provider_name: str
-    category: Literal["market_data", "fundamentals", "dark_pool", "options"]
-    base_url: str
+    interface_documentation: str
+    api_key: str | None = None
+    provider_name: str | None = None
+    category: Literal["market_data", "fundamentals", "dark_pool", "options"] | None = None
+    base_url: str | None = None
     api_key_envs: list[str] = Field(default_factory=list)
     docs_summary: str | None = None
     docs_url: str | None = None
     sample_endpoint: str | None = None
-    auth_style: Literal["header", "query", "bearer"] = "header"
-    response_format: Literal["json", "csv", "xml"] = "json"
+    auth_style: Literal["header", "query", "bearer"] | None = None
+    response_format: Literal["json", "csv", "xml"] | None = None
 
 
 class DataSourceApplyRequest(BaseModel):
     run_id: str | None = None
     commit_changes: bool = True
+
+
+class DataSourceTestRequest(BaseModel):
+    run_id: str | None = None
+    symbol: str = "AAPL"
+    api_key: str | None = None
 
 
 class TradingTerminalIntegrationRequestIn(BaseModel):
@@ -198,6 +221,7 @@ class SessionSnapshot(BaseModel):
     behavioral_report: dict | None
     behavioral_user_report: dict | None = None
     behavioral_system_report: dict | None = None
+    simulation_market: dict | None = None
     trading_preferences: dict | None
     trade_universe: dict | None
     strategy_package: dict | None

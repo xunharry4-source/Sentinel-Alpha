@@ -20,14 +20,17 @@ class BehavioralProfilerAgent:
         rejected_or_unfilled = [e for e in events if e.execution_status in {"rejected", "unfilled"}]
         fast_events = [e for e in events if e.latency_seconds < 45]
         slow_events = [e for e in events if e.latency_seconds > 240]
+        late_drawdown_events = [e for e in events if (e.intraday_progress_pct or 0.0) >= 60 and (e.current_drawdown_pct or e.price_drawdown_pct) <= -3]
+        opening_impulse_events = [e for e in events if (e.intraday_progress_pct or 0.0) <= 15 and e.action in {"buy", "sell"}]
+        downtrend_buy_events = [e for e in buy_events if (e.daily_trend_pct or 0.0) < -2.0]
 
         panic_sell_score = min(
             1.0,
-            sum(1 for e in sell_events if e.price_drawdown_pct <= -8) / max(1, len(events)),
+            sum(1 for e in sell_events if min(e.price_drawdown_pct, e.current_drawdown_pct or 0.0) <= -8) / max(1, len(events)),
         )
         averaging_down_score = min(
             1.0,
-            sum(1 for e in buy_events if e.price_drawdown_pct <= -12) / max(1, len(events)),
+            sum(1 for e in buy_events if min(e.price_drawdown_pct, e.current_drawdown_pct or 0.0) <= -12) / max(1, len(events)),
         )
         noise_susceptibility = min(
             1.0,
@@ -35,14 +38,32 @@ class BehavioralProfilerAgent:
         )
         intervention_risk = min(
             1.0,
-            sum(1 for e in events if e.latency_seconds < 90) / max(1, len(events)),
+            (
+                sum(1 for e in events if e.latency_seconds < 90)
+                + sum(1 for e in opening_impulse_events)
+            )
+            / max(1, len(events) * 1.5),
         )
 
-        loss_points = [-e.price_drawdown_pct for e in sell_events if e.price_drawdown_pct < 0]
+        loss_points = [
+            -min(e.price_drawdown_pct, e.current_drawdown_pct or e.price_drawdown_pct)
+            for e in sell_events
+            if min(e.price_drawdown_pct, e.current_drawdown_pct or e.price_drawdown_pct) < 0
+        ]
         max_comfort_drawdown = mean(loss_points) if loss_points else 6.0
         discipline_score = max(
             0.0,
-            min(1.0, 1.0 - (panic_sell_score * 0.35 + averaging_down_score * 0.35 + noise_susceptibility * 0.3)),
+            min(
+                1.0,
+                1.0
+                - (
+                    panic_sell_score * 0.3
+                    + averaging_down_score * 0.25
+                    + noise_susceptibility * 0.2
+                    + min(1.0, len(opening_impulse_events) / max(1, len(events))) * 0.1
+                    + min(1.0, len(downtrend_buy_events) / max(1, len(buy_events) or 1)) * 0.15
+                ),
+            ),
         )
 
         notes: list[str] = []
@@ -58,6 +79,12 @@ class BehavioralProfilerAgent:
             notes.append("User reacts quickly and may be prone to impulse execution.")
         if slow_events and len(slow_events) / max(1, len(events)) > 0.35:
             notes.append("User often delays decisions and may hesitate before acting.")
+        if opening_impulse_events and len(opening_impulse_events) / max(1, len(events)) > 0.3:
+            notes.append("User often trades very early in the simulated session before price structure settles.")
+        if late_drawdown_events and len(late_drawdown_events) / max(1, len(events)) > 0.3:
+            notes.append("User repeatedly acts after intraday weakness has already developed.")
+        if downtrend_buy_events and len(downtrend_buy_events) / max(1, len(buy_events) or 1) > 0.35:
+            notes.append("User tends to add exposure against a weakening daily trend.")
 
         return BehavioralReport(
             panic_sell_score=panic_sell_score,

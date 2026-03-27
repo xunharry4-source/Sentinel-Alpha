@@ -45,6 +45,9 @@ class SimpleBacktestEngine:
                 }
             )
         result["walk_forward"] = walk_forward
+        full_period = self._build_full_period_metrics(normalized, split_plan, exposure, fee_bps=fee_bps, slippage_bps=slippage_bps)
+        if full_period is not None:
+            result["full_period"] = full_period
         result["coverage"] = coverage
         return result
 
@@ -116,6 +119,8 @@ class SimpleBacktestEngine:
         effective_weight_count = round(1.0 / concentration_hhi, 4) if concentration_hhi > 0 else 0.0
         turnover_series: list[float] = []
         avg_volume_series: list[float] = []
+        positive_returns: list[float] = []
+        negative_returns: list[float] = []
 
         min_length = min(len(symbol_bars) for symbol_bars in bars.values())
         if min_length < 2:
@@ -144,6 +149,9 @@ class SimpleBacktestEngine:
             returns.append(strategy_return)
             if strategy_return > 0:
                 wins += 1
+                positive_returns.append(strategy_return)
+            elif strategy_return < 0:
+                negative_returns.append(strategy_return)
             equity *= 1.0 + strategy_return
             peak = max(peak, equity)
             drawdown = 1.0 - (equity / peak)
@@ -182,7 +190,86 @@ class SimpleBacktestEngine:
             "sample_density": round(len(returns) / max(1, min_length - 1), 4),
             "concentration_hhi": concentration_hhi,
             "effective_weight_count": effective_weight_count,
+            "avg_loss_trade_pct": round(abs(sum(negative_returns) / len(negative_returns)) * 100.0, 2) if negative_returns else 0.0,
+            "avg_gain_trade_pct": round((sum(positive_returns) / len(positive_returns)) * 100.0, 2) if positive_returns else 0.0,
+            "losing_trade_count": len(negative_returns),
+            "winning_trade_count": len(positive_returns),
+            "compounded_return_pct": round((equity - 1.0) * 100.0, 2),
         }
+
+    def _build_full_period_metrics(
+        self,
+        bars: dict[str, list[dict]],
+        split_plan: dict,
+        exposure: float | dict[str, float],
+        *,
+        fee_bps: float,
+        slippage_bps: float,
+    ) -> dict | None:
+        start = split_plan.get("train", {}).get("start")
+        end = split_plan.get("test", {}).get("end")
+        full_bars = self._slice_bars(bars, start, end)
+        metrics = self._window_metrics(full_bars, exposure, fee_bps=fee_bps, slippage_bps=slippage_bps)
+        if metrics is None:
+            return None
+        return {
+            "period": {"start": start, "end": end},
+            **metrics,
+            "annual_breakdown": self._build_annual_breakdown(
+                full_bars,
+                exposure,
+                start,
+                end,
+                fee_bps=fee_bps,
+                slippage_bps=slippage_bps,
+            ),
+        }
+
+    def _build_annual_breakdown(
+        self,
+        bars: dict[str, list[dict]],
+        exposure: float | dict[str, float],
+        start: str | None,
+        end: str | None,
+        *,
+        fee_bps: float,
+        slippage_bps: float,
+    ) -> list[dict]:
+        if not start or not end:
+            return []
+        start_date = date.fromisoformat(start)
+        end_date = date.fromisoformat(end)
+        if end_date < start_date:
+            return []
+        annual_rows: list[dict] = []
+        compounded_equity = 1.0
+        current_year = start_date.year
+        while current_year <= end_date.year:
+            year_start = max(start_date, date(current_year, 1, 1))
+            year_end = min(end_date, date(current_year, 12, 31))
+            year_bars = self._slice_bars(bars, year_start.isoformat(), year_end.isoformat())
+            metrics = self._window_metrics(year_bars, exposure, fee_bps=fee_bps, slippage_bps=slippage_bps)
+            if metrics is not None:
+                compounded_equity *= 1.0 + (float(metrics.get("expected_return_pct", 0.0)) / 100.0)
+                annual_rows.append(
+                    {
+                        "year": current_year,
+                        "start": year_start.isoformat(),
+                        "end": year_end.isoformat(),
+                        "return_pct": metrics.get("expected_return_pct", 0.0),
+                        "compounded_return_pct": round((compounded_equity - 1.0) * 100.0, 2),
+                        "max_loss_pct": metrics.get("max_loss_pct", 0.0),
+                        "max_drawdown_pct": metrics.get("drawdown_pct", 0.0),
+                        "win_rate_pct": metrics.get("win_rate_pct", 0.0),
+                        "avg_loss_trade_pct": metrics.get("avg_loss_trade_pct", 0.0),
+                        "avg_gain_trade_pct": metrics.get("avg_gain_trade_pct", 0.0),
+                        "winning_trade_count": metrics.get("winning_trade_count", 0),
+                        "losing_trade_count": metrics.get("losing_trade_count", 0),
+                        "observation_count": metrics.get("observation_count", 0),
+                    }
+                )
+            current_year += 1
+        return annual_rows
 
     def _build_coverage_summary(self, bars: dict[str, list[dict]], split_plan: dict) -> dict:
         symbols = sorted(bars.keys())

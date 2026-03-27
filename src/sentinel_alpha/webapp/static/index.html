@@ -3,123 +3,51 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Sentinel-Alpha</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Noto+Sans+SC:wght@400;500;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="styles.css" />
+  <meta http-equiv="refresh" content="0;url=http://127.0.0.1:8010/" />
+  <title>Sentinel-Alpha | Legacy WebUI Redirect</title>
+  <script src="./legacy-redirect.js"></script>
+  <style>
+    body {
+      margin: 0;
+      font-family: "SF Pro Text", "PingFang SC", "Helvetica Neue", sans-serif;
+      background: linear-gradient(135deg, #f4efe7, #e7f2ef);
+      color: #132522;
+    }
+    main {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+    }
+    section {
+      max-width: 640px;
+      background: rgba(255, 255, 255, 0.92);
+      border: 1px solid rgba(31, 85, 81, 0.16);
+      border-radius: 20px;
+      padding: 28px;
+      box-shadow: 0 24px 60px rgba(19, 37, 34, 0.12);
+    }
+    h1 {
+      margin: 0 0 12px;
+      font-size: 28px;
+    }
+    p {
+      line-height: 1.6;
+      margin: 0 0 12px;
+    }
+    a {
+      color: #1f5551;
+      word-break: break-all;
+    }
+  </style>
 </head>
 <body>
-  <main class="page">
-    <section class="hero">
-      <div class="hero-copy">
-        <div class="brand-lockup">
-          <img class="brand-logo" src="./assets/logo.jpg" alt="Sentinel-Alpha logo" />
-          <div>
-            <p class="eyebrow">Behavior-Aligned Personal Trading Framework</p>
-            <h1>Sentinel-Alpha</h1>
-          </div>
-        </div>
-        <p class="hero-text">
-          首页现在只负责总览和导航。创建会话、模拟测试、测试报告、偏好设定、策略训练、情报检索和部署监控，全部拆到了独立页面。
-        </p>
-        <div class="hero-tags">
-          <span>Behavior First</span>
-          <span>Multi-Agent</span>
-          <span>Modular Web</span>
-        </div>
-      </div>
-      <div class="hero-panel">
-        <div class="metric-card">
-          <span class="metric-label">目标函数</span>
-          <strong>U = E(R) - λσ² - φ(behavior)</strong>
-        </div>
-        <div class="metric-card">
-          <span class="metric-label">页面原则</span>
-          <strong>One Function, One Page</strong>
-        </div>
-      </div>
-    </section>
-
-    <section class="panel">
-      <div class="section-head">
-        <div>
-          <p class="eyebrow">Modules</p>
-          <h2>按功能拆分的页面入口</h2>
-        </div>
-        <p>不要再把整条产品流程塞进一个页面里。</p>
-      </div>
-      <div class="module-card-grid">
-        <a class="module-card" href="./pages/session.html">
-          <p class="eyebrow">Step 1</p>
-          <h3>会话创建</h3>
-          <p>创建测试会话，设置用户名称和测试本金，生成压力测试数据。</p>
-        </a>
-        <a class="module-card" href="./pages/simulation.html">
-          <p class="eyebrow">Step 2</p>
-          <h3>模拟测试</h3>
-          <p>执行 BUY / SELL / HOLD 行为测试，记录噪音敏感度和压力反应。</p>
-        </a>
-        <a class="module-card" href="./pages/report.html">
-          <p class="eyebrow">Step 3</p>
-          <h3>测试报告</h3>
-          <p>查看 Behavioral Profiler 报告、JSON 输出和画像演化记录。</p>
-        </a>
-        <a class="module-card" href="./pages/preferences.html">
-          <p class="eyebrow">Step 4</p>
-          <h3>交易偏好</h3>
-          <p>明确选择交易频次与周期，处理系统推荐和冲突告警。</p>
-        </a>
-        <a class="module-card" href="./pages/strategy.html">
-          <p class="eyebrow">Step 5</p>
-          <h3>策略训练</h3>
-          <p>输入股票 / ETF / 板块，迭代策略版本，查看检查结果并确认。</p>
-        </a>
-        <a class="module-card" href="./pages/intelligence.html">
-          <p class="eyebrow">Step 6</p>
-          <h3>情报中心</h3>
-          <p>搜索外部网站与新闻信息，挂接到当前 session 的情报文档中。</p>
-        </a>
-        <a class="module-card" href="./pages/trading-terminal-integration.html">
-          <p class="eyebrow">Tools</p>
-          <h3>终端接入</h3>
-          <p>根据交易终端官方文档和用户补充信息生成下单适配器、测试和配置候选。</p>
-        </a>
-        <a class="module-card" href="./pages/system-health.html">
-          <p class="eyebrow">Ops</p>
-          <h3>系统健康</h3>
-          <p>查看 API、Agent、策略注册表、Web 模块和持久化依赖的运行状态。</p>
-        </a>
-        <a class="module-card" href="./pages/operations.html">
-          <p class="eyebrow">Step 7</p>
-          <h3>部署监控</h3>
-          <p>切换自动交易 / 仅建议模式，并查看监控、交易记录和市场快照。</p>
-        </a>
-      </div>
-    </section>
-
-    <section class="grid two-up">
-      <article class="panel">
-        <h2>三阶段流程</h2>
-        <ol class="flow-list">
-          <li><strong>Simulation</strong>：压力场景、噪音干扰、行为记录。</li>
-          <li><strong>Synthesis</strong>：交易偏好、标的输入、策略迭代与校验。</li>
-          <li><strong>Execution</strong>：部署模式选择、监控与画像持续演化。</li>
-        </ol>
-      </article>
-      <article class="panel">
-        <h2>核心 Agent</h2>
-        <ul class="agent-list">
-          <li>Scenario Director</li>
-          <li>Noise Agent</li>
-          <li>Behavioral Profiler</li>
-          <li>Intelligence Agent</li>
-          <li>Strategy Evolver</li>
-          <li>Portfolio Manager</li>
-          <li>Intent Aligner</li>
-          <li>Risk Guardian</li>
-        </ul>
-      </article>
+  <main>
+    <section>
+      <h1>旧版 WebUI 已下线</h1>
+      <p>当前静态页面入口不再作为主界面使用，系统会自动跳转到 NiceGUI 主入口。</p>
+      <p>如果浏览器没有自动跳转，请手动打开：</p>
+      <p><a data-legacy-redirect-target href="http://127.0.0.1:8010/">http://127.0.0.1:8010/</a></p>
     </section>
   </main>
 </body>

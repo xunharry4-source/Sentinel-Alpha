@@ -18,4 +18,4 @@ RUN pip install --no-cache-dir --upgrade pip && \
 
 EXPOSE 8000
 
-CMD ["python", "-m", "sentinel_alpha.webapp.server"]
+CMD ["python", "-m", "sentinel_alpha.nicegui.app"]

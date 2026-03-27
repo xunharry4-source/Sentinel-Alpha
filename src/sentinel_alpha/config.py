@@ -62,6 +62,8 @@ class AppSettings:
     programmer_agent_args: list[str]
     programmer_agent_repo_path: str
     programmer_agent_allowed_paths: list[str]
+    programmer_agent_protected_paths: list[str]
+    programmer_agent_enforce_target_isolation: bool
     programmer_agent_auto_commit: bool
     programmer_agent_timeout_seconds: int
     programmer_agent_retry_attempts: int
@@ -273,6 +275,22 @@ def get_settings() -> AppSettings:
         programmer_agent_args=list(programmer_agent.get("args", ["--yes-always"])),
         programmer_agent_repo_path=os.getenv("SENTINEL_PROGRAMMER_AGENT_REPO_PATH", str(programmer_agent.get("repo_path", str(_repo_root())))),
         programmer_agent_allowed_paths=list(programmer_agent.get("allowed_paths", ["src/sentinel_alpha/strategies", "src/sentinel_alpha/infra/generated_sources", "src/sentinel_alpha/infra/generated_terminals", "tests", "scripts"])),
+        programmer_agent_protected_paths=list(
+            programmer_agent.get(
+                "protected_paths",
+                [
+                    "src/sentinel_alpha/backtesting",
+                    "src/sentinel_alpha/api/workflow_service.py",
+                    "tests/backtesting/test_metrics_engine_contract.py",
+                    "tests/backtesting/test_backtest_engine.py",
+                    "tests/backtesting/test_workflow_backtest_integration.py",
+                ],
+            )
+        ),
+        programmer_agent_enforce_target_isolation=_env_bool(
+            "SENTINEL_PROGRAMMER_AGENT_ENFORCE_TARGET_ISOLATION",
+            bool(programmer_agent.get("enforce_target_isolation", True)),
+        ),
         programmer_agent_auto_commit=_env_bool("SENTINEL_PROGRAMMER_AGENT_AUTO_COMMIT", bool(programmer_agent.get("auto_commit", True))),
         programmer_agent_timeout_seconds=int(os.getenv("SENTINEL_PROGRAMMER_AGENT_TIMEOUT_SECONDS", str(programmer_agent.get("timeout_seconds", 180)))),
         programmer_agent_retry_attempts=int(os.getenv("SENTINEL_PROGRAMMER_AGENT_RETRY_ATTEMPTS", str(programmer_agent.get("retry_attempts", 3)))),

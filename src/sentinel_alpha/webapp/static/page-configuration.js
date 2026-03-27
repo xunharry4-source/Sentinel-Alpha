@@ -8,6 +8,12 @@ function hoursSince(timestamp) {
 const STRATEGY_FOCUS_KEY = "sentinel-alpha:strategy-focus-target";
 const TERMINAL_FOCUS_KEY = "sentinel-alpha:terminal-focus-target";
 
+function strategyPageForFocus(target) {
+  if (target?.includes("repair") || target?.includes("check")) return "./strategy-training.html";
+  if (target?.includes("research") || target?.includes("backtest")) return "./strategy-results.html";
+  return "./strategy.html";
+}
+
 function setValue(id, value) {
   const target = document.querySelector(`#${id}`);
   if (target) {
@@ -359,6 +365,9 @@ function renderFixRouting(validation) {
 function jumpFromConfig(targetPage, focusTarget = "", focusKey = STRATEGY_FOCUS_KEY) {
   if (focusTarget) {
     window.localStorage.setItem(focusKey, focusTarget);
+    if (focusKey === STRATEGY_FOCUS_KEY) {
+      targetPage = strategyPageForFocus(focusTarget);
+    }
   }
   window.location.href = targetPage;
 }
@@ -490,7 +499,7 @@ document.querySelector("#test-sec-provider")?.addEventListener("click", () => te
 document.querySelector("#test-finra-provider")?.addEventListener("click", () => testSingleConfigItem("dark_pool", "finra"));
 document.querySelector("#test-yahoo-options-provider")?.addEventListener("click", () => testSingleConfigItem("options_data", "yahoo_options"));
 document.querySelector("#jump-config-to-providers")?.addEventListener("click", () => jumpFromConfig("./configuration.html"));
-document.querySelector("#jump-config-to-strategy")?.addEventListener("click", () => jumpFromConfig("./strategy.html", "#strategy-repair-route-list"));
+document.querySelector("#jump-config-to-strategy")?.addEventListener("click", () => jumpFromConfig("./strategy-training.html", "#strategy-repair-route-list"));
 document.querySelector("#jump-config-to-health")?.addEventListener("click", () => jumpFromConfig("./system-health.html"));
 document.querySelector("#jump-config-to-terminal")?.addEventListener("click", () => jumpFromConfig("./trading-terminal-integration.html", "#terminal-repair-summary", TERMINAL_FOCUS_KEY));
 document.addEventListener("click", (event) => {

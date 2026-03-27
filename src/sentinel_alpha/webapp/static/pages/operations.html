@@ -3,64 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Sentinel-Alpha | 部署与监控</title>
-  <link rel="stylesheet" href="../styles.css" />
+  <meta http-equiv="refresh" content="0;url=http://127.0.0.1:8010/" />
+  <title>Sentinel-Alpha | Legacy Redirect</title>
+  <script src="../legacy-redirect.js"></script>
 </head>
 <body>
-  <main class="page">
-    <header class="shell-header">
-      <div class="shell-brand">
-        <img class="shell-logo" src="../assets/logo.jpg" alt="Sentinel-Alpha logo" />
-        <div>
-          <p class="eyebrow">Sentinel-Alpha</p>
-          <h2>部署监控模块</h2>
-        </div>
-      </div>
-      <div class="shell-nav" data-shell="nav"></div>
-      <div data-shell="summary"></div>
-    </header>
-    <section class="page-grid">
-      <article class="panel">
-        <p class="eyebrow">Operations</p>
-        <h2>部署与监控页面</h2>
-        <p>这里独立展示执行模式、监控 Agent 输出、交易记录和市场快照。</p>
-        <div class="action-buttons secondary">
-          <button id="set-autonomous">开启自动交易</button>
-          <button id="set-advice-only">仅输出建议</button>
-        </div>
-        <p class="profiler-note" id="operations-note">部署模式切换后，这里会同步刷新 session 状态。</p>
-      </article>
-      <article class="panel">
-        <p class="eyebrow">Deployment</p>
-        <h3>执行状态</h3>
-        <ul id="deployment-list" class="result-list">
-          <li>当前还没有部署信息。</li>
-        </ul>
-      </article>
-      <article class="panel">
-        <p class="eyebrow">Monitors</p>
-        <h3>监控输出</h3>
-        <ul id="monitor-list-page" class="result-list">
-          <li>当前还没有监控结果。</li>
-        </ul>
-      </article>
-      <article class="panel">
-        <p class="eyebrow">Trades</p>
-        <h3>交易记录</h3>
-        <ul id="trade-list" class="result-list">
-          <li>当前还没有交易记录。</li>
-        </ul>
-      </article>
-      <article class="panel">
-        <p class="eyebrow">Market</p>
-        <h3>市场快照</h3>
-        <ul id="market-list" class="result-list">
-          <li>当前还没有市场快照。</li>
-        </ul>
-      </article>
-    </section>
+  <main>
+    <p>旧版静态页面已下线，正在跳转到 NiceGUI：</p>
+    <p><a data-legacy-redirect-target href="http://127.0.0.1:8010/">http://127.0.0.1:8010/</a></p>
   </main>
-  <script src="../session-shell.js"></script>
-  <script src="../page-operations.js"></script>
 </body>
 </html>

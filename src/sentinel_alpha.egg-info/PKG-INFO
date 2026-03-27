@@ -1,0 +1,19 @@
+Metadata-Version: 2.4
+Name: sentinel-alpha
+Version: 0.1.0
+Summary: Behavior-aligned personal trading framework
+Requires-Python: >=3.11
+License-File: LICENSE
+Requires-Dist: fastapi>=0.135.1
+Requires-Dist: uvicorn>=0.41.0
+Requires-Dist: prometheus-fastapi-instrumentator>=7.1.0
+Requires-Dist: sentry-sdk[fastapi]>=2.39.1
+Requires-Dist: langfuse>=3.4.2
+Requires-Dist: psycopg[binary]>=3.3.3
+Requires-Dist: qdrant-client>=1.17.0
+Requires-Dist: redis>=7.2.1
+Requires-Dist: langchain>=1.2.13
+Requires-Dist: langchain-core>=1.2.18
+Requires-Dist: langchain-qdrant>=1.1.0
+Requires-Dist: nicegui>=2.16.0
+Dynamic: license-file

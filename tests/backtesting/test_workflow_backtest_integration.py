@@ -79,3 +79,66 @@ def test_workflow_uses_local_history_backtest_when_available(tmp_path: Path) -> 
     assert evaluation["coverage_summary"]["walk_forward_window_count"] == 1
     assert "gross_exposure_pct" in evaluation["dataset_evaluation"]["test"]
     assert "avg_daily_turnover_proxy_pct" in evaluation["dataset_evaluation"]["test"]
+
+
+def test_workflow_candidate_evaluation_must_route_through_metrics_engine() -> None:
+    service = WorkflowService()
+
+    class StubMetricsEngine:
+        def __init__(self) -> None:
+            self.called = False
+
+        def evaluate_candidate(self, **kwargs) -> dict:
+            self.called = True
+            return {
+                "expected_return_pct": 1.23,
+                "win_rate_pct": 55.0,
+                "drawdown_pct": 4.5,
+                "max_loss_pct": 1.2,
+                "objective_metric": kwargs["objective_metric"],
+                "objective_value": 1.23,
+                "objective_score": 0.91,
+                "dataset_evaluation": {
+                    "train": {},
+                    "validation": {},
+                    "test": {},
+                    "walk_forward": [],
+                    "full_period": {},
+                    "stability": {"score": 0.8, "walk_forward_score": 0.8, "train_test_gap": 0.0},
+                },
+                "validation_objective_score": 0.9,
+                "test_objective_score": 0.91,
+                "walk_forward_score": 0.8,
+                "stability_score": 0.8,
+                "evaluation_source": "stub_metrics_engine",
+                "coverage_summary": {},
+                "annual_performance": [],
+            }
+
+    stub = StubMetricsEngine()
+    service.metrics_engine = stub
+    service._candidate_eval_cache.clear()
+
+    result = service._evaluate_strategy_candidate(
+        candidate={
+            "signals": [{"symbol": "AAPL", "action": "buy", "conviction": 0.8}],
+            "parameters": {"max_position_pct": 0.2, "hard_stop_loss_pct": 0.06},
+        },
+        objective_metric="return",
+        targets={
+            "target_return_pct": 18.0,
+            "target_win_rate_pct": 58.0,
+            "target_drawdown_pct": 12.0,
+            "target_max_loss_pct": 6.0,
+        },
+        variant_index=0,
+        dataset_plan={
+            "train": {"start": "2024-01-01", "end": "2024-02-01"},
+            "validation": {"start": "2024-02-02", "end": "2024-03-01"},
+            "test": {"start": "2024-03-02", "end": "2024-04-01"},
+            "walk_forward_windows": [],
+        },
+    )
+
+    assert stub.called is True
+    assert result["evaluation_source"] == "stub_metrics_engine"

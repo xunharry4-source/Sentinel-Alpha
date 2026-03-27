@@ -10,11 +10,14 @@ import re
 from sentinel_alpha.api.schemas import (
     BehaviorEventIn,
     CompleteSimulationRequest,
+    SimulationMarketAdvanceRequest,
+    SimulationMarketInitializeRequest,
     ConfigSingleTestRequest,
     ConfigUpdateRequest,
     CreateSessionRequest,
     DataSourceExpansionRequestIn,
     DataSourceApplyRequest,
+    DataSourceTestRequest,
     DeploymentRequest,
     ProgrammerTaskRequest,
     InformationEventBatchRequest,
@@ -97,23 +100,28 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
             return [_sanitize_llm_env_names(item, provider_env_index) for item in payload]
         return payload
 
-    def _sanitize_llm_config(cfg: dict) -> dict:
+    def _provider_env_index_from_cfg(cfg: dict) -> dict[str, dict[str, str]]:
         providers = cfg.get("providers") if isinstance(cfg, dict) else None
         provider_env_index: dict[str, dict[str, str]] = {}
-        if isinstance(providers, dict):
-            for provider, info in providers.items():
-                if not isinstance(info, dict):
+        if not isinstance(providers, dict):
+            return provider_env_index
+        for provider, info in providers.items():
+            if not isinstance(info, dict):
+                continue
+            raw_envs = info.get("api_key_envs")
+            if not isinstance(raw_envs, list):
+                continue
+            mapping: dict[str, str] = {}
+            for idx, raw in enumerate(raw_envs, 1):
+                name = str(raw).strip()
+                if not name:
                     continue
-                raw_envs = info.get("api_key_envs")
-                if not isinstance(raw_envs, list):
-                    continue
-                mapping: dict[str, str] = {}
-                for idx, raw in enumerate(raw_envs, 1):
-                    name = str(raw).strip()
-                    if not name:
-                        continue
-                    mapping[name] = f"{provider}#key{idx}"
-                provider_env_index[str(provider)] = mapping
+                mapping[name] = f"{provider}#key{idx}"
+            provider_env_index[str(provider)] = mapping
+        return provider_env_index
+
+    def _sanitize_llm_config(cfg: dict) -> dict:
+        provider_env_index = _provider_env_index_from_cfg(cfg)
         sanitized = _sanitize_llm_env_names(cfg, provider_env_index)
         return sanitized if isinstance(sanitized, dict) else cfg
 
@@ -155,6 +163,7 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
             behavioral_report=session.behavioral_report,
             behavioral_user_report=session.behavioral_user_report,
             behavioral_system_report=session.behavioral_system_report,
+            simulation_market=session.simulation_market,
             trading_preferences=session.trading_preferences,
             trade_universe=session.trade_universe,
             strategy_package=session.strategy_package,
@@ -196,23 +205,7 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
         health = resolved_service.system_health()
         try:
             cfg = resolved_service.llm_config()
-            provider_index = _sanitize_llm_config(cfg)
-            # Use the already-built provider mapping from the sanitized llm-config to mask health.
-            providers = provider_index.get("providers") if isinstance(provider_index, dict) else None
-            provider_env_index: dict[str, dict[str, str]] = {}
-            if isinstance(providers, dict):
-                for provider, info in providers.items():
-                    if not isinstance(info, dict):
-                        continue
-                    # Here api_key_envs are already masked as provider#keyN; build a "no-op" mapping.
-                    mapping: dict[str, str] = {}
-                    raw_envs = info.get("api_key_envs")
-                    if isinstance(raw_envs, list):
-                        for raw in raw_envs:
-                            name = str(raw).strip()
-                            if name:
-                                mapping[name] = name
-                    provider_env_index[str(provider)] = mapping
+            provider_env_index = _provider_env_index_from_cfg(cfg)
             return _sanitize_llm_env_names(health, provider_env_index)  # type: ignore[return-value]
         except Exception:
             return health
@@ -224,6 +217,36 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
             return _sanitize_llm_config(cfg)
         except Exception:
             return cfg
+
+    @app.get("/api/sessions/{session_id}/agent-activity")
+    def session_agent_activity(session_id: UUID, since: str | None = None, limit: int = 200) -> dict:
+        """Fetch incremental agent activity for a single session.
+
+        This is designed for "training progress" UIs: while a long synchronous request (like strategy iteration)
+        is running, the browser can poll this endpoint to display real-time agent node logs. No fake progress.
+        """
+        try:
+            # Validate session exists so callers get a consistent 404.
+            resolved_service.get_session(session_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Session not found.") from exc
+
+        raw_events = [
+            item
+            for item in (resolved_service.agent_activity_log or [])
+            if str(item.get("session_id") or "") == str(session_id)
+        ]
+        if since:
+            try:
+                # ISO timestamps compare lexicographically when normalized, but we still guard the filter.
+                raw_events = [item for item in raw_events if str(item.get("timestamp") or "") > since]
+            except Exception:
+                pass
+        if limit < 1:
+            limit = 1
+        if limit > 500:
+            limit = 500
+        return {"events": raw_events[-limit:]}
 
     @app.get("/api/config")
     def get_config() -> dict:
@@ -409,18 +432,52 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
                 session_id,
                 BehaviorEvent(
                     scenario_id=payload.scenario_id,
-                    price_drawdown_pct=payload.price_drawdown_pct,
+                    price_drawdown_pct=float(payload.price_drawdown_pct or 0.0),
                     action=payload.action,
-                    noise_level=payload.noise_level,
-                    sentiment_pressure=payload.sentiment_pressure,
-                    latency_seconds=payload.latency_seconds,
-                    execution_status=payload.execution_status,
+                    noise_level=float(payload.noise_level or 0.0),
+                    sentiment_pressure=float(payload.sentiment_pressure or 0.0),
+                    latency_seconds=float(payload.latency_seconds or 0.0),
+                    execution_status=payload.execution_status or ("hold" if payload.action == "hold" else "filled"),
                     execution_reason=payload.execution_reason,
                 ),
             )
             return snapshot(session_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Session not found.") from exc
+
+    @app.post("/api/sessions/{session_id}/simulation/market/initialize", response_model=SessionSnapshot)
+    def initialize_simulation_market(session_id: UUID, payload: SimulationMarketInitializeRequest) -> SessionSnapshot:
+        try:
+            resolved_service.initialize_simulation_market(
+                session_id=session_id,
+                symbol=payload.symbol,
+                provider=payload.provider,
+                daily_lookback=payload.daily_lookback,
+                intraday_lookback=payload.intraday_lookback,
+                intraday_interval=payload.intraday_interval,
+            )
+            return snapshot(session_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Session not found.") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @app.post("/api/sessions/{session_id}/simulation/market/advance", response_model=SessionSnapshot)
+    def advance_simulation_market(session_id: UUID, payload: SimulationMarketAdvanceRequest) -> SessionSnapshot:
+        try:
+            resolved_service.advance_simulation_market(
+                session_id=session_id,
+                steps=payload.steps,
+            )
+            return snapshot(session_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Session not found.") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     @app.post("/api/sessions/{session_id}/simulation/complete", response_model=SessionSnapshot)
     def complete_simulation(session_id: UUID, payload: CompleteSimulationRequest) -> SessionSnapshot:
@@ -470,6 +527,10 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
                     "target_win_rate_pct": payload.target_win_rate_pct,
                     "target_drawdown_pct": payload.target_drawdown_pct,
                     "target_max_loss_pct": payload.target_max_loss_pct,
+                },
+                training_window={
+                    "start": payload.training_start_date.isoformat() if payload.training_start_date else None,
+                    "end": payload.training_end_date.isoformat() if payload.training_end_date else None,
                 },
             )
             return snapshot(session_id)
@@ -611,6 +672,8 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
         try:
             resolved_service.expand_data_source(
                 session_id=session_id,
+                interface_documentation=payload.interface_documentation,
+                api_key=payload.api_key,
                 provider_name=payload.provider_name,
                 category=payload.category,
                 base_url=payload.base_url,
@@ -634,6 +697,21 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
                 session_id=session_id,
                 run_id=payload.run_id,
                 commit_changes=payload.commit_changes,
+            )
+            return snapshot(session_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Session not found.") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/sessions/{session_id}/data-source/test", response_model=SessionSnapshot)
+    def test_data_source(session_id: UUID, payload: DataSourceTestRequest) -> SessionSnapshot:
+        try:
+            resolved_service.test_data_source_expansion(
+                session_id=session_id,
+                run_id=payload.run_id,
+                symbol=payload.symbol,
+                api_key=payload.api_key,
             )
             return snapshot(session_id)
         except KeyError as exc:

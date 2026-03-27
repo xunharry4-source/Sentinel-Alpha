@@ -109,17 +109,16 @@ Typical strategy-only change scope:
 
 ### Frontend
 
+- `src/sentinel_alpha/nicegui`
+  - canonical NiceGUI frontend
+- `src/sentinel_alpha/nicegui/app.py`
+  - unified NiceGUI workbench entry
 - `src/sentinel_alpha/webapp`
-  - dedicated frontend module
+  - legacy static redirect module
 - `src/sentinel_alpha/webapp/static`
-  - `index.html`
-  - `script.js`
-  - `styles.css`
-  - `config.json`
+  - redirect shells and compatibility assets
 - `src/sentinel_alpha/webapp/static/pages`
-  - simulation page
-  - report page
-  - preferences page
+  - redirect-only compatibility pages
   - strategy page
   - intelligence page
   - operations page
@@ -132,7 +131,15 @@ Typical strategy-only change scope:
 - `docs/api-spec.md`
 - `docs/database-spec.md`
 - `docs/agent-state-machine.md`
+- `docs/ui-page-function-report.md`
+- `docs/ui-page-api-mapping.md`
 - `skills/sentinel-alpha-workflow/SKILL.md`
+
+Documentation rule:
+
+- when a task adds a new feature, new page, or materially changes an existing workflow surface, update the relevant technical docs in the same task
+- the doc update must explain the feature or page purpose, the impact on related systems or workflows, and the decomposition into concrete sub-functions or panels
+- if the user-visible UI changes, update the page-function report and page-to-API mapping docs together with the implementation
 
 ### Persistence and Schemas
 
@@ -161,7 +168,25 @@ PYTHONPATH=src uvicorn sentinel_alpha.api.persistent_app:app --host 127.0.0.1 --
 
 ### Frontend web module
 
-Serve the canonical frontend from the dedicated web module:
+Serve the canonical frontend from NiceGUI:
+
+```bash
+cd /Users/harry/Documents/git/Sentinel-Alpha
+PYTHONPATH=src python -m sentinel_alpha.nicegui.app
+```
+
+### Recommended local development loop
+
+Use local API plus local NiceGUI as the default development path:
+
+```bash
+cd /Users/harry/Documents/git/Sentinel-Alpha
+./scripts/dev_local.sh
+```
+
+This is the preferred edit-run-debug loop. Docker should be reserved for later integrated verification and deployment checks.
+
+The legacy static frontend module remains only as a redirect shell:
 
 ```bash
 cd /Users/harry/Documents/git/Sentinel-Alpha
@@ -409,7 +434,9 @@ The strategy package now includes:
 
 ## Web Module Pages
 
-The web module currently exposes:
+The canonical frontend currently exposes the NiceGUI root workbench at `/`.
+
+The legacy static web module remains only as redirect shells for compatibility:
 
 - `/`
 - `/pages/session.html`

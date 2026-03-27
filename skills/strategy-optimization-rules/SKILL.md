@@ -55,6 +55,23 @@ Testing principle:
 - strategy testing should actively probe weak assumptions, fragile parameterization, failure paths, and overfit surfaces rather than only validating expected success cases
 - do not narrow the test, mute the assertion, or reframe the failure away unless the test itself is demonstrably wrong
 - when a check reveals a flaw, fix the flaw or document the limitation explicitly before approval
+- if a strategy or evaluation change was made, run the relevant verification before presenting the result as ready
+- do not push newly modified strategy behavior to the user as a substitute for your own first-round testing
+- the user review phase starts after agent-side verification, not in place of it
+
+Execution principle:
+
+- when the optimization task covers multiple related fixes or iterations, do not stop after a single small change to ask whether to continue
+- break long work into a tracked task list and keep executing through that list until the requested scope is complete
+- if a new issue is discovered mid-task, update the task list and keep going unless the new issue creates a genuine blocker or needs an explicit product decision
+
+Documentation principle:
+
+- if the task introduces a new strategy page, evaluation surface, reporting surface, or materially changes an existing one, update the related technical documentation in the same task
+- the documentation must explain the new or changed surface, its impact on strategy workflow and evaluation contracts, and the decomposition into concrete functional parts
+- if the change affects user-visible strategy pages, update the page function report and page-to-API mapping alongside the code
+- if the change affects strategy evaluation or approval behavior, update the relevant rules/spec description before treating the task as complete
+
 For each new strategy version:
 
 1. Start from the previous version or baseline implementation.

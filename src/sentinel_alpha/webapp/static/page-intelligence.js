@@ -1,8 +1,15 @@
 const STRATEGY_FOCUS_KEY = "sentinel-alpha:strategy-focus-target";
 
+function strategyPageForFocus(target) {
+  if (target?.includes("research")) return "./strategy-results.html";
+  if (target?.includes("repair") || target?.includes("check")) return "./strategy-training.html";
+  return "./strategy.html";
+}
+
 function jumpFromIntelligence(targetPage, focusTarget = "") {
   if (focusTarget) {
     window.localStorage.setItem(STRATEGY_FOCUS_KEY, focusTarget);
+    targetPage = strategyPageForFocus(focusTarget);
   }
   window.location.href = targetPage;
 }
@@ -24,6 +31,10 @@ function latestPayload(snapshot) {
 
 function latestRun(runs) {
   return runs && runs.length ? runs[runs.length - 1] : null;
+}
+
+function intelligenceRunStamp(run) {
+  return run?.timestamp || run?.generated_at || "unknown";
 }
 
 function summarizeFactors(factors) {
@@ -163,7 +174,7 @@ function renderIntelligencePage(snapshot) {
     (snapshot?.intelligence_runs || [])
       .slice()
       .reverse()
-      .map((item) => `${item.generated_at} / ${item.query} / ${item.document_count} docs`),
+      .map((item) => `${intelligenceRunStamp(item)} / ${item.query} / ${item.document_count} docs`),
     "当前还没有查询历史。"
   );
   renderList(
@@ -171,7 +182,7 @@ function renderIntelligencePage(snapshot) {
     (snapshot?.financials_runs || [])
       .slice()
       .reverse()
-      .map((item) => `${item.generated_at} / ${item.symbol} / ${item.provider}`),
+      .map((item) => `${intelligenceRunStamp(item)} / ${item.symbol} / ${item.provider}`),
     "当前还没有财报查询历史。"
   );
   renderList(
@@ -179,7 +190,7 @@ function renderIntelligencePage(snapshot) {
     (snapshot?.dark_pool_runs || [])
       .slice()
       .reverse()
-      .map((item) => `${item.generated_at} / ${item.symbol} / ${item.provider}`),
+      .map((item) => `${intelligenceRunStamp(item)} / ${item.symbol} / ${item.provider}`),
     "当前还没有暗池查询历史。"
   );
   renderList(
@@ -187,7 +198,7 @@ function renderIntelligencePage(snapshot) {
     (snapshot?.options_runs || [])
       .slice()
       .reverse()
-      .map((item) => `${item.generated_at} / ${item.symbol} / ${item.provider} / ${item.expiration || "default"}`),
+      .map((item) => `${intelligenceRunStamp(item)} / ${item.symbol} / ${item.provider} / ${item.expiration || "default"}`),
     "当前还没有期权查询历史。"
   );
   renderList(
@@ -229,9 +240,9 @@ function renderIntelligencePage(snapshot) {
 }
 
 async function requireSession() {
-  const snapshot = loadCurrentSnapshot();
+  const snapshot = await resolveCurrentSnapshot();
   if (!snapshot?.session_id) {
-    setText("intelligence-note", "请先创建会话。");
+    setText("intelligence-note", "请先创建会话，或带上 session_id 重新打开情报中心页面。");
     return null;
   }
   return snapshot;
@@ -240,12 +251,19 @@ async function requireSession() {
 async function searchIntelligence() {
   const snapshot = await requireSession();
   if (!snapshot) return;
+  const query = (document.querySelector("#intelligence-query-input")?.value || "").trim();
+  const maxDocuments = Number(document.querySelector("#intelligence-max-input")?.value || 5);
+  if (!query) {
+    setText("intelligence-note", "请输入搜索词。");
+    return;
+  }
+  setText("intelligence-note", "情报搜索进行中，请稍候...");
   try {
     const latest = await apiRequest(`/api/sessions/${snapshot.session_id}/intelligence/search`, {
       method: "POST",
       body: JSON.stringify({
-        query: document.querySelector("#intelligence-query-input").value,
-        max_documents: Number(document.querySelector("#intelligence-max-input").value || 5),
+        query,
+        max_documents: maxDocuments,
       }),
     });
     storeSnapshot(latest);
@@ -320,10 +338,18 @@ async function searchOptions() {
 }
 
 document.querySelector("#search-intelligence")?.addEventListener("click", searchIntelligence);
+document.querySelector("#intelligence-query-input")?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    searchIntelligence().catch((error) => {
+      setText("intelligence-note", `情报搜索失败：${error.message}`);
+    });
+  }
+});
 document.querySelector("#search-financials")?.addEventListener("click", searchFinancials);
 document.querySelector("#search-dark-pool")?.addEventListener("click", searchDarkPool);
 document.querySelector("#search-options")?.addEventListener("click", searchOptions);
-document.querySelector("#jump-intel-to-strategy")?.addEventListener("click", () => jumpFromIntelligence("./strategy.html", "#strategy-research-summary-list"));
+document.querySelector("#jump-intel-to-strategy")?.addEventListener("click", () => jumpFromIntelligence("./strategy-results.html", "#strategy-research-summary-list"));
 document.querySelector("#jump-intel-to-config")?.addEventListener("click", () => jumpFromIntelligence("./configuration.html"));
 
 (async function bootstrapIntelligencePage() {

@@ -155,6 +155,7 @@ class PersistentWorkflowService(WorkflowService):
         iteration_mode: str = "guided",
         objective_metric: str = "return",
         objective_targets: dict | None = None,
+        training_window: dict | None = None,
     ) -> WorkflowSession:
         session = super().iterate_strategy(
             session_id,
@@ -164,6 +165,7 @@ class PersistentWorkflowService(WorkflowService):
             iteration_mode,
             objective_metric,
             objective_targets,
+            training_window,
         )
         self.workflow_store.save_phase_payload(session_id, session.phase, "strategy_package", session.strategy_package)
         self.workflow_store.save_phase_payload(session_id, session.phase, "strategy_training_log", session.strategy_training_log)

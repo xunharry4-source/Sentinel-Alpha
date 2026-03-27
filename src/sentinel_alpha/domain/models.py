@@ -24,6 +24,18 @@ class BehaviorEvent:
     latency_seconds: float
     execution_status: str = "filled"
     execution_reason: str | None = None
+    symbol: str | None = None
+    timestamp: str | None = None
+    market_price: float | None = None
+    market_open_price: float | None = None
+    market_high_price: float | None = None
+    market_low_price: float | None = None
+    intraday_timeframe: str | None = None
+    intraday_progress_pct: float | None = None
+    market_regime: str | None = None
+    current_drawdown_pct: float | None = None
+    daily_trend_pct: float | None = None
+    current_day_return_pct: float | None = None
 
 
 @dataclass(slots=True)

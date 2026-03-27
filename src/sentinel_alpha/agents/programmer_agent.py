@@ -14,6 +14,7 @@ class ProgrammerAgent:
         self.settings = settings
         self.repo_path = Path(settings.programmer_agent_repo_path).resolve()
         self.allowed_paths = [self.repo_path / item for item in settings.programmer_agent_allowed_paths]
+        self.protected_paths = [self.repo_path / item for item in settings.programmer_agent_protected_paths]
 
     def health_modules(self) -> list[dict[str, str]]:
         command_path = shutil.which(self.settings.programmer_agent_command)
@@ -87,17 +88,22 @@ class ProgrammerAgent:
             normalized_targets=normalized_targets,
         )
         changed_files = self._changed_files()
+        scope_violation = self._detect_scope_violation(changed_files, normalized_targets)
         diff = self._git_diff(normalized_targets)
         should_commit = self.settings.programmer_agent_auto_commit if commit_changes is None else bool(commit_changes)
         commit_hash = None
         commit_error = None
-        if should_commit and changed_files:
+        if scope_violation is None and should_commit and changed_files:
             commit_hash, commit_error = self._commit_changes(normalized_targets, instruction)
         after_head = self._git_head()
-        status = "ok" if result.returncode == 0 else "error"
+        status = "ok" if result.returncode == 0 and scope_violation is None else "error"
         failure_type = None
+        error_message = None
         if result.returncode != 0:
             failure_type = "execution_failure"
+        elif scope_violation is not None:
+            failure_type = "scope_violation"
+            error_message = scope_violation
         elif commit_error:
             failure_type = "commit_failure"
         return {
@@ -111,12 +117,14 @@ class ProgrammerAgent:
             "returncode": result.returncode,
             "diff": diff,
             "changed_files": changed_files,
+            "scope_violation": scope_violation,
             "attempted_models": attempted_models,
             "attempted_api_key_envs": attempted_credentials,
             "commit_hash": commit_hash,
             "commit_error": commit_error,
             "rollback_commit": before_head,
             "head_after_run": after_head,
+            "error": error_message,
         }
 
     def execute_with_retries(
@@ -223,6 +231,8 @@ class ProgrammerAgent:
             candidate = (self.repo_path / item).resolve()
             if not any(self._is_within_allowed_scope(candidate, allowed.resolve()) for allowed in self.allowed_paths):
                 raise ValueError(f"Target file is outside allowed programmer agent scope: {item}")
+            if any(self._is_within_allowed_scope(candidate, protected.resolve()) for protected in self.protected_paths):
+                raise ValueError(f"Target file is inside protected programmer agent scope: {item}")
             if candidate.exists() and candidate.is_dir():
                 raise ValueError(f"Target path must be a file, not a directory: {item}")
             normalized.append(str(candidate.relative_to(self.repo_path)))
@@ -382,6 +392,29 @@ class ProgrammerAgent:
             return []
         lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
         return [line[3:] if len(line) > 3 else line for line in lines]
+
+    def _detect_scope_violation(self, changed_files: list[str], target_files: list[str]) -> str | None:
+        if not changed_files:
+            return None
+        normalized_targets = {str(Path(item)) for item in target_files}
+        repo_root = self.repo_path.resolve()
+        protected_hits: list[str] = []
+        out_of_scope_hits: list[str] = []
+        for item in changed_files:
+            candidate = (repo_root / item).resolve()
+            normalized_item = str(Path(item))
+            if any(self._is_within_allowed_scope(candidate, protected.resolve()) for protected in self.protected_paths):
+                protected_hits.append(normalized_item)
+                continue
+            if self.settings.programmer_agent_enforce_target_isolation and normalized_item not in normalized_targets:
+                out_of_scope_hits.append(normalized_item)
+        if protected_hits:
+            unique = sorted(dict.fromkeys(protected_hits))
+            return "Programmer Agent modified protected files: " + ", ".join(unique)
+        if out_of_scope_hits:
+            unique = sorted(dict.fromkeys(out_of_scope_hits))
+            return "Programmer Agent modified files outside requested targets: " + ", ".join(unique)
+        return None
 
     def _commit_changes(self, target_files: list[str], instruction: str) -> tuple[str | None, str | None]:
         add_result = subprocess.run(

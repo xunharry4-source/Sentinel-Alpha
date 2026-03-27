@@ -1,5 +1,51 @@
 const STRATEGY_LOG_PREFIX = "sentinel-alpha:strategy-log:";
 const STRATEGY_FOCUS_KEY = "sentinel-alpha:strategy-focus-target";
+const PROGRAMMER_ALLOWED_PREFIXES = [
+  "src/sentinel_alpha/strategies/",
+  "src/sentinel_alpha/infra/generated_sources/",
+  "src/sentinel_alpha/infra/generated_terminals/",
+  "tests/",
+  "scripts/",
+];
+const PROGRAMMER_PROTECTED_PREFIXES = [
+  "src/sentinel_alpha/backtesting/",
+  "src/sentinel_alpha/api/workflow_service.py",
+  "tests/backtesting/test_metrics_engine_contract.py",
+  "tests/backtesting/test_backtest_engine.py",
+  "tests/backtesting/test_workflow_backtest_integration.py",
+];
+
+
+function strategyPageKey() {
+  return document.body?.dataset?.strategyPage || "parameters";
+}
+
+function strategyField(id) {
+  return document.querySelector(`#${id}`);
+}
+
+function setFieldValue(id, value) {
+  const field = strategyField(id);
+  if (field && value !== undefined && value !== null) {
+    field.value = String(value);
+  }
+}
+
+function renderStrategySubnav() {
+  const nav = document.querySelector("[data-strategy-subnav]");
+  if (!nav) return;
+  const current = strategyPageKey();
+  const pages = [
+    { key: "parameters", href: "./strategy.html", label: "策略参数与目标" },
+    { key: "training", href: "./strategy-training.html", label: "训练页面" },
+    { key: "results", href: "./strategy-results.html", label: "结果页面" },
+    { key: "history", href: "./strategy-history.html", label: "历史页面" },
+    { key: "artifacts", href: "./strategy-artifacts.html", label: "成果页面" },
+  ];
+  nav.innerHTML = pages
+    .map((item) => `<a class="strategy-subnav-link ${item.key === current ? "strategy-subnav-link-active" : ""}" href="${item.href}">${item.label}</a>`)
+    .join("");
+}
 
 function focusPanel(selector) {
   const panel = document.querySelector(selector);
@@ -196,6 +242,7 @@ function renderStrategyStatus(snapshot) {
       `推荐候选: ${recommended.variant_id || "unknown"}`,
       `推荐理由: ${recommended.reason || "无"}`,
       `当前标的池: ${(pkg.selected_universe || []).join(", ") || "无"}`,
+      `训练区间: ${pkg.dataset_plan?.user_selected_window?.start || pkg.dataset_plan?.train?.start || "unknown"} -> ${pkg.dataset_plan?.user_selected_window?.end || pkg.dataset_plan?.test?.end || "unknown"}`,
     ],
     "当前还没有训练状态。"
   );
@@ -1463,11 +1510,90 @@ function renderProgrammerTrend(snapshot) {
   );
 }
 
+function parseProgrammerTargets() {
+  return (document.querySelector("#programmer-target-files")?.value || "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function setProgrammerScopeState(kind, message) {
+  const card = document.querySelector("#programmer-scope-card");
+  const note = document.querySelector("#programmer-scope-note");
+  if (card) {
+    card.classList.remove("scope-card-neutral", "scope-card-safe", "scope-card-warning", "scope-card-danger");
+    card.classList.add(`scope-card-${kind}`);
+  }
+  if (note) {
+    note.textContent = message;
+  }
+}
+
+function validateProgrammerTargets(targetFiles) {
+  if (!targetFiles.length) {
+    return {
+      ok: false,
+      level: "warning",
+      message: "请先填写目标文件。默认应只提交策略文件或明确授权的生成目录。",
+    };
+  }
+  const protectedHits = targetFiles.filter((item) => PROGRAMMER_PROTECTED_PREFIXES.some((prefix) => item === prefix || item.startsWith(prefix)));
+  if (protectedHits.length) {
+    return {
+      ok: false,
+      level: "danger",
+      message: `目标文件触碰受保护边界：${protectedHits.join(", ")}。当前页面不允许直接请求修改指标引擎、回测边界或工作流评估逻辑。`,
+    };
+  }
+  const outOfScope = targetFiles.filter((item) => !PROGRAMMER_ALLOWED_PREFIXES.some((prefix) => item.startsWith(prefix)));
+  if (outOfScope.length) {
+    return {
+      ok: false,
+      level: "danger",
+      message: `目标文件超出默认 Programmer Agent 范围：${outOfScope.join(", ")}。请将修改收敛到策略目录或明确授权的生成目录。`,
+    };
+  }
+  const testOnly = targetFiles.every((item) => item.startsWith("tests/"));
+  if (testOnly) {
+    return {
+      ok: true,
+      level: "warning",
+      message: "当前目标只有测试文件。测试应服务于暴露真实问题，不应单独修改测试来绕开实现缺陷。",
+    };
+  }
+  const generatedOnly = targetFiles.every((item) => item.startsWith("src/sentinel_alpha/infra/generated_sources/") || item.startsWith("src/sentinel_alpha/infra/generated_terminals/"));
+  if (generatedOnly) {
+    return {
+      ok: true,
+      level: "warning",
+      message: "当前目标位于生成集成目录。请确认任务确实是数据源或终端集成，不是借此绕开策略与指标边界。",
+    };
+  }
+  return {
+    ok: true,
+    level: "safe",
+    message: `目标范围已收敛到 ${targetFiles.length} 个文件。默认仍会拦截越权改动和受保护边界改动。`,
+  };
+}
+
+function refreshProgrammerScopeState() {
+  const validation = validateProgrammerTargets(parseProgrammerTargets());
+  setProgrammerScopeState(validation.level, validation.message);
+  return validation;
+}
+
 async function runProgrammerAgent() {
   const snapshot = loadStoredSnapshot();
   if (!snapshot?.session_id) {
     setText("strategy-note", "请先创建会话。");
     appendStrategyLog("warning", "Programmer Agent 执行失败：没有活动会话。");
+    return;
+  }
+  const targetFiles = parseProgrammerTargets();
+  const validation = refreshProgrammerScopeState();
+  if (!validation.ok) {
+    setText("strategy-note", validation.message);
+    appendStrategyLog("warning", `Programmer Agent 请求已拦截：${validation.message}`);
     return;
   }
   setButtonBusy("run-programmer-agent", true, "执行中...");
@@ -1476,7 +1602,7 @@ async function runProgrammerAgent() {
       method: "POST",
       body: JSON.stringify({
         instruction: document.querySelector("#programmer-instruction").value.trim(),
-        target_files: document.querySelector("#programmer-target-files").value.split(",").map((item) => item.trim()).filter(Boolean),
+        target_files: targetFiles,
         context: document.querySelector("#programmer-context").value.trim(),
         commit_changes: true,
       }),
@@ -1505,28 +1631,34 @@ function restoreStrategyVersion(snapshot) {
   }
   const pkg = entry.pkg || {};
   if (pkg.strategy_type) {
-    document.querySelector("#strategy-type-input").value = pkg.strategy_type;
+    setFieldValue("strategy-type-input", pkg.strategy_type);
   }
-  if (pkg.feedback !== undefined && document.querySelector("#strategy-feedback-input")) {
-    document.querySelector("#strategy-feedback-input").value = pkg.feedback || "";
+  if (pkg.feedback !== undefined) {
+    setFieldValue("strategy-feedback-input", pkg.feedback || "");
   }
   if (pkg.objective_metric) {
-    document.querySelector("#objective-metric-input").value = pkg.objective_metric;
+    setFieldValue("objective-metric-input", pkg.objective_metric);
   }
   if (pkg.objective_targets) {
-    document.querySelector("#target-return-input").value = String(pkg.objective_targets.target_return_pct ?? 18);
-    document.querySelector("#target-winrate-input").value = String(pkg.objective_targets.target_win_rate_pct ?? 58);
-    document.querySelector("#target-drawdown-input").value = String(pkg.objective_targets.target_drawdown_pct ?? 12);
-    document.querySelector("#target-maxloss-input").value = String(pkg.objective_targets.target_max_loss_pct ?? 6);
+    setFieldValue("target-return-input", pkg.objective_targets.target_return_pct ?? 18);
+    setFieldValue("target-winrate-input", pkg.objective_targets.target_win_rate_pct ?? 58);
+    setFieldValue("target-drawdown-input", pkg.objective_targets.target_drawdown_pct ?? 12);
+    setFieldValue("target-maxloss-input", pkg.objective_targets.target_max_loss_pct ?? 6);
   }
   if (pkg.iteration_mode) {
-    document.querySelector("#iteration-mode-input").value = pkg.iteration_mode;
+    setFieldValue("iteration-mode-input", pkg.iteration_mode);
   }
   if (pkg.auto_iterations_requested) {
-    document.querySelector("#auto-iterations-input").value = String(pkg.auto_iterations_requested);
+    setFieldValue("auto-iterations-input", pkg.auto_iterations_requested);
   }
-  if (pkg.selected_universe?.length && document.querySelector("#universe-symbols-input")) {
-    document.querySelector("#universe-symbols-input").value = pkg.selected_universe.join(",");
+  if (pkg.selected_universe?.length) {
+    setFieldValue("universe-symbols-input", pkg.selected_universe.join(","));
+  }
+  if (pkg.dataset_plan?.user_selected_window?.start) {
+    setFieldValue("training-start-date-input", pkg.dataset_plan.user_selected_window.start);
+  }
+  if (pkg.dataset_plan?.user_selected_window?.end) {
+    setFieldValue("training-end-date-input", pkg.dataset_plan.user_selected_window.end);
   }
   setText("strategy-note", `已恢复版本 ${entry.versionLabel} 到当前实验配置。`);
   appendStrategyLog("info", `已恢复版本 ${entry.versionLabel} 到当前实验配置。`);
@@ -1602,7 +1734,100 @@ function renderStrategyPerformance(snapshot) {
   if (datasetPlan.cache_hit !== undefined) {
     parts.push(`dataset_cache_hit=${datasetPlan.cache_hit ? "yes" : "no"}`);
   }
+  if (datasetPlan.user_selected_window?.start && datasetPlan.user_selected_window?.end) {
+    parts.push(`window=${datasetPlan.user_selected_window.start} -> ${datasetPlan.user_selected_window.end}`);
+  }
   setText("strategy-performance-note", parts.length ? `增量训练: ${parts.join(" / ")}` : "当前还没有增量训练性能信息。");
+}
+
+function annualMetricTable(rows) {
+  if (!rows?.length) {
+    return `<p class="strategy-empty-note">当前还没有按年绩效数据。</p>`;
+  }
+  return `
+    <table class="strategy-metric-table">
+      <thead>
+        <tr>
+          <th>年份</th>
+          <th>收益</th>
+          <th>复利收益</th>
+          <th>最大亏损</th>
+          <th>最大回撤</th>
+          <th>胜率</th>
+          <th>平均亏损</th>
+          <th>平均盈利</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.map((item) => `
+          <tr>
+            <td>${item.year}</td>
+            <td>${Number(item.return_pct ?? 0).toFixed(2)}%</td>
+            <td>${Number(item.compounded_return_pct ?? 0).toFixed(2)}%</td>
+            <td>${Number(item.max_loss_pct ?? 0).toFixed(2)}%</td>
+            <td>${Number(item.max_drawdown_pct ?? item.drawdown_pct ?? 0).toFixed(2)}%</td>
+            <td>${Number(item.win_rate_pct ?? 0).toFixed(2)}%</td>
+            <td>${Number(item.avg_loss_trade_pct ?? 0).toFixed(2)}%</td>
+            <td>${Number(item.avg_gain_trade_pct ?? 0).toFixed(2)}%</td>
+          </tr>
+        `).join("")}
+      </tbody>
+    </table>
+  `;
+}
+
+function renderStrategyModelResults(snapshot) {
+  const target = document.querySelector("#strategy-model-performance-grid");
+  if (!target) return;
+  const pkg = snapshot?.strategy_package;
+  if (!pkg?.baseline_evaluation) {
+    target.innerHTML = `<article class="panel strategy-model-card"><strong>还没有策略模型绩效。</strong><p>完成一轮策略训练后，这里会显示每个策略模型在训练时间内的按年收益、复利收益、最大亏损、最大回撤、胜率和盈亏均值。</p></article>`;
+    return;
+  }
+  const models = [
+    {
+      title: "Baseline",
+      subtitle: "基准策略",
+      evaluation: pkg.baseline_evaluation,
+      selected: false,
+    },
+    ...(pkg.candidate_variants || []).map((variant) => ({
+      title: variant.plan?.plan_name || variant.variant_id,
+      subtitle: variant.plan?.focus || "候选策略",
+      evaluation: variant.evaluation || {},
+      selected: pkg.recommended_variant?.variant_id === variant.variant_id,
+    })),
+  ];
+  target.innerHTML = models.map((model) => {
+    const evaluation = model.evaluation || {};
+    const fullPeriod = evaluation.dataset_evaluation?.full_period || {};
+    const rows = evaluation.annual_performance || fullPeriod.annual_breakdown || [];
+    return `
+      <article class="panel strategy-model-card">
+        <div class="strategy-model-head">
+          <div>
+            <p class="eyebrow">Strategy Model</p>
+            <h3>${model.title}</h3>
+            <p>${model.subtitle}</p>
+          </div>
+          <span class="status-chip ${model.selected ? "success-chip" : "outline-chip"}">${model.selected ? "当前推荐" : "候选模型"}</span>
+        </div>
+        <div class="strategy-model-summary">
+          <div><span>总计来源</span><strong>${evaluation.evaluation_source || "unknown"}</strong></div>
+          <div><span>总计收益</span><strong>${Number(fullPeriod.expected_return_pct ?? evaluation.expected_return_pct ?? 0).toFixed(2)}%</strong></div>
+          <div><span>总计复利收益</span><strong>${Number(fullPeriod.compounded_return_pct ?? evaluation.expected_return_pct ?? 0).toFixed(2)}%</strong></div>
+          <div><span>总计最大亏损</span><strong>${Number(fullPeriod.max_loss_pct ?? evaluation.max_loss_pct ?? 0).toFixed(2)}%</strong></div>
+          <div><span>总计最大回撤</span><strong>${Number(fullPeriod.drawdown_pct ?? evaluation.drawdown_pct ?? 0).toFixed(2)}%</strong></div>
+          <div><span>总计胜率</span><strong>${Number(fullPeriod.win_rate_pct ?? evaluation.win_rate_pct ?? 0).toFixed(2)}%</strong></div>
+          <div><span>总计平均亏损</span><strong>${Number(fullPeriod.avg_loss_trade_pct ?? 0).toFixed(2)}%</strong></div>
+          <div><span>总计平均盈利</span><strong>${Number(fullPeriod.avg_gain_trade_pct ?? 0).toFixed(2)}%</strong></div>
+          <div><span>总计盈利笔数</span><strong>${Number(fullPeriod.winning_trade_count ?? 0)}</strong></div>
+          <div><span>总计亏损笔数</span><strong>${Number(fullPeriod.losing_trade_count ?? 0)}</strong></div>
+        </div>
+        ${annualMetricTable(rows)}
+      </article>
+    `;
+  }).join("");
 }
 
 function renderBacktestSummary(snapshot) {
@@ -1714,6 +1939,7 @@ function renderStrategy(snapshot) {
   populateVersionSelectors(snapshot);
   populateResearchArchiveSelectors(snapshot);
   renderVariantComparison(snapshot);
+  renderStrategyModelResults(snapshot);
   renderModelRouting(snapshot);
   renderTokenUsage(snapshot);
   renderBacktestSummary(snapshot);
@@ -1790,17 +2016,52 @@ async function iterateStrategy() {
     appendStrategyLog("warning", prerequisiteError);
     return;
   }
-  const feedback = document.querySelector("#strategy-feedback-input").value.trim();
-  const strategyType = document.querySelector("#strategy-type-input").value;
-  const iterationMode = document.querySelector("#iteration-mode-input").value;
-  const autoIterations = Math.max(1, Math.min(10, Number(document.querySelector("#auto-iterations-input").value || 1)));
-  const objectiveMetric = document.querySelector("#objective-metric-input").value;
-  const targetReturn = Number(document.querySelector("#target-return-input").value || 18);
-  const targetWinRate = Number(document.querySelector("#target-winrate-input").value || 58);
-  const targetDrawdown = Number(document.querySelector("#target-drawdown-input").value || 12);
-  const targetMaxLoss = Number(document.querySelector("#target-maxloss-input").value || 6);
+  const feedback = strategyField("strategy-feedback-input")?.value.trim() || "";
+  const strategyType = strategyField("strategy-type-input")?.value || "rule_based_aligned";
+  const iterationMode = strategyField("iteration-mode-input")?.value || "guided";
+  const autoIterations = Math.max(1, Math.min(10, Number(strategyField("auto-iterations-input")?.value || 1)));
+  const objectiveMetric = strategyField("objective-metric-input")?.value || "return";
+  const targetReturn = Number(strategyField("target-return-input")?.value || 18);
+  const targetWinRate = Number(strategyField("target-winrate-input")?.value || 58);
+  const targetDrawdown = Number(strategyField("target-drawdown-input")?.value || 12);
+  const targetMaxLoss = Number(strategyField("target-maxloss-input")?.value || 6);
+  const trainingStartDate = strategyField("training-start-date-input")?.value || null;
+  const trainingEndDate = strategyField("training-end-date-input")?.value || null;
   setButtonBusy("iterate-strategy", true, "训练中...");
   appendStrategyLog("info", `开始训练策略，类型=${strategyType}，模式=${iterationMode}，轮数=${autoIterations}，目标=${objectiveMetric}${feedback ? `，反馈=${feedback}` : ""}`);
+
+  const pollState = { stopped: false, since: null, timer: null };
+  const stopPolling = () => {
+    pollState.stopped = true;
+    if (pollState.timer) {
+      window.clearTimeout(pollState.timer);
+      pollState.timer = null;
+    }
+  };
+  const pollAgentActivity = async () => {
+    if (pollState.stopped) return;
+    try {
+      const suffix = pollState.since ? `?since=${encodeURIComponent(pollState.since)}&limit=200` : `?limit=200`;
+      const payload = await apiRequest(`/api/sessions/${snapshot.session_id}/agent-activity${suffix}`);
+      const events = payload?.events || [];
+      for (const item of events) {
+        const level = item.status === "error" ? "error" : item.status === "warning" ? "warning" : "info";
+        const agent = item.agent || "agent";
+        const op = item.operation || "op";
+        const detail = item.detail || "";
+        appendStrategyLog(level, `${agent} / ${op}${detail ? ` / ${detail}` : ""}`);
+        if (item.timestamp) {
+          pollState.since = item.timestamp;
+        }
+      }
+    } catch (error) {
+      appendStrategyLog("warning", `训练进度拉取失败：${error.message}`);
+    } finally {
+      pollState.timer = window.setTimeout(pollAgentActivity, 1200);
+    }
+  };
+  appendStrategyLog("info", "训练请求已提交，开始实时拉取 Agent 训练进度...");
+  pollAgentActivity();
   try {
     const latest = await apiRequest(`/api/sessions/${snapshot.session_id}/strategy/iterate`, {
       method: "POST",
@@ -1814,6 +2075,8 @@ async function iterateStrategy() {
         target_win_rate_pct: targetWinRate,
         target_drawdown_pct: targetDrawdown,
         target_max_loss_pct: targetMaxLoss,
+        training_start_date: trainingStartDate,
+        training_end_date: trainingEndDate,
       }),
     });
     storeSnapshot(latest);
@@ -1834,7 +2097,39 @@ async function iterateStrategy() {
     setText("strategy-note", `策略迭代失败：${error.message}`);
     appendStrategyLog("error", `策略迭代失败：${error.message}`);
   } finally {
+    stopPolling();
     setButtonBusy("iterate-strategy", false, "");
+  }
+}
+
+function continueAutoTraining() {
+  const modeField = strategyField("iteration-mode-input");
+  const iterationField = strategyField("auto-iterations-input");
+  if (modeField) {
+    modeField.value = "guided";
+  }
+  if (iterationField && Number(iterationField.value || 0) < 2) {
+    iterationField.value = "3";
+  }
+  setText("strategy-note", "已切换为自动迭代模式，准备继续训练。");
+  appendStrategyLog("info", "用户选择继续自动训练。系统将保持 guided 自动迭代模式。");
+  iterateStrategy().catch((error) => {
+    setText("strategy-note", `继续自动训练失败：${error.message}`);
+    appendStrategyLog("error", `继续自动训练失败：${error.message}`);
+  });
+}
+
+function prepareManualIntervention() {
+  const modeField = strategyField("iteration-mode-input");
+  const feedbackField = strategyField("strategy-feedback-input");
+  if (modeField) {
+    modeField.value = "free";
+  }
+  setText("strategy-note", "已切换到人工介入后再训练模式。先补充你的意见，再点击“生成下一版策略”。");
+  appendStrategyLog("info", "用户选择先人工介入，再继续下一轮训练。");
+  if (feedbackField) {
+    feedbackField.focus();
+    feedbackField.select();
   }
 }
 
@@ -1872,6 +2167,7 @@ document.querySelector("#strategy-research-detail-version")?.addEventListener("c
 document.querySelector("#history-version-select")?.addEventListener("change", () => renderVersionCode(loadStoredSnapshot() || {}));
 document.querySelector("#restore-version-button")?.addEventListener("click", () => restoreStrategyVersion(loadStoredSnapshot() || {}));
 document.querySelector("#run-programmer-agent")?.addEventListener("click", runProgrammerAgent);
+document.querySelector("#programmer-target-files")?.addEventListener("input", refreshProgrammerScopeState);
 document.querySelector("#programmer-trend-filter")?.addEventListener("change", () => renderProgrammerTrend(loadStoredSnapshot() || {}));
 document.querySelector("#apply-repair-feedback")?.addEventListener("click", applyRepairRoutingToFeedback);
 document.querySelector("#apply-repair-programmer")?.addEventListener("click", applyRepairRoutingToProgrammer);
@@ -1883,6 +2179,8 @@ document.querySelector("#apply-repair-and-programmer")?.addEventListener("click"
   setText("strategy-note", `自动回填并执行 Programmer Agent 失败：${error.message}`);
   appendStrategyLog("error", `自动回填并执行 Programmer Agent 失败：${error.message}`);
 }));
+document.querySelector("#continue-auto-training")?.addEventListener("click", continueAutoTraining);
+document.querySelector("#intervene-then-train")?.addEventListener("click", prepareManualIntervention);
 document.querySelector("#apply-strategy-recommendation")?.addEventListener("click", () => {
   const snapshot = loadStoredSnapshot() || {};
   const report = snapshot.behavioral_user_report || snapshot.behavioral_report || {};
@@ -1892,7 +2190,7 @@ document.querySelector("#apply-strategy-recommendation")?.addEventListener("clic
     return;
   }
   if (report.recommended_strategy_type) {
-    document.querySelector("#strategy-type-input").value = report.recommended_strategy_type;
+    setFieldValue("strategy-type-input", report.recommended_strategy_type);
     setText("strategy-recommendation-note", report.strategy_type_recommendation_note || "已应用策略推荐。");
     appendStrategyLog("info", `已应用策略推荐：${report.recommended_strategy_type}`);
   } else {
@@ -1903,6 +2201,8 @@ document.querySelector("#apply-strategy-recommendation")?.addEventListener("clic
 
 (async function bootstrapStrategyPage() {
   renderShell("strategy");
+  renderStrategySubnav();
+  refreshProgrammerScopeState();
   await ensureClientConfig();
   const stored = loadCurrentSnapshot();
   let snapshot = stored;
@@ -1914,28 +2214,40 @@ document.querySelector("#apply-strategy-recommendation")?.addEventListener("clic
     }
   }
   renderStrategy(snapshot || {});
+  if (strategyField("training-start-date-input") && strategyField("training-end-date-input")) {
+    const selectedWindow = snapshot?.strategy_package?.dataset_plan?.user_selected_window || {};
+    if (selectedWindow.start && selectedWindow.end) {
+      setFieldValue("training-start-date-input", selectedWindow.start);
+      setFieldValue("training-end-date-input", selectedWindow.end);
+    } else {
+      const end = new Date();
+      const start = new Date(end.getTime() - 1000 * 60 * 60 * 24 * 730);
+      setFieldValue("training-start-date-input", start.toISOString().slice(0, 10));
+      setFieldValue("training-end-date-input", end.toISOString().slice(0, 10));
+    }
+  }
   if (snapshot?.strategy_package?.strategy_type) {
-    document.querySelector("#strategy-type-input").value = snapshot.strategy_package.strategy_type;
+    setFieldValue("strategy-type-input", snapshot.strategy_package.strategy_type);
   }
   if (snapshot?.strategy_package?.iteration_mode) {
-    document.querySelector("#iteration-mode-input").value = snapshot.strategy_package.iteration_mode;
+    setFieldValue("iteration-mode-input", snapshot.strategy_package.iteration_mode);
   }
   if (snapshot?.strategy_package?.auto_iterations_requested) {
-    document.querySelector("#auto-iterations-input").value = String(snapshot.strategy_package.auto_iterations_requested);
+    setFieldValue("auto-iterations-input", snapshot.strategy_package.auto_iterations_requested);
   }
   if (snapshot?.strategy_package?.objective_metric) {
-    document.querySelector("#objective-metric-input").value = snapshot.strategy_package.objective_metric;
+    setFieldValue("objective-metric-input", snapshot.strategy_package.objective_metric);
   }
   if (snapshot?.strategy_package?.objective_targets) {
-    document.querySelector("#target-return-input").value = String(snapshot.strategy_package.objective_targets.target_return_pct ?? 18);
-    document.querySelector("#target-winrate-input").value = String(snapshot.strategy_package.objective_targets.target_win_rate_pct ?? 58);
-    document.querySelector("#target-drawdown-input").value = String(snapshot.strategy_package.objective_targets.target_drawdown_pct ?? 12);
-    document.querySelector("#target-maxloss-input").value = String(snapshot.strategy_package.objective_targets.target_max_loss_pct ?? 6);
+    setFieldValue("target-return-input", snapshot.strategy_package.objective_targets.target_return_pct ?? 18);
+    setFieldValue("target-winrate-input", snapshot.strategy_package.objective_targets.target_win_rate_pct ?? 58);
+    setFieldValue("target-drawdown-input", snapshot.strategy_package.objective_targets.target_drawdown_pct ?? 12);
+    setFieldValue("target-maxloss-input", snapshot.strategy_package.objective_targets.target_max_loss_pct ?? 6);
   }
   if (snapshot?.trade_universe?.requested_symbols) {
-    document.querySelector("#universe-symbols-input").value = snapshot.trade_universe.requested_symbols.join(",");
+    setFieldValue("universe-symbols-input", snapshot.trade_universe.requested_symbols.join(","));
   } else if (snapshot?.trade_universe?.requested) {
-    document.querySelector("#universe-symbols-input").value = snapshot.trade_universe.requested.join(",");
+    setFieldValue("universe-symbols-input", snapshot.trade_universe.requested.join(","));
   }
   appendStrategyLog("info", "策略训练页已加载。");
   const pendingFocus = window.localStorage.getItem(STRATEGY_FOCUS_KEY);

@@ -56,6 +56,28 @@ def test_programmer_agent_validates_allowed_and_disallowed_targets(tmp_path: Pat
         agent._validate_targets(["outside/not_allowed.py"])
 
 
+def test_programmer_agent_rejects_protected_targets(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    protected = repo / "src" / "sentinel_alpha" / "backtesting"
+    protected.mkdir(parents=True)
+    protected_file = protected / "metrics.py"
+    protected_file.write_text("VALUE = 1\n", encoding="utf-8")
+
+    settings = get_settings()
+    patched = settings.__class__(
+        **{
+            **settings.__dict__,
+            "programmer_agent_repo_path": str(repo),
+            "programmer_agent_allowed_paths": ["src/sentinel_alpha", "tests"],
+            "programmer_agent_protected_paths": ["src/sentinel_alpha/backtesting"],
+        }
+    )
+    agent = ProgrammerAgent(patched)
+
+    with pytest.raises(ValueError, match="inside protected programmer agent scope"):
+        agent._validate_targets(["src/sentinel_alpha/backtesting/metrics.py"])
+
+
 def test_programmer_agent_retries_until_validator_passes(monkeypatch) -> None:
     settings = get_settings()
     patched = settings.__class__(**{**settings.__dict__, "programmer_agent_retry_attempts": 3})
@@ -104,6 +126,85 @@ def test_programmer_agent_retries_until_validator_passes(monkeypatch) -> None:
     assert result["promotion_summary"]["promotion_status"] == "promote_candidate"
     assert result["promotion_summary"]["should_promote"] is True
     assert result["stability_summary"]["stability_status"] == "stable"
+
+
+def test_programmer_agent_marks_scope_violation_when_changing_non_target_file(monkeypatch) -> None:
+    settings = get_settings()
+    patched = settings.__class__(
+        **{
+            **settings.__dict__,
+            "programmer_agent_allowed_paths": ["src/sentinel_alpha", "tests"],
+            "programmer_agent_protected_paths": ["src/sentinel_alpha/backtesting"],
+            "programmer_agent_auto_commit": True,
+        }
+    )
+    agent = ProgrammerAgent(patched)
+
+    monkeypatch.setattr(agent, "_ensure_target_files", lambda target_files: None)
+    monkeypatch.setattr(agent, "_git_head", lambda: "abc123")
+    monkeypatch.setattr(agent, "_git_diff", lambda target_files: "")
+    monkeypatch.setattr(agent, "_changed_files", lambda: ["src/sentinel_alpha/api/workflow_service.py"])
+    monkeypatch.setattr(agent, "_commit_changes", lambda target_files, instruction: pytest.fail("commit should not run"))
+    monkeypatch.setattr(
+        agent,
+        "_execute_aider_with_models",
+        lambda **kwargs: (
+            subprocess.CompletedProcess(args=["aider"], returncode=0, stdout="ok", stderr=""),
+            [],
+            [],
+        ),
+    )
+
+    result = agent.execute(
+        instruction="adjust strategy",
+        target_files=["src/sentinel_alpha/strategies/rule_based.py"],
+        context=None,
+        commit_changes=True,
+    )
+
+    assert result["status"] == "error"
+    assert result["failure_type"] == "scope_violation"
+    assert "outside requested targets" in str(result["scope_violation"])
+    assert result["commit_hash"] is None
+
+
+def test_programmer_agent_marks_scope_violation_when_touching_protected_file(monkeypatch) -> None:
+    settings = get_settings()
+    patched = settings.__class__(
+        **{
+            **settings.__dict__,
+            "programmer_agent_allowed_paths": ["src/sentinel_alpha", "tests"],
+            "programmer_agent_protected_paths": ["src/sentinel_alpha/backtesting"],
+        }
+    )
+    agent = ProgrammerAgent(patched)
+
+    monkeypatch.setattr(agent, "_ensure_target_files", lambda target_files: None)
+    monkeypatch.setattr(agent, "_git_head", lambda: "abc123")
+    monkeypatch.setattr(agent, "_git_diff", lambda target_files: "")
+    monkeypatch.setattr(agent, "_changed_files", lambda: ["src/sentinel_alpha/backtesting/metrics.py"])
+    monkeypatch.setattr(agent, "_commit_changes", lambda target_files, instruction: pytest.fail("commit should not run"))
+    monkeypatch.setattr(
+        agent,
+        "_execute_aider_with_models",
+        lambda **kwargs: (
+            subprocess.CompletedProcess(args=["aider"], returncode=0, stdout="ok", stderr=""),
+            [],
+            [],
+        ),
+    )
+
+    result = agent.execute(
+        instruction="adjust strategy",
+        target_files=["src/sentinel_alpha/strategies/rule_based.py"],
+        context=None,
+        commit_changes=True,
+    )
+
+    assert result["status"] == "error"
+    assert result["failure_type"] == "scope_violation"
+    assert "protected files" in str(result["scope_violation"])
+    assert result["commit_hash"] is None
 
 
 def test_programmer_agent_classifies_compile_failure(monkeypatch) -> None:

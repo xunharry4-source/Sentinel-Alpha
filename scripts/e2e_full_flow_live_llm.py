@@ -98,6 +98,27 @@ def main() -> int:
     st, snap = _json_request("POST", f"/api/sessions/{session_id}/generate-scenarios", None, timeout=30)
     results.append(StepResult("generate_scenarios", st == 200, st, f"scenarios={len((snap or {}).get('scenarios') or [])}"))
 
+    # Intelligence (live LLM path for summarization; also exercises external fetch)
+    st, snap = _json_request(
+        "POST",
+        f"/api/sessions/{session_id}/intelligence/search",
+        {"query": "NVDA AI demand", "max_documents": 3},
+        timeout=90,
+    )
+    docs = (snap or {}).get("intelligence_documents") or []
+    runs = (snap or {}).get("intelligence_runs") or []
+    results.append(StepResult("intelligence_search", st == 200 and (len(docs) > 0 or len(runs) > 0), st, f"docs={len(docs)} runs={len(runs)}"))
+
+    # Fundamentals / dark pool / options lookups (external providers, no API key expected for defaults)
+    st, snap = _json_request("POST", f"/api/sessions/{session_id}/intelligence/financials", {"symbol": "AAPL", "provider": "sec"}, timeout=60)
+    results.append(StepResult("financials_lookup", st == 200, st, f"runs={len((snap or {}).get('financials_runs') or [])}"))
+
+    st, snap = _json_request("POST", f"/api/sessions/{session_id}/intelligence/dark-pool", {"symbol": "AAPL", "provider": "finra"}, timeout=60)
+    results.append(StepResult("dark_pool_lookup", st == 200, st, f"runs={len((snap or {}).get('dark_pool_runs') or [])}"))
+
+    st, snap = _json_request("POST", f"/api/sessions/{session_id}/intelligence/options", {"symbol": "AAPL", "provider": "yahoo_options"}, timeout=60)
+    results.append(StepResult("options_lookup", st == 200, st, f"runs={len((snap or {}).get('options_runs') or [])}"))
+
     # Preferences
     st, snap = _json_request(
         "POST",
@@ -164,6 +185,55 @@ def main() -> int:
     pkg = (snap or {}).get("strategy_package") or {}
     results.append(StepResult("strategy_iterate", st == 200 and bool(pkg), st, f"version={pkg.get('version_label') or 'unknown'}"))
 
+    # Data source expansion agent (docs_url exercises "allow passing a document address directly")
+    st, snap = _json_request(
+        "POST",
+        f"/api/sessions/{session_id}/data-source/expand",
+        {
+            "provider_name": "example-provider",
+            "category": "market_data",
+            "base_url": "https://example.com/api",
+            "api_key_envs": ["EXAMPLE_API_KEY"],
+            "docs_url": "https://example.com/docs",
+            "docs_summary": "Example docs for E2E test",
+            "sample_endpoint": "/quote?symbol=SPY",
+            "auth_style": "header",
+            "response_format": "json",
+        },
+        timeout=120,
+    )
+    results.append(StepResult("data_source_expand", st == 200, st, f"runs={len((snap or {}).get('data_source_runs') or [])}"))
+
+    # Terminal integration agent (expand + test only; apply is optional/side-effectful)
+    st, snap = _json_request(
+        "POST",
+        f"/api/sessions/{session_id}/terminal/expand",
+        {
+            "terminal_name": "ApplyBroker",
+            "terminal_type": "broker_api",
+            "official_docs_url": "https://example.com/applybroker/docs",
+            "docs_search_url": "https://example.com/applybroker/search",
+            "api_base_url": "https://example.com/applybroker/api",
+            "api_key_envs": ["APPLYBROKER_API_KEY"],
+            "auth_style": "header",
+            "order_endpoint": "/orders",
+            "cancel_endpoint": "/orders/{id}/cancel",
+            "order_status_endpoint": "/orders/{id}",
+            "positions_endpoint": "/positions",
+            "balances_endpoint": "/balances",
+            "docs_summary": "E2E docs stub for terminal integration.",
+        },
+        timeout=180,
+    )
+    terminal_runs = (snap or {}).get("terminal_integration_runs") or []
+    run_id = terminal_runs[-1]["run_id"] if terminal_runs else None
+    results.append(StepResult("terminal_expand", st == 200 and bool(run_id), st, f"run_id={run_id}"))
+
+    st, snap = _json_request("POST", f"/api/sessions/{session_id}/terminal/test", {"run_id": run_id}, timeout=60)
+    terminal_runs = (snap or {}).get("terminal_integration_runs") or []
+    last_status = terminal_runs[-1].get("status") if terminal_runs else None
+    results.append(StepResult("terminal_test", st == 200 and last_status == "ok", st, f"status={last_status}"))
+
     # Token usage snapshot
     st, sys_health = _json_request("GET", "/api/system-health", None, timeout=30)
     usage = (sys_health or {}).get("token_usage", {}).get("aggregate", {}) if isinstance(sys_health, dict) else {}
@@ -188,4 +258,3 @@ def _print(results: list[StepResult]) -> None:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

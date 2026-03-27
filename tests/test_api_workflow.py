@@ -1,3 +1,6 @@
+import json
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 import pytest
@@ -378,6 +381,177 @@ def test_full_workflow_api(client: TestClient) -> None:
     )
 
 
+def test_simulation_market_initialize_and_advance(client: TestClient) -> None:
+    service = WorkflowService()
+
+    def fake_fetch_history(symbol: str, interval: str = "1d", lookback: str = "6mo", provider: str | None = None) -> dict:
+        if interval == "1d":
+            return {
+                "provider": provider or "yahoo",
+                "symbol": symbol,
+                "interval": "1d",
+                "lookback": lookback,
+                "bars": [
+                    {"timestamp": "2026-03-23", "open": 100, "high": 103, "low": 99, "close": 102, "volume": 1000},
+                    {"timestamp": "2026-03-24", "open": 102, "high": 106, "low": 101, "close": 105, "volume": 1200},
+                    {"timestamp": "2026-03-25", "open": 105, "high": 107, "low": 103, "close": 104, "volume": 900},
+                ],
+            }
+        return {
+            "provider": provider or "yahoo",
+            "symbol": symbol,
+            "interval": interval,
+            "lookback": lookback,
+            "bars": [
+                {"timestamp": "2026-03-25T09:30:00+00:00", "open": 104, "high": 105, "low": 103.5, "close": 104.5, "volume": 100},
+                {"timestamp": "2026-03-25T09:35:00+00:00", "open": 104.5, "high": 105.2, "low": 104.2, "close": 105.0, "volume": 110},
+                {"timestamp": "2026-03-25T09:40:00+00:00", "open": 105.0, "high": 105.1, "low": 103.8, "close": 104.0, "volume": 130},
+            ],
+        }
+
+    service.market_data.fetch_history = fake_fetch_history  # type: ignore[method-assign]
+    local_client = TestClient(create_app(service))
+    created = local_client.post("/api/sessions", json={"user_name": "Sim", "starting_capital": 300000})
+    session_id = created.json()["session_id"]
+
+    initialized = local_client.post(
+        f"/api/sessions/{session_id}/simulation/market/initialize",
+        json={"symbol": "TSLA", "intraday_interval": "5m", "daily_lookback": "6mo", "intraday_lookback": "5d"},
+    )
+
+    assert initialized.status_code == 200
+    market = initialized.json()["simulation_market"]
+    assert market["symbol"] == "TSLA"
+    assert market["daily_bar_count"] == 3
+    assert market["intraday_bar_count"] == 3
+    assert market["cursor"] == 0
+    assert market["current_bar"]["close"] == 104.5
+    assert market["current_drawdown_pct"] == 0.0
+
+    advanced = local_client.post(
+        f"/api/sessions/{session_id}/simulation/market/advance",
+        json={"steps": 2},
+    )
+
+    assert advanced.status_code == 200
+    body = advanced.json()
+    market = body["simulation_market"]
+    assert market["cursor"] == 2
+    assert market["current_bar"]["close"] == 104.0
+    assert market["remaining_steps"] == 0
+    assert market["is_complete"] is True
+    assert market["current_drawdown_pct"] < 0
+    assert len(body["market_snapshots"]) >= 2
+    assert any(item["event_type"] == "simulation_market_initialized" for item in body["history_events"])
+    assert any(item["event_type"] == "simulation_market_advanced" for item in body["history_events"])
+
+
+def test_simulation_event_uses_market_context_with_minimal_user_action(client: TestClient) -> None:
+    service = WorkflowService()
+
+    def fake_fetch_history(symbol: str, interval: str = "1d", lookback: str = "6mo", provider: str | None = None) -> dict:
+        if interval == "1d":
+            return {
+                "provider": "yahoo",
+                "symbol": symbol,
+                "interval": "1d",
+                "bars": [
+                    {"timestamp": "2026-03-24", "open": 100, "high": 104, "low": 99, "close": 103, "volume": 1000},
+                    {"timestamp": "2026-03-25", "open": 103, "high": 106, "low": 101, "close": 102, "volume": 1200},
+                ],
+            }
+        return {
+            "provider": "yahoo",
+            "symbol": symbol,
+            "interval": interval,
+            "bars": [
+                {"timestamp": "2026-03-25T09:30:00+00:00", "open": 102, "high": 103, "low": 101.5, "close": 102.8, "volume": 100},
+                {"timestamp": "2026-03-25T09:35:00+00:00", "open": 102.8, "high": 103.0, "low": 101.0, "close": 101.2, "volume": 140},
+            ],
+        }
+
+    service.market_data.fetch_history = fake_fetch_history  # type: ignore[method-assign]
+    local_client = TestClient(create_app(service))
+    created = local_client.post("/api/sessions", json={"user_name": "Action", "starting_capital": 300000})
+    session_id = created.json()["session_id"]
+    local_client.post(
+        f"/api/sessions/{session_id}/simulation/market/initialize",
+        json={"symbol": "TSLA", "intraday_interval": "5m"},
+    )
+    local_client.post(
+        f"/api/sessions/{session_id}/simulation/market/advance",
+        json={"steps": 1},
+    )
+
+    event_response = local_client.post(
+        f"/api/sessions/{session_id}/simulation/events",
+        json={"action": "buy"},
+    )
+
+    assert event_response.status_code == 200
+    body = event_response.json()
+    session_key = next(key for key in service.sessions if str(key) == session_id)
+    behavior_event = service.get_session(session_key).behavior_events[-1]
+    assert behavior_event.action == "buy"
+    assert behavior_event.symbol == "TSLA"
+    assert behavior_event.timestamp == body["simulation_market"]["current_timestamp"]
+    assert behavior_event.market_price == body["simulation_market"]["current_bar"]["close"]
+    assert behavior_event.intraday_progress_pct == body["simulation_market"]["progress_pct"]
+    assert behavior_event.current_drawdown_pct == body["simulation_market"]["current_drawdown_pct"]
+    assert behavior_event.noise_level is not None
+    assert behavior_event.sentiment_pressure is not None
+
+
+def test_complete_simulation_requires_market_progress_and_user_action(client: TestClient) -> None:
+    service = WorkflowService()
+
+    def fake_fetch_history(symbol: str, interval: str = "1d", lookback: str = "6mo", provider: str | None = None) -> dict:
+        if interval == "1d":
+            return {
+                "provider": "yahoo",
+                "symbol": symbol,
+                "interval": "1d",
+                "bars": [
+                    {"timestamp": "2026-03-24", "open": 100, "high": 104, "low": 99, "close": 103, "volume": 1000},
+                    {"timestamp": "2026-03-25", "open": 103, "high": 106, "low": 101, "close": 102, "volume": 1200},
+                ],
+            }
+        return {
+            "provider": "yahoo",
+            "symbol": symbol,
+            "interval": interval,
+            "bars": [
+                {"timestamp": "2026-03-25T09:30:00+00:00", "open": 102, "high": 103, "low": 101.5, "close": 102.8, "volume": 100},
+                {"timestamp": "2026-03-25T09:35:00+00:00", "open": 102.8, "high": 103.0, "low": 101.0, "close": 101.2, "volume": 140},
+            ],
+        }
+
+    service.market_data.fetch_history = fake_fetch_history  # type: ignore[method-assign]
+    local_client = TestClient(create_app(service))
+    created = local_client.post("/api/sessions", json={"user_name": "Gate", "starting_capital": 300000})
+    session_id = created.json()["session_id"]
+
+    no_market = local_client.post(f"/api/sessions/{session_id}/simulation/complete", json={"symbol": "TSLA"})
+    assert no_market.status_code == 400
+    assert "must be initialized" in no_market.json()["detail"]
+
+    local_client.post(
+        f"/api/sessions/{session_id}/simulation/market/initialize",
+        json={"symbol": "TSLA", "intraday_interval": "5m"},
+    )
+    no_advance = local_client.post(f"/api/sessions/{session_id}/simulation/complete", json={"symbol": "TSLA"})
+    assert no_advance.status_code == 400
+    assert "must be advanced" in no_advance.json()["detail"]
+
+    local_client.post(
+        f"/api/sessions/{session_id}/simulation/market/advance",
+        json={"steps": 1},
+    )
+    no_action = local_client.post(f"/api/sessions/{session_id}/simulation/complete", json={"symbol": "TSLA"})
+    assert no_action.status_code == 400
+    assert "At least one simulated action" in no_action.json()["detail"]
+
+
 def test_intelligence_information_events_are_recorded(client: TestClient, monkeypatch) -> None:
     monkeypatch.setattr(
         "sentinel_alpha.agents.intelligence_agent.IntelligenceAgent.search",
@@ -571,23 +745,35 @@ def test_programmer_agent_run_is_recorded_even_when_disabled(client: TestClient)
     assert body["programmer_runs"][0]["status"] in {"disabled", "misconfigured", "ok", "error"}
 
 
-def test_data_source_expansion_agent_run_is_recorded(client: TestClient) -> None:
-    local_client = TestClient(create_app(WorkflowService()))
+def test_data_source_expansion_agent_run_is_recorded(tmp_path) -> None:
+    service = WorkflowService()
+    service._data_source_registry_dir = tmp_path / "data_source_registry"
+    service._data_source_registry_dir.mkdir(parents=True, exist_ok=True)
+    service.llm_runtime.invoke_text_task = lambda *args, **kwargs: {  # type: ignore[method-assign]
+        "text": (
+            '{"provider_name":"Example Docs Feed","category":"market_data","base_url":"https://api.example.com",'
+            '"docs_url":"https://docs.example.com/source","auth_style":"query","auth_header_name":"","auth_query_param":"apikey",'
+            '"response_format":"json","sample_endpoint":"v1/reference","quote_endpoint":"v1/quote","history_endpoint":"v1/history",'
+            '"symbol_param":"symbol","interval_param":"interval","lookback_param":"range","response_root_path":"data",'
+            '"default_headers":{"Accept":"application/json"},"default_query_params":{"adjusted":"true"},'
+            '"pagination_style":"cursor","error_field_path":"error.message","notes":["Use adjusted=true by default."]}'
+        ),
+        "profile": service.llm_runtime.task_profile("data_source_doc_analysis"),
+        "invocation": {"actual_generation_mode": "live_llm", "fallback_reason": None},
+    }
+    local_client = TestClient(create_app(service))
     created = local_client.post("/api/sessions", json={"user_name": "Source", "starting_capital": 300000})
     session_id = created.json()["session_id"]
 
     response = local_client.post(
         f"/api/sessions/{session_id}/data-source/expand",
         json={
-            "provider_name": "ExampleSource",
-            "category": "market_data",
-            "base_url": "https://api.example.com",
-            "api_key_envs": ["EXAMPLE_API_KEY"],
-            "docs_summary": "REST JSON API with symbol-based quote and history endpoints.",
-            "docs_url": "https://docs.example.com/source",
-            "sample_endpoint": "quote",
-            "auth_style": "query",
-            "response_format": "json",
+            "api_key": "secret_example_key_123",
+            "interface_documentation": (
+                "https://docs.example.com/source\n"
+                "Base URL: https://api.example.com\n"
+                "REST JSON API with symbol-based quote and history endpoints. apikey= query parameter."
+            ),
         },
     )
 
@@ -595,33 +781,51 @@ def test_data_source_expansion_agent_run_is_recorded(client: TestClient) -> None
     body = response.json()
     assert len(body["data_source_runs"]) == 1
     run = body["data_source_runs"][0]
-    assert run["provider_slug"] == "examplesource"
+    assert run["provider_slug"] == "example_docs_feed"
     assert run["validation"]["module_syntax_ok"] is True
     assert run["validation"]["test_syntax_ok"] is True
     assert run["config_candidate"]["docs_url"] == "https://docs.example.com/source"
+    assert run["inference"]["api_key_supplied"] is True
+    assert run["analysis"]["generation_mode"] == "live_llm"
+    assert run["analysis"]["analysis_status"] == "live_llm_completed"
+    assert run["inference"]["response_root_path"] == "data"
     assert run["target_module"].startswith("src/sentinel_alpha/infra/generated_sources/")
     assert run["target_test"].startswith("tests/generated/")
+    assert run["local_registry_paths"]
+    assert Path(run["local_registry_paths"][0]).exists()
+    saved = json.loads(Path(run["local_registry_paths"][0]).read_text(encoding="utf-8"))
+    assert "secret_example_key_123" not in json.dumps(saved, ensure_ascii=False)
     assert len(body["report_history"]) >= 1
     assert any(item["event_type"] == "data_source_expansion_generated" for item in body["history_events"])
 
 
 def test_data_source_expansion_output_is_handoff_ready_for_programmer_agent(client: TestClient) -> None:
-    local_client = TestClient(create_app(WorkflowService()))
+    service = WorkflowService()
+    service.llm_runtime.invoke_text_task = lambda *args, **kwargs: {  # type: ignore[method-assign]
+        "text": (
+            '{"provider_name":"Provider Bridge","category":"fundamentals","base_url":"https://api.provider-bridge.example",'
+            '"docs_url":"https://provider-bridge.example/docs","auth_style":"header","auth_header_name":"X-Bridge-Key","auth_query_param":"",'
+            '"response_format":"json","sample_endpoint":"v1/filings","quote_endpoint":"v1/filings/latest","history_endpoint":"v1/filings/history",'
+            '"symbol_param":"ticker","interval_param":"period","lookback_param":"window","response_root_path":"payload.items",'
+            '"default_headers":{"Accept":"application/json"},"default_query_params":{},"pagination_style":"page",'
+            '"error_field_path":"error","notes":["Fundamentals endpoint uses ticker."]}'
+        ),
+        "profile": service.llm_runtime.task_profile("data_source_doc_analysis"),
+        "invocation": {"actual_generation_mode": "live_llm", "fallback_reason": None},
+    }
+    local_client = TestClient(create_app(service))
     created = local_client.post("/api/sessions", json={"user_name": "Bridge", "starting_capital": 300000})
     session_id = created.json()["session_id"]
 
     response = local_client.post(
         f"/api/sessions/{session_id}/data-source/expand",
         json={
-            "provider_name": "Provider Bridge",
-            "category": "fundamentals",
-            "base_url": "https://api.provider-bridge.example",
-            "api_key_envs": ["BRIDGE_KEY"],
-            "docs_summary": "Financial data endpoint with JSON responses.",
-            "docs_url": "https://provider-bridge.example/docs",
-            "sample_endpoint": "fundamentals",
-            "auth_style": "query",
-            "response_format": "json",
+            "api_key": "bridge_key_123456",
+            "interface_documentation": (
+                "https://provider-bridge.example/docs\n"
+                "Base URL: https://api.provider-bridge.example\n"
+                "Financial data endpoint with JSON responses for filings and balance sheet data."
+            ),
         },
     )
 
@@ -630,25 +834,58 @@ def test_data_source_expansion_output_is_handoff_ready_for_programmer_agent(clie
     assert run["validation"]["ready_for_programmer_agent"] is True
     assert run["target_module"].split("/", 3)[0:3] == ["src", "sentinel_alpha", "infra"]
     assert run["config_candidate"]["provider_name"] == "provider_bridge"
+    assert run["analysis"]["generation_mode"] == "live_llm"
+    assert run["config_candidate"]["structured_integration_spec"]["auth_header_name"] == "X-Bridge-Key"
 
 
-def test_data_source_expansion_can_be_applied_by_programmer_agent(client: TestClient) -> None:
-    local_client = TestClient(create_app(WorkflowService()))
+def test_data_source_expansion_falls_back_when_llm_analysis_fails(client: TestClient) -> None:
+    service = WorkflowService()
+
+    def _raise(*args, **kwargs):
+        raise RuntimeError("synthetic llm failure")
+
+    service.llm_runtime.invoke_text_task = _raise  # type: ignore[method-assign]
+    local_client = TestClient(create_app(service))
+    created = local_client.post("/api/sessions", json={"user_name": "Fallback", "starting_capital": 300000})
+    session_id = created.json()["session_id"]
+
+    response = local_client.post(
+        f"/api/sessions/{session_id}/data-source/expand",
+        json={
+            "api_key": "fallback_key_123456",
+            "interface_documentation": (
+                "https://fallback.example/docs\n"
+                "Base URL: https://api.fallback.example\n"
+                "Options chain API with JSON payloads. Authorization header uses bearer token. /v1/options"
+            ),
+        },
+    )
+
+    assert response.status_code == 200
+    run = response.json()["data_source_runs"][-1]
+    assert run["analysis"]["generation_mode"] == "rule_based"
+    assert run["analysis"]["analysis_status"] == "fallback_completed"
+    assert "llm_analysis_error:" in str(run["analysis"]["fallback_reason"])
+    assert run["validation"]["ready_for_programmer_agent"] is True
+
+
+def test_data_source_expansion_can_be_applied_by_programmer_agent(tmp_path) -> None:
+    service = WorkflowService()
+    service._data_source_registry_dir = tmp_path / "data_source_registry"
+    service._data_source_registry_dir.mkdir(parents=True, exist_ok=True)
+    local_client = TestClient(create_app(service))
     created = local_client.post("/api/sessions", json={"user_name": "BridgeApply", "starting_capital": 300000})
     session_id = created.json()["session_id"]
 
     expanded = local_client.post(
         f"/api/sessions/{session_id}/data-source/expand",
         json={
-            "provider_name": "Bridge Apply",
-            "category": "options",
-            "base_url": "https://api.bridge-apply.example",
-            "api_key_envs": ["BRIDGE_APPLY_KEY"],
-            "docs_summary": "Options chain API with JSON payloads.",
-            "docs_url": "https://bridge-apply.example/docs/options",
-            "sample_endpoint": "options",
-            "auth_style": "header",
-            "response_format": "json",
+            "api_key": "bridge_apply_key_123456",
+            "interface_documentation": (
+                "https://bridge-apply.example/docs/options\n"
+                "Base URL: https://api.bridge-apply.example\n"
+                "Options chain API with JSON payloads. Authorization header uses bearer token. /v1/options"
+            ),
         },
     )
     run_id = expanded.json()["data_source_runs"][-1]["run_id"]
@@ -662,12 +899,88 @@ def test_data_source_expansion_can_be_applied_by_programmer_agent(client: TestCl
     body = applied.json()
     run = body["data_source_runs"][-1]
     assert run["run_id"] == run_id
+    assert run["local_registry_paths"]
     assert run["programmer_apply"]["applied_run_id"] == run_id
-    assert run["programmer_apply"]["status"] in {"disabled", "misconfigured", "ok", "error"}
+    assert run["programmer_apply"]["local_registry_paths"]
+    assert Path(run["programmer_apply"]["local_registry_paths"][0]).exists()
+    assert run["programmer_apply"]["status"] in {"disabled", "misconfigured", "ok", "error", "dry_run"}
+    if run["programmer_apply"]["status"] == "dry_run":
+        assert run["programmer_apply"]["dry_run_summary"]
     assert any(
         item["event_type"] in {"data_source_expansion_applied", "data_source_expansion_apply_failed"}
         for item in body["history_events"]
     )
+
+
+def test_data_source_expansion_smoke_test_is_recorded(tmp_path) -> None:
+    service = WorkflowService()
+    service._data_source_registry_dir = tmp_path / "data_source_registry"
+    service._data_source_registry_dir.mkdir(parents=True, exist_ok=True)
+    service.llm_runtime.invoke_text_task = lambda *args, **kwargs: {  # type: ignore[method-assign]
+        "text": (
+            '{"provider_name":"Smoke Feed","category":"market_data","base_url":"https://api.smoke.example",'
+            '"docs_url":"https://docs.smoke.example","auth_style":"query","auth_header_name":"","auth_query_param":"apikey",'
+            '"response_format":"json","sample_endpoint":"v1/reference","quote_endpoint":"v1/quote","history_endpoint":"v1/history",'
+            '"symbol_param":"symbol","interval_param":"interval","lookback_param":"range","response_root_path":"data",'
+            '"default_headers":{"Accept":"application/json"},"default_query_params":{},"pagination_style":"cursor","error_field_path":"error.message","notes":["Smoke provider."]}'
+        ),
+        "profile": service.llm_runtime.task_profile("data_source_doc_analysis"),
+        "invocation": {"actual_generation_mode": "live_llm", "fallback_reason": None},
+    }
+    local_client = TestClient(create_app(service))
+    created = local_client.post("/api/sessions", json={"user_name": "Smoke", "starting_capital": 300000})
+    session_id = created.json()["session_id"]
+
+    expanded = local_client.post(
+        f"/api/sessions/{session_id}/data-source/expand",
+        json={
+            "api_key": "smoke_key_123",
+            "interface_documentation": (
+                "https://docs.smoke.example\n"
+                "Base URL: https://api.smoke.example\n"
+                "REST JSON API with quote and history endpoints."
+            ),
+        },
+    )
+    run_id = expanded.json()["data_source_runs"][-1]["run_id"]
+
+    tested = local_client.post(
+        f"/api/sessions/{session_id}/data-source/test",
+        json={"run_id": run_id, "symbol": "AAPL"},
+    )
+
+    assert tested.status_code == 200
+    run = tested.json()["data_source_runs"][-1]
+    smoke = run["smoke_test"]
+    assert smoke["status"] in {"ok", "warning"}
+    assert smoke["structure"]["import_ok"] is True
+    assert smoke["structure"]["instantiate_ok"] is True
+    assert smoke["structure"]["quote_method"] == "fetch_quote"
+    assert smoke["structure"]["history_method"] == "fetch_history"
+    assert smoke["live_fetch"]["status"] == "skipped"
+    assert smoke["live_fetch"]["classification"] == "not_requested"
+    assert smoke["local_registry_paths"]
+    assert Path(smoke["local_registry_paths"][0]).exists()
+    assert any(item["event_type"] == "data_source_expansion_tested" for item in tested.json()["history_events"])
+
+
+def test_data_source_live_fetch_failure_is_classified() -> None:
+    service = WorkflowService()
+
+    invalid_key = service._classify_data_source_live_fetch_failure(RuntimeError("401 Unauthorized: invalid api key"))
+    assert invalid_key["classification"] == "invalid_api_key"
+    assert invalid_key["status"] == "blocked"
+    assert "API KEY" in invalid_key["next_action"]
+
+    billing = service._classify_data_source_live_fetch_failure(RuntimeError("402 Payment Required: upgrade plan"))
+    assert billing["classification"] == "billing_or_plan_required"
+    assert billing["status"] == "blocked"
+    assert billing["provider_support_needed"] is True
+
+    network = service._classify_data_source_live_fetch_failure(RuntimeError("connection refused"))
+    assert network["classification"] == "network_or_provider_unavailable"
+    assert network["status"] == "warning"
+    assert network["retryable"] is True
 
 
 def test_trading_terminal_integration_agent_run_is_recorded(client: TestClient) -> None:
@@ -761,7 +1074,9 @@ def test_trading_terminal_integration_can_be_applied_by_programmer_agent(client:
     run = body["terminal_integration_runs"][-1]
     assert run["run_id"] == run_id
     assert run["programmer_apply"]["applied_run_id"] == run_id
-    assert run["programmer_apply"]["status"] in {"disabled", "misconfigured", "ok", "error"}
+    assert run["programmer_apply"]["status"] in {"disabled", "misconfigured", "ok", "error", "dry_run"}
+    if run["programmer_apply"]["status"] == "dry_run":
+        assert run["programmer_apply"]["dry_run_summary"]
     assert any(
         item["event_type"] in {"trading_terminal_integration_applied", "trading_terminal_integration_apply_failed"}
         for item in body["history_events"]

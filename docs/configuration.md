@@ -114,9 +114,37 @@ Options providers:
 
 `local_file` provider defaults:
 
-- `base_path = "data/local_market_data"`
+- market data:
+  - `base_path = "data/local_market_data/market_data"`
 - `quote_filename = "{symbol}_quote.json"`
 - `history_filename = "{symbol}_{interval}.csv"`
+- fundamentals:
+  - `base_path = "data/local_market_data/fundamentals"`
+  - `financials_filename = "{symbol}_financials.json"`
+- dark pool:
+  - `base_path = "data/local_market_data/dark_pool"`
+  - `dark_pool_filename = "{symbol}_dark_pool.json"`
+- options:
+  - `base_path = "data/local_market_data/options"`
+  - `options_filename = "{symbol}_options.json"`
+
+Default resolved local roots in this repository:
+
+- `/Users/harry/Documents/git/Sentinel-Alpha/data/local_market_data/market_data`
+- `/Users/harry/Documents/git/Sentinel-Alpha/data/local_market_data/fundamentals`
+- `/Users/harry/Documents/git/Sentinel-Alpha/data/local_market_data/dark_pool`
+- `/Users/harry/Documents/git/Sentinel-Alpha/data/local_market_data/options`
+
+Data-source expansion local registry:
+
+- generated and supplemented data-source definitions are also persisted under:
+  - `/Users/harry/Documents/git/Sentinel-Alpha/config/data_source_registry/{provider_slug}/`
+- each provider directory stores:
+  - `{run_id}.expand.json`
+  - `{run_id}.apply.json`
+  - `latest.expand.json`
+  - `latest.apply.json`
+- these local registry files must not store raw API keys; only metadata, generated artifacts, config candidates, validation output, and whether an API key was supplied
 
 Expected local history CSV columns:
 
@@ -126,6 +154,67 @@ Expected local history CSV columns:
 - `low`
 - `close`
 - `volume`
+
+Supported local file formats:
+
+- history:
+  - `market_data/{SYMBOL}_{interval}.csv`
+  - `market_data/{SYMBOL}_{interval}.json`
+  - example: `market_data/AAPL_1d.csv`
+- quote:
+  - `market_data/{SYMBOL}_quote.json`
+  - `market_data/{SYMBOL}_quote.csv`
+  - example: `market_data/AAPL_quote.json`
+- fundamentals:
+  - `fundamentals/{SYMBOL}_financials.json`
+  - example: `fundamentals/AAPL_financials.json`
+- dark pool:
+  - `dark_pool/{SYMBOL}_dark_pool.json`
+- options:
+  - `options/{SYMBOL}_options.json`
+
+Example local history CSV:
+
+```csv
+timestamp,open,high,low,close,volume
+2026-03-24T00:00:00Z,180.2,183.1,179.8,182.5,53200000
+2026-03-25T00:00:00Z,182.5,184.4,181.7,183.9,48700000
+```
+
+Example local quote JSON:
+
+```json
+{
+  "provider": "local_file",
+  "symbol": "AAPL",
+  "price": 183.9,
+  "open": 182.5,
+  "high": 184.4,
+  "low": 181.7,
+  "previous_close": 182.5,
+  "timestamp": "2026-03-25T20:00:00Z"
+}
+```
+
+Example local financials JSON:
+
+```json
+{
+  "provider": "local_file",
+  "symbol": "AAPL",
+  "normalized": {
+    "entity_name": "Apple Inc.",
+    "report_period": "2025-12-31",
+    "statements": [
+      {
+        "period_end": "2025-12-31",
+        "revenue": 391000000000,
+        "net_income": 97000000000
+      }
+    ]
+  }
+}
+```
 
 ## Frontend Config
 
@@ -167,8 +256,10 @@ The following categories are configuration-bound infrastructure responsibilities
 
 - `src/sentinel_alpha/api/app.py` uses the shared config and runs the in-memory workflow service.
 - `src/sentinel_alpha/api/persistent_app.py` uses the same config and swaps in the persistent workflow service.
-- `src/sentinel_alpha/webapp/server.py` serves the canonical frontend module from `src/sentinel_alpha/webapp/static`.
-- both backend modes must expose the same API surface to the frontend module.
+- `src/sentinel_alpha/nicegui/app.py` is the canonical frontend runtime.
+- `src/sentinel_alpha/webapp/server.py` only serves legacy redirect shells from `src/sentinel_alpha/webapp/static`.
+- both backend modes must expose the same API surface to the NiceGUI frontend module.
+- the default development workflow should run the API and NiceGUI locally with hot reload rather than using Docker as the primary inner loop.
 
 ## Docker Rule
 

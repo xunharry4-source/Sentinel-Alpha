@@ -3,53 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Sentinel-Alpha | 会话创建</title>
-  <link rel="stylesheet" href="../styles.css" />
+  <meta http-equiv="refresh" content="0;url=http://127.0.0.1:8010/" />
+  <title>Sentinel-Alpha | Legacy Redirect</title>
+  <script src="../legacy-redirect.js"></script>
 </head>
 <body>
-  <main class="page">
-    <header class="shell-header">
-      <div class="shell-brand">
-        <img class="shell-logo" src="../assets/logo.jpg" alt="Sentinel-Alpha logo" />
-        <div>
-          <p class="eyebrow">Sentinel-Alpha</p>
-          <h2>会话创建模块</h2>
-        </div>
-      </div>
-      <div class="shell-nav" data-shell="nav"></div>
-      <div data-shell="summary"></div>
-    </header>
-    <section class="page-grid">
-      <article class="panel">
-        <p class="eyebrow">Session</p>
-        <h2>创建测试会话</h2>
-        <div class="trade-config">
-          <label class="config-field">
-            <span>用户名称</span>
-            <input id="user-name-input" type="text" value="Harry" />
-          </label>
-          <label class="config-field">
-            <span>测试本金 (CNY)</span>
-            <input id="starting-capital-input" type="number" min="10000" step="10000" value="500000" />
-          </label>
-        </div>
-        <div class="action-buttons secondary">
-          <button id="create-session">创建测试会话</button>
-          <button id="generate-scenarios">重新生成测试数据</button>
-        </div>
-        <p class="profiler-note" id="session-page-note">创建后会自动生成测试数据。</p>
-        <p class="profiler-note" id="session-health-note">正在检查 API 状态。</p>
-      </article>
-      <article class="panel">
-        <p class="eyebrow">Current</p>
-        <h3>当前会话</h3>
-        <ul id="session-current-list" class="result-list">
-          <li>当前还没有会话。</li>
-        </ul>
-      </article>
-    </section>
+  <main>
+    <p>旧版静态页面已下线，正在跳转到 NiceGUI：</p>
+    <p><a data-legacy-redirect-target href="http://127.0.0.1:8010/">http://127.0.0.1:8010/</a></p>
   </main>
-  <script src="../session-shell.js"></script>
-  <script src="../page-session.js"></script>
 </body>
 </html>

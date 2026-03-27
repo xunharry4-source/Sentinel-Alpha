@@ -4,9 +4,18 @@ const TERMINAL_FOCUS_KEY = "sentinel-alpha:terminal-focus-target";
 const DEBUG_MODE_KEY = "sentinel-alpha:debug-mode";
 let systemHealthTimerId = null;
 
+function strategyPageForFocus(target) {
+  if (target?.includes("repair") || target?.includes("check")) return "./strategy-training.html";
+  if (target?.includes("research") || target?.includes("backtest")) return "./strategy-results.html";
+  return "./strategy.html";
+}
+
 function jumpFromHealth(targetPage, focusTarget = "", focusKey = STRATEGY_FOCUS_KEY) {
   if (focusTarget) {
     window.localStorage.setItem(focusKey, focusTarget);
+    if (focusKey === STRATEGY_FOCUS_KEY) {
+      targetPage = strategyPageForFocus(focusTarget);
+    }
   }
   window.location.href = targetPage;
 }
@@ -388,7 +397,7 @@ async function refreshSystemHealth() {
 
 document.querySelector("#refresh-system-health")?.addEventListener("click", refreshSystemHealth);
 document.querySelector("#jump-health-to-config")?.addEventListener("click", () => jumpFromHealth("./configuration.html"));
-document.querySelector("#jump-health-to-strategy")?.addEventListener("click", () => jumpFromHealth("./strategy.html", "#strategy-repair-route-list"));
+document.querySelector("#jump-health-to-strategy")?.addEventListener("click", () => jumpFromHealth("./strategy-training.html", "#strategy-repair-route-list"));
 document.querySelector("#jump-health-to-terminal")?.addEventListener("click", () => jumpFromHealth("./trading-terminal-integration.html", "#terminal-repair-summary", TERMINAL_FOCUS_KEY));
 document.querySelector("#toggle-debug-mode")?.addEventListener("click", toggleDebugMode);
 

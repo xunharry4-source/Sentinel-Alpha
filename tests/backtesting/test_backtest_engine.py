@@ -126,3 +126,43 @@ def test_simple_backtest_engine_supports_multi_asset_with_costs() -> None:
     assert result["test"]["avg_daily_turnover_proxy_pct"] >= 0
     assert result["coverage"]["symbol_count"] == 2
     assert result["coverage"]["split_bar_counts"]["test"]["symbol_count"] == 2
+
+
+def test_simple_backtest_engine_builds_annual_breakdown() -> None:
+    bars = []
+    price = 100.0
+    for year in (2023, 2024):
+        for month in range(1, 13):
+            for day in (3, 10, 17):
+                close = price * (1.01 if (month + day) % 4 else 0.985)
+                bars.append(
+                    {
+                        "timestamp": f"{year}-{month:02d}-{day:02d}",
+                        "open": round(price, 2),
+                        "high": round(max(price, close) * 1.01, 2),
+                        "low": round(min(price, close) * 0.99, 2),
+                        "close": round(close, 2),
+                        "volume": 1000 + month * 10 + day,
+                    }
+                )
+                price = close
+
+    split_plan = {
+        "train": {"start": "2023-01-03", "end": "2023-12-17"},
+        "validation": {"start": "2024-01-03", "end": "2024-06-17"},
+        "test": {"start": "2024-07-03", "end": "2024-12-17"},
+        "walk_forward_windows": [],
+    }
+
+    engine = SimpleBacktestEngine()
+    result = engine.evaluate(bars=bars, exposure=0.2, split_plan=split_plan)
+
+    assert result is not None
+    full_period = result["full_period"]
+    annual = full_period["annual_breakdown"]
+    assert len(annual) == 2
+    assert annual[0]["year"] == 2023
+    assert annual[1]["year"] == 2024
+    assert "compounded_return_pct" in annual[0]
+    assert "avg_loss_trade_pct" in annual[0]
+    assert "avg_gain_trade_pct" in annual[1]

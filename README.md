@@ -115,7 +115,8 @@ Additional free datasets now include:
 - configurable terminal `response_field_map` for provider-specific payload layouts
 - terminal runtime summary with status, next action, primary repair route, contract confidence, and shape confidence
 - PostgreSQL / TimescaleDB / Qdrant / Redis persistence adapters
-- dedicated frontend web module
+- NiceGUI-based frontend workbench
+- legacy static frontend web module (kept for compatibility during migration)
 
 ## Project Status
 
@@ -178,6 +179,12 @@ That execution-quality summary is surfaced both in the behavioral report and in 
 
 ## Run
 
+Default development flow:
+
+- use local API + local NiceGUI hot reload during development
+- do not use Docker as the primary edit-run-debug loop
+- use Docker only after the local flow is stable and ready for integrated packaging or deployment verification
+
 Backend, in-memory:
 
 ```bash
@@ -192,7 +199,27 @@ cd /Users/harry/Documents/git/Sentinel-Alpha
 PYTHONPATH=src uvicorn sentinel_alpha.api.persistent_app:app --host 127.0.0.1 --port 8001
 ```
 
-Frontend web module:
+Frontend WebUI, NiceGUI:
+
+```bash
+cd /Users/harry/Documents/git/Sentinel-Alpha
+PYTHONPATH=src python -m sentinel_alpha.nicegui.app
+```
+
+Local hot-reload development, API + NiceGUI together:
+
+```bash
+cd /Users/harry/Documents/git/Sentinel-Alpha
+./scripts/dev_local.sh
+```
+
+Default local URLs:
+
+- API: `http://127.0.0.1:8001`
+- NiceGUI: `http://127.0.0.1:8010`
+- local script enables API reload and NiceGUI reload automatically
+
+Legacy static frontend redirect shell, compatibility only:
 
 ```bash
 cd /Users/harry/Documents/git/Sentinel-Alpha
@@ -210,6 +237,9 @@ Docker, memory mode:
 cd /Users/harry/Documents/git/Sentinel-Alpha
 docker compose --profile memory up --build
 ```
+
+The `web` service now starts the NiceGUI workbench by default on port `8010 -> 8000`.
+Docker is not the default development loop anymore. Use local API + local NiceGUI first, then use Docker when the feature is already stable enough for integrated verification.
 
 Docker, persistent mode:
 
@@ -247,30 +277,16 @@ This project is licensed under the Apache License 2.0.
 
 Canonical frontend module:
 
+- [nicegui](/Users/harry/Documents/git/Sentinel-Alpha/src/sentinel_alpha/nicegui)
+- [app.py](/Users/harry/Documents/git/Sentinel-Alpha/src/sentinel_alpha/nicegui/app.py)
 - [webapp](/Users/harry/Documents/git/Sentinel-Alpha/src/sentinel_alpha/webapp)
 - [index.html](/Users/harry/Documents/git/Sentinel-Alpha/src/sentinel_alpha/webapp/static/index.html)
-- [session.html](/Users/harry/Documents/git/Sentinel-Alpha/src/sentinel_alpha/webapp/static/pages/session.html)
-- [simulation.html](/Users/harry/Documents/git/Sentinel-Alpha/src/sentinel_alpha/webapp/static/pages/simulation.html)
-- [report.html](/Users/harry/Documents/git/Sentinel-Alpha/src/sentinel_alpha/webapp/static/pages/report.html)
-- [preferences.html](/Users/harry/Documents/git/Sentinel-Alpha/src/sentinel_alpha/webapp/static/pages/preferences.html)
-- [strategy.html](/Users/harry/Documents/git/Sentinel-Alpha/src/sentinel_alpha/webapp/static/pages/strategy.html)
-- [intelligence.html](/Users/harry/Documents/git/Sentinel-Alpha/src/sentinel_alpha/webapp/static/pages/intelligence.html)
-- [trading-terminal-integration.html](/Users/harry/Documents/git/Sentinel-Alpha/src/sentinel_alpha/webapp/static/pages/trading-terminal-integration.html)
-- [system-health.html](/Users/harry/Documents/git/Sentinel-Alpha/src/sentinel_alpha/webapp/static/pages/system-health.html)
-- [operations.html](/Users/harry/Documents/git/Sentinel-Alpha/src/sentinel_alpha/webapp/static/pages/operations.html)
 
-Frontend page rule:
+Frontend entry rule:
 
-- 首页只做产品总览和页面导航
-- 会话创建、模拟测试、测试报告、交易偏好、策略训练、情报中心、系统健康、部署监控必须分页面承载
-- 策略训练页必须支持循环迭代，而不是单次生成
-- 策略训练页必须显示训练日志、检查失败原因、当前策略版本与模型路由信息
-- 测试报告、情报中心、系统健康、配置管理页面应支持直接跳回策略训练或配置修复区域
-- 报告页必须能回放：
-  - 用户意见
-  - 用户意见对应结果
-  - 最新策略研究结论
-  - 训练输入数据包质量
+- NiceGUI is the only canonical user-facing WebUI.
+- Legacy static pages under `src/sentinel_alpha/webapp/static/pages/` are redirect shells only and must not be treated as active feature surfaces.
+- Any new user-facing page capability must land in [app.py](/Users/harry/Documents/git/Sentinel-Alpha/src/sentinel_alpha/nicegui/app.py), not as a new static HTML workflow.
 
 ## LLM Routing
 
@@ -381,6 +397,13 @@ The reusable platform rule is:
 - avoid changing workflow phases, monitoring contracts, archival contracts, or approval gates unless the platform architecture itself is being redesigned
 - avoid changing risk, audit, and dataset-protocol contracts unless the platform architecture itself is being redesigned
 - treat testing as a tool for finding system errors, weaknesses, vulnerabilities, and possible latent defects as thoroughly as practical, not as a hurdle to bypass or a reason to hide problems
+- if a task introduced new changes, run relevant tests or verification before presenting the result as ready
+- do not use the user as the first effective test layer for a fresh change; verify it first, then ask the user to review
+- default to completing the requested scope in one continuous execution flow instead of stopping after each small edit to ask whether to continue
+- if the task is large, split it into a task list and continue through the list, updating it when new issues are found
+- if a task adds a new feature, page, or material workflow change, update the technical documentation first and keep that documentation in the same change set
+- the documentation must explain the feature or page description, its impact on the system, and the decomposition of the feature or page into concrete sub-functions
+- do not leave new UI or workflow behavior undocumented while claiming the task is complete
 
 The strategy evaluation protocol is:
 

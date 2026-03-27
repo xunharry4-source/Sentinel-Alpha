@@ -21,6 +21,27 @@ Testing rule:
 - do not treat tests as a box-checking exercise or something to weaken just to get a passing result
 - testing should actively try to expose edge cases, failure paths, hidden coupling, and other likely defect surfaces rather than only confirming the happy path
 - if a test fails because it exposed a real problem, fix the problem or surface the limitation explicitly instead of hiding it
+- if you made a new change, run the relevant verification yourself before showing the change to the user as ready
+- do not treat the user's manual review or click-through as the first real test pass for your new changes
+- the user is not the fallback test harness for unverified modifications
+
+Execution rule:
+
+- when the user gives a larger workflow goal, do not stop after each small change to ask whether to continue
+- if the work is long, break it into a concrete task list, execute the tasks in sequence, and update the list if new issues appear
+- continue through the task list by default unless you hit a real blocker or a decision that genuinely requires user input
+- treat the user's request as "finish the whole requested scope" unless the user explicitly asks for a checkpoint
+
+Documentation rule:
+
+- if the task adds a new feature, new page, new operator surface, or materially changes an existing workflow surface, update the related technical documentation before calling the task complete
+- the documentation must state:
+  - what the feature or page is
+  - what problem it solves
+  - what upstream or downstream systems it affects
+  - how the page or feature is decomposed into concrete functions, panels, or execution steps
+- if the change is UI-facing, update both the page function report and the page-to-API mapping when applicable
+- do not leave a new workflow surface implemented in code while the technical docs still describe the previous behavior
 
 ### Banned behaviors
 

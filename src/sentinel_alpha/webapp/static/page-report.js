@@ -1,9 +1,18 @@
 const STRATEGY_FOCUS_KEY = "sentinel-alpha:strategy-focus-target";
 const REPORT_REDIRECT_NOTE_KEY = "sentinel-alpha:report-redirect-note";
 
+function strategyPageForFocus(target) {
+  if (!target) return "./strategy.html";
+  if (target.includes("research") || target.includes("backtest") || target.includes("walkforward") || target.includes("variant")) return "./strategy-results.html";
+  if (target.includes("history") || target.includes("archive") || target.includes("failure-evolution") || target.includes("compare")) return "./strategy-history.html";
+  if (target.includes("code-loop") || target.includes("programmer") || target.includes("model") || target.includes("token")) return "./strategy-artifacts.html";
+  if (target.includes("repair") || target.includes("check") || target.includes("feedback")) return "./strategy-training.html";
+  return "./strategy.html";
+}
+
 function jumpToStrategyFocus(target) {
   window.localStorage.setItem(STRATEGY_FOCUS_KEY, target);
-  window.location.href = "./strategy.html";
+  window.location.href = strategyPageForFocus(target);
 }
 
 function getStrategyResearchEntries(snapshot) {
