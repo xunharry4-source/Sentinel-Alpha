@@ -10,6 +10,7 @@ import re
 from sentinel_alpha.api.schemas import (
     BehaviorEventIn,
     CompleteSimulationRequest,
+    SimulationRetrainRequest,
     SimulationMarketAdvanceRequest,
     SimulationMarketInitializeRequest,
     ConfigSingleTestRequest,
@@ -17,7 +18,11 @@ from sentinel_alpha.api.schemas import (
     CreateSessionRequest,
     DataSourceExpansionRequestIn,
     DataSourceApplyRequest,
+    DataSourceRunDeleteRequest,
+    DataSourceProviderDeleteRequest,
+    DataSourceProviderUpdateRequest,
     DataSourceTestRequest,
+    DataSourceRunUpdateRequest,
     DeploymentRequest,
     ProgrammerTaskRequest,
     InformationEventBatchRequest,
@@ -25,15 +30,18 @@ from sentinel_alpha.api.schemas import (
     MarketDataLookupRequest,
     MarketSnapshotIn,
     SessionSnapshot,
+    StrategyActiveSelectionRequest,
     StrategyIterationRequest,
     TradingTerminalApplyRequest,
     TradingTerminalIntegrationRequestIn,
+    TradingTerminalRunDeleteRequest,
+    TradingTerminalRunUpdateRequest,
     TradingTerminalTestRequest,
     TradeExecutionIn,
     TradingPreferenceRequest,
     TradeUniverseRequest,
 )
-from sentinel_alpha.config import get_settings, read_config_payload, write_config_payload
+from sentinel_alpha.config import get_settings, read_config_payload, write_config_payload, write_config_payload_with_backup
 from sentinel_alpha.api.workflow_service import WorkflowService
 from sentinel_alpha.domain.models import BehaviorEvent, MarketDataPoint, TradeExecutionRecord
 from sentinel_alpha.infra.config_validator import ConfigValidator
@@ -167,9 +175,14 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
             trading_preferences=session.trading_preferences,
             trade_universe=session.trade_universe,
             strategy_package=session.strategy_package,
+            active_trading_strategy=session.active_trading_strategy,
+            strategy_status_summary=session.strategy_status_summary,
             strategy_checks=session.strategy_checks,
             execution_mode=session.execution_mode,
             profile_evolution=session.profile_evolution,
+            habit_goal_evolution=session.habit_goal_evolution,
+            intelligence_history_analysis=session.intelligence_history_analysis,
+            simulation_training_state=session.simulation_training_state,
             market_snapshots=session.market_snapshots,
             trade_records=session.trade_records,
             strategy_feedback_log=session.strategy_feedback_log,
@@ -180,6 +193,7 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
             history_events=session.history_events,
             report_history=session.report_history,
             intelligence_runs=session.intelligence_runs,
+            agent_activity=session.agent_activity,
             programmer_runs=session.programmer_runs,
             data_source_runs=session.data_source_runs,
             terminal_integration_runs=session.terminal_integration_runs,
@@ -231,11 +245,8 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Session not found.") from exc
 
-        raw_events = [
-            item
-            for item in (resolved_service.agent_activity_log or [])
-            if str(item.get("session_id") or "") == str(session_id)
-        ]
+        session = resolved_service.get_session(session_id)
+        raw_events = list(session.agent_activity or [])
         if since:
             try:
                 # ISO timestamps compare lexicographically when normalized, but we still guard the filter.
@@ -278,12 +289,13 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
     @app.post("/api/config")
     def update_config(payload: ConfigUpdateRequest) -> dict:
         try:
-            path = write_config_payload(payload.payload)
+            path, backup_path = write_config_payload_with_backup(payload.payload)
             fresh_settings = get_settings()
             validation = config_validator.validate(fresh_settings)
             return {
                 "status": "saved",
                 "config_path": str(path),
+                "backup_path": str(backup_path) if backup_path else None,
                 "payload": read_config_payload(),
                 "validation": validation,
             }
@@ -294,14 +306,16 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
     def test_config(payload: ConfigUpdateRequest | None = None) -> dict:
         try:
             if payload is not None:
-                path = write_config_payload(payload.payload)
+                path, backup_path = write_config_payload_with_backup(payload.payload)
             else:
                 path = None
+                backup_path = None
             fresh_settings = get_settings()
             validation = config_validator.validate(fresh_settings)
             return {
                 "status": "tested",
                 "config_path": str(path or fresh_settings.config_path),
+                "backup_path": str(backup_path) if backup_path else None,
                 "validation": validation,
             }
         except Exception as exc:
@@ -311,14 +325,16 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
     def test_single_config_item(payload: ConfigSingleTestRequest) -> dict:
         try:
             if payload.payload is not None:
-                path = write_config_payload(payload.payload)
+                path, backup_path = write_config_payload_with_backup(payload.payload)
             else:
                 path = None
+                backup_path = None
             fresh_settings = get_settings()
             validation = config_validator.validate_target(fresh_settings, payload.family, payload.provider)
             return {
                 "status": "tested",
                 "config_path": str(path or fresh_settings.config_path),
+                "backup_path": str(backup_path) if backup_path else None,
                 "validation": validation,
             }
         except Exception as exc:
@@ -359,6 +375,106 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
             "options_default_provider": settings.options_default_provider,
             "options_providers": market_data.options_provider_matrix(),
         }
+
+    @app.get("/api/data-source/health")
+    def data_source_health_global() -> dict:
+        validation = config_validator.validate(get_settings())
+        configured_providers = {
+            "market_data": market_data.provider_matrix(),
+            "fundamentals": market_data.fundamentals_provider_matrix(),
+            "dark_pool": market_data.dark_pool_provider_matrix(),
+            "options_data": market_data.options_provider_matrix(),
+        }
+        summary = resolved_service.summarize_data_source_health_payload(
+            validation=validation,
+            provider_matrix=configured_providers,
+            expanded_runs=[],
+            overall_status=str(validation.get("status") or "warning"),
+        )
+        return {
+            "status": validation.get("status"),
+            "configured_validation": validation,
+            "configured_providers": configured_providers,
+            "summary": summary,
+        }
+
+    @app.post("/api/config/data-source/provider")
+    def update_data_source_provider(payload: DataSourceProviderUpdateRequest) -> dict:
+        try:
+            config_payload = read_config_payload()
+            family_section = config_payload.setdefault(payload.family, {})
+            providers = family_section.setdefault("providers", {})
+            enabled_providers = list(family_section.get("enabled_providers", []))
+            provider_config = dict(providers.get(payload.provider, {}))
+            provider_config["enabled"] = payload.enabled
+            if payload.base_url is not None:
+                provider_config["base_url"] = payload.base_url
+            if payload.base_path is not None:
+                provider_config["base_path"] = payload.base_path
+            if payload.api_key_envs:
+                provider_config["api_key_envs"] = list(payload.api_key_envs)
+            if payload.docs_url is not None:
+                provider_config["docs_url"] = payload.docs_url
+            if payload.quote_filename is not None:
+                provider_config["quote_filename"] = payload.quote_filename
+            if payload.history_filename is not None:
+                provider_config["history_filename"] = payload.history_filename
+            if payload.financials_filename is not None:
+                provider_config["financials_filename"] = payload.financials_filename
+            if payload.dark_pool_filename is not None:
+                provider_config["dark_pool_filename"] = payload.dark_pool_filename
+            if payload.options_filename is not None:
+                provider_config["options_filename"] = payload.options_filename
+            providers[payload.provider] = provider_config
+            if payload.enabled and payload.provider not in enabled_providers:
+                enabled_providers.append(payload.provider)
+            if not payload.enabled and payload.provider in enabled_providers:
+                enabled_providers = [item for item in enabled_providers if item != payload.provider]
+            family_section["enabled_providers"] = enabled_providers
+            if payload.set_as_default:
+                family_section["default_provider"] = payload.provider
+            path, backup_path = write_config_payload_with_backup(config_payload)
+            fresh_settings = get_settings()
+            validation = config_validator.validate_target(fresh_settings, payload.family, payload.provider)
+            return {
+                "status": "saved",
+                "config_path": str(path),
+                "backup_path": str(backup_path) if backup_path else None,
+                "family": payload.family,
+                "provider": payload.provider,
+                "payload": read_config_payload(),
+                "validation": validation,
+            }
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Data-source provider update failed: {exc}") from exc
+
+    @app.post("/api/config/data-source/provider/delete")
+    def delete_data_source_provider(payload: DataSourceProviderDeleteRequest) -> dict:
+        try:
+            config_payload = read_config_payload()
+            family_section = config_payload.setdefault(payload.family, {})
+            providers = family_section.setdefault("providers", {})
+            if payload.provider not in providers:
+                raise ValueError(f"{payload.provider} is not defined under {payload.family}.")
+            providers.pop(payload.provider, None)
+            enabled_providers = [item for item in list(family_section.get("enabled_providers", [])) if item != payload.provider]
+            family_section["enabled_providers"] = enabled_providers
+            if family_section.get("default_provider") == payload.provider:
+                family_section["default_provider"] = enabled_providers[0] if enabled_providers else ""
+            path, backup_path = write_config_payload_with_backup(config_payload)
+            fresh_settings = get_settings()
+            validation = config_validator.validate(fresh_settings)
+            return {
+                "status": "deleted",
+                "config_path": str(path),
+                "backup_path": str(backup_path) if backup_path else None,
+                "family": payload.family,
+                "provider": payload.provider,
+                "payload": read_config_payload(),
+                "validation": validation,
+            }
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"Data-source provider delete failed: {exc}") from exc
 
     @app.get("/api/market-data/quote")
     def market_data_quote(symbol: str, provider: str | None = None) -> dict:
@@ -437,6 +553,16 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
                     noise_level=float(payload.noise_level or 0.0),
                     sentiment_pressure=float(payload.sentiment_pressure or 0.0),
                     latency_seconds=float(payload.latency_seconds or 0.0),
+                    chart_focus_seconds=(
+                        float(payload.chart_focus_seconds)
+                        if payload.chart_focus_seconds is not None
+                        else None
+                    ),
+                    loss_refresh_count=payload.loss_refresh_count,
+                    loss_refresh_drawdown_trigger_pct=payload.loss_refresh_drawdown_trigger_pct,
+                    manual_intervention_count=payload.manual_intervention_count,
+                    manual_intervention_rate=payload.manual_intervention_rate,
+                    trust_decay_score=payload.trust_decay_score,
                     execution_status=payload.execution_status or ("hold" if payload.action == "hold" else "filled"),
                     execution_reason=payload.execution_reason,
                 ),
@@ -488,6 +614,16 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Session not found.") from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/sessions/{session_id}/simulation/retrain", response_model=SessionSnapshot)
+    def retrain_simulation(session_id: UUID, payload: SimulationRetrainRequest) -> SessionSnapshot:
+        try:
+            resolved_service.retrain_simulation_profile(session_id, payload.symbol)
+            return snapshot(session_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Session not found.") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
 
@@ -519,6 +655,8 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
                 session_id,
                 payload.feedback,
                 payload.strategy_type,
+                strategy_method=payload.strategy_method,
+                strategy_description=payload.strategy_description,
                 auto_iterations=payload.auto_iterations,
                 iteration_mode=payload.iteration_mode,
                 objective_metric=payload.objective_metric,
@@ -532,6 +670,10 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
                     "start": payload.training_start_date.isoformat() if payload.training_start_date else None,
                     "end": payload.training_end_date.isoformat() if payload.training_end_date else None,
                 },
+                trade_execution_limits={
+                    "max_trade_allocation_pct": payload.max_trade_allocation_pct,
+                    "max_trade_amount": payload.max_trade_amount,
+                },
             )
             return snapshot(session_id)
         except KeyError as exc:
@@ -540,6 +682,16 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except RuntimeError as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    @app.post("/api/sessions/{session_id}/strategy/active", response_model=SessionSnapshot)
+    def set_active_strategy(session_id: UUID, payload: StrategyActiveSelectionRequest) -> SessionSnapshot:
+        try:
+            resolved_service.set_active_trading_strategy(session_id, strategy_ref=payload.strategy_ref)
+            return snapshot(session_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Session not found.") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/api/sessions/{session_id}/market-snapshots", response_model=SessionSnapshot)
     def append_market_snapshot(session_id: UUID, payload: MarketSnapshotIn) -> SessionSnapshot:
@@ -719,11 +871,56 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    @app.get("/api/sessions/{session_id}/data-source/health")
+    def get_session_data_source_health(session_id: UUID) -> dict:
+        try:
+            return resolved_service.data_source_health(session_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Session not found.") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/sessions/{session_id}/data-source/update", response_model=SessionSnapshot)
+    def update_data_source(session_id: UUID, payload: DataSourceRunUpdateRequest) -> SessionSnapshot:
+        try:
+            resolved_service.update_data_source_expansion(
+                session_id,
+                run_id=payload.run_id,
+                interface_documentation=payload.interface_documentation,
+                api_key=payload.api_key,
+                provider_name=payload.provider_name,
+                category=payload.category,
+                base_url=payload.base_url,
+                api_key_envs=payload.api_key_envs,
+                docs_summary=payload.docs_summary,
+                docs_url=payload.docs_url,
+                sample_endpoint=payload.sample_endpoint,
+                auth_style=payload.auth_style,
+                response_format=payload.response_format,
+            )
+            return snapshot(session_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Session not found.") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/sessions/{session_id}/data-source/delete", response_model=SessionSnapshot)
+    def delete_data_source(session_id: UUID, payload: DataSourceRunDeleteRequest) -> SessionSnapshot:
+        try:
+            resolved_service.delete_data_source_expansion(session_id, run_id=payload.run_id)
+            return snapshot(session_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Session not found.") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     @app.post("/api/sessions/{session_id}/terminal/expand", response_model=SessionSnapshot)
     def expand_trading_terminal(session_id: UUID, payload: TradingTerminalIntegrationRequestIn) -> SessionSnapshot:
         try:
             resolved_service.expand_trading_terminal(
                 session_id=session_id,
+                interface_documentation=payload.interface_documentation,
+                api_key=payload.api_key,
                 terminal_name=payload.terminal_name,
                 terminal_type=payload.terminal_type,
                 official_docs_url=payload.official_docs_url,
@@ -736,10 +933,52 @@ def create_app(service: WorkflowService | None = None) -> FastAPI:
                 order_status_endpoint=payload.order_status_endpoint,
                 positions_endpoint=payload.positions_endpoint,
                 balances_endpoint=payload.balances_endpoint,
+                trade_records_endpoint=payload.trade_records_endpoint,
                 docs_summary=payload.docs_summary,
                 user_notes=payload.user_notes,
                 response_field_map=payload.response_field_map,
             )
+            return snapshot(session_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Session not found.") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/sessions/{session_id}/terminal/update", response_model=SessionSnapshot)
+    def update_trading_terminal(session_id: UUID, payload: TradingTerminalRunUpdateRequest) -> SessionSnapshot:
+        try:
+            resolved_service.update_trading_terminal_integration(
+                session_id=session_id,
+                run_id=payload.run_id,
+                interface_documentation=payload.interface_documentation,
+                api_key=payload.api_key,
+                terminal_name=payload.terminal_name,
+                terminal_type=payload.terminal_type,
+                official_docs_url=payload.official_docs_url,
+                docs_search_url=payload.docs_search_url,
+                api_base_url=payload.api_base_url,
+                api_key_envs=payload.api_key_envs,
+                auth_style=payload.auth_style,
+                order_endpoint=payload.order_endpoint,
+                cancel_endpoint=payload.cancel_endpoint,
+                order_status_endpoint=payload.order_status_endpoint,
+                positions_endpoint=payload.positions_endpoint,
+                balances_endpoint=payload.balances_endpoint,
+                trade_records_endpoint=payload.trade_records_endpoint,
+                docs_summary=payload.docs_summary,
+                user_notes=payload.user_notes,
+                response_field_map=payload.response_field_map,
+            )
+            return snapshot(session_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Session not found.") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/sessions/{session_id}/terminal/delete", response_model=SessionSnapshot)
+    def delete_trading_terminal(session_id: UUID, payload: TradingTerminalRunDeleteRequest) -> SessionSnapshot:
+        try:
+            resolved_service.delete_trading_terminal_integration(session_id=session_id, run_id=payload.run_id)
             return snapshot(session_id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="Session not found.") from exc

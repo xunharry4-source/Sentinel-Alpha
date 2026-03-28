@@ -36,6 +36,12 @@ class BehaviorEvent:
     current_drawdown_pct: float | None = None
     daily_trend_pct: float | None = None
     current_day_return_pct: float | None = None
+    chart_focus_seconds: float | None = None
+    loss_refresh_count: int | None = None
+    loss_refresh_drawdown_trigger_pct: float | None = None
+    manual_intervention_count: int | None = None
+    manual_intervention_rate: float | None = None
+    trust_decay_score: float | None = None
 
 
 @dataclass(slots=True)

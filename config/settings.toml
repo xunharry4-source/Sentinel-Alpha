@@ -9,7 +9,7 @@ cors_origins = ["http://127.0.0.1:8000", "http://localhost:8000", "http://127.0.
 
 [frontend]
 host = "127.0.0.1"
-port = 8000
+port = 8010
 
 [storage]
 postgres_dsn = "postgresql://localhost:5432/sentinel_alpha"
@@ -68,7 +68,7 @@ base_url = ""
 [market_data.providers.local_file]
 enabled = true
 api_key_envs = []
-base_path = "data/local_market_data"
+base_path = "data/local_market_data/market_data"
 quote_filename = "{symbol}_quote.json"
 history_filename = "{symbol}_{interval}.csv"
 
@@ -100,7 +100,7 @@ base_url = "https://finnhub.io/api/v1"
 [fundamentals.providers.local_file]
 enabled = true
 api_key_envs = []
-base_path = "data/local_market_data"
+base_path = "data/local_market_data/fundamentals"
 financials_filename = "{symbol}_financials.json"
 
 [dark_pool]
@@ -118,7 +118,7 @@ dataset = "otcmarket/weeklySummary"
 [dark_pool.providers.local_file]
 enabled = true
 api_key_envs = []
-base_path = "data/local_market_data"
+base_path = "data/local_market_data/dark_pool"
 dark_pool_filename = "{symbol}_dark_pool.json"
 
 [options_data]
@@ -140,7 +140,7 @@ base_url = "https://finnhub.io/api/v1"
 [options_data.providers.local_file]
 enabled = true
 api_key_envs = []
-base_path = "data/local_market_data"
+base_path = "data/local_market_data/options"
 options_filename = "{symbol}_options.json"
 
 [llm]
@@ -183,11 +183,23 @@ models = ["gemini-2.5-flash", "gemini-2.5-pro"]
 temperature = 0.1
 max_tokens = 1200
 
+[llm.agents.habit_goal_evolution_agent]
+provider = "google"
+models = ["gemini-2.5-pro", "gemini-2.5-flash"]
+temperature = 0.1
+max_tokens = 1600
+
 [llm.agents.intelligence_agent]
 provider = "google"
 models = ["gemini-2.5-flash", "gemini-2.5-pro"]
 temperature = 0.2
 max_tokens = 1200
+
+[llm.agents.intelligence_history_agent]
+provider = "google"
+models = ["gemini-2.5-pro", "gemini-2.5-flash"]
+temperature = 0.1
+max_tokens = 1400
 
 [llm.agents.strategy_evolver]
 provider = "google"
@@ -238,11 +250,29 @@ models = ["gemini-2.5-pro", "gemini-2.5-flash"]
 temperature = 0.1
 max_tokens = 2600
 
+[llm.tasks.habit_goal_evolution_analysis]
+provider = "google"
+models = ["gemini-2.5-pro", "gemini-2.5-flash"]
+temperature = 0.1
+max_tokens = 2200
+
 [llm.tasks.market_summarization]
 provider = "google"
 models = ["gemini-2.5-flash", "gemini-2.5-pro"]
 temperature = 0.2
 max_tokens = 1200
+
+[llm.tasks.intelligence_history_analysis]
+provider = "google"
+models = ["gemini-2.5-pro", "gemini-2.5-flash"]
+temperature = 0.1
+max_tokens = 1800
+
+[llm.tasks.data_source_doc_analysis]
+provider = "google"
+models = ["gemini-2.5-pro", "gemini-2.5-flash"]
+temperature = 0.0
+max_tokens = 2200
 
 [llm.tasks.strategy_analysis]
 provider = "google"

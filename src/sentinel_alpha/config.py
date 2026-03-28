@@ -119,6 +119,11 @@ def _config_path() -> Path:
     return _repo_root() / "config" / "settings.toml"
 
 
+def _config_backup_dir(path: Path | None = None) -> Path:
+    resolved = path or _config_path()
+    return resolved.parent / "backups"
+
+
 def _required(section: dict, key: str) -> object:
     if key not in section:
         raise KeyError(f"Missing required config key: {key}")
@@ -168,6 +173,18 @@ def read_config_payload(path: Path | None = None) -> dict:
         return tomllib.load(handle)
 
 
+def backup_config_file(path: Path | None = None) -> Path | None:
+    resolved = path or _config_path()
+    if not resolved.exists():
+        return None
+    backup_dir = _config_backup_dir(resolved)
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = Path(resolved).stat().st_mtime_ns
+    backup_path = backup_dir / f"{resolved.stem}.{timestamp}.bak{resolved.suffix}"
+    backup_path.write_text(resolved.read_text(encoding="utf-8"), encoding="utf-8")
+    return backup_path
+
+
 def write_config_payload(payload: dict, path: Path | None = None) -> Path:
     resolved = path or _config_path()
     lines: list[str] = []
@@ -180,6 +197,13 @@ def write_config_payload(payload: dict, path: Path | None = None) -> Path:
     resolved.write_text("\n".join(lines).strip() + "\n", encoding="utf-8")
     get_settings.cache_clear()
     return resolved
+
+
+def write_config_payload_with_backup(payload: dict, path: Path | None = None) -> tuple[Path, Path | None]:
+    resolved = path or _config_path()
+    backup_path = backup_config_file(resolved)
+    written_path = write_config_payload(payload, resolved)
+    return written_path, backup_path
 
 
 def _env_bool(name: str, default: bool) -> bool:

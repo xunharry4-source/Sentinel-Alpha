@@ -37,6 +37,25 @@ function intelligenceRunStamp(run) {
   return run?.timestamp || run?.generated_at || "unknown";
 }
 
+function summarizeIntelligenceRunForHistory(run) {
+  if (!run) return "无";
+  const report = run.report || {};
+  const translatedDocuments = report.translated_documents || run.documents || [];
+  const firstTranslated = translatedDocuments[0] || {};
+  const translatedTitle = firstTranslated.translated_title || firstTranslated.title || "无标题";
+  const translatedSummary = firstTranslated.brief_summary_cn || firstTranslated.translated_summary || firstTranslated.summary || "无摘要";
+  const localizedSummary = report.summary || "无中文总结";
+  return `${intelligenceRunStamp(run)} / ${run.query} / ${run.document_count} docs / 总结=${localizedSummary} / 首条=${translatedTitle} / 摘要=${translatedSummary}`;
+}
+
+function summarizeIntelligenceHistoryEvent(event) {
+  const payload = event?.payload || {};
+  const localizedSummary = payload.localized_summary || "无中文总结";
+  const translatedCount = payload.translated_document_count;
+  const translationStatus = payload.translation_status || "unknown";
+  return `${event.timestamp} / ${event.event_type} / ${event.summary} / 翻译=${translatedCount ?? 0} / status=${translationStatus} / 总结=${localizedSummary}`;
+}
+
 function summarizeFactors(factors) {
   if (!factors || typeof factors !== "object") return [];
   return Object.entries(factors).map(([key, value]) => `${key} / ${typeof value === "object" ? JSON.stringify(value) : value}`);
@@ -143,7 +162,12 @@ function renderIntelligencePage(snapshot) {
   renderShell("intelligence");
   renderList(
     "intelligence-list",
-    (snapshot?.intelligence_documents || []).map((item) => `${item.source} / ${item.title} / ${item.url}`),
+    (snapshot?.intelligence_documents || []).map((item) => {
+      const translatedTitle = item.translated_title || item.title || "untitled";
+      const translatedSummary = item.brief_summary_cn || item.translated_summary || item.summary || "无摘要";
+      const originalTitle = item.title && item.title !== translatedTitle ? ` / 原文=${item.title}` : "";
+      return `${item.source} / ${translatedTitle}${originalTitle} / ${translatedSummary} / ${item.url}`;
+    }),
     "当前还没有情报结果。"
   );
 
@@ -174,7 +198,7 @@ function renderIntelligencePage(snapshot) {
     (snapshot?.intelligence_runs || [])
       .slice()
       .reverse()
-      .map((item) => `${intelligenceRunStamp(item)} / ${item.query} / ${item.document_count} docs`),
+      .map((item) => summarizeIntelligenceRunForHistory(item)),
     "当前还没有查询历史。"
   );
   renderList(
@@ -215,7 +239,7 @@ function renderIntelligencePage(snapshot) {
       })
       .slice()
       .reverse()
-      .map((item) => `${item.timestamp} / ${item.event_type} / ${item.summary}`),
+      .map((item) => String(item.event_type || "").includes("intelligence_search_completed") ? summarizeIntelligenceHistoryEvent(item) : `${item.timestamp} / ${item.event_type} / ${item.summary}`),
     "当前还没有历史记录。"
   );
 

@@ -146,3 +146,49 @@ def test_task_profile_rejects_inline_api_keys_and_masks_them():
     assert provider_runtime["configured_api_key_envs"] == ["google#invalid_1", "google#invalid_2"]
     assert provider_runtime["available_api_key_envs"] == []
     assert provider_runtime["active_api_key_env"] is None
+
+
+def test_summarize_intelligence_returns_translated_documents(monkeypatch):
+    runtime = LLMRuntime(replace(get_settings(), llm_enabled=False, performance_enabled=False))
+
+    monkeypatch.setattr(
+        runtime,
+        "invoke_text_task",
+        lambda task, prompt_text, **kwargs: {
+            "text": json.dumps(
+                {
+                    "localized_summary": "英伟达需求维持强劲，市场情绪偏积极。",
+                    "translated_documents": [
+                        {
+                            "document_id": "doc-1",
+                            "translated_title": "英伟达需求依旧强劲",
+                            "translated_summary": "报道称 AI 服务器需求保持强劲，利润率稳定。",
+                            "brief_summary_cn": "AI 服务器需求强劲，利润率稳定。",
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            "profile": runtime.task_profile(task, fallback_agent="intelligence_agent"),
+            "invocation": {"actual_generation_mode": "template_fallback", "fallback_reason": None},
+        },
+    )
+
+    result = runtime.summarize_intelligence(
+        "NVDA AI demand",
+        [
+            {
+                "document_id": "doc-1",
+                "title": "NVDA demand stays strong",
+                "summary": "AI server demand remains strong.",
+                "content": "AI server demand remains strong and margins are holding.",
+                "url": "https://example.com/nvda",
+                "source": "example.com",
+                "sentiment_hint": 0.4,
+            }
+        ],
+    )
+
+    assert result["summary"] == "英伟达需求维持强劲，市场情绪偏积极。"
+    assert result["translated_documents"][0]["translated_title"] == "英伟达需求依旧强劲"
+    assert result["translated_documents"][0]["brief_summary_cn"] == "AI 服务器需求强劲，利润率稳定。"

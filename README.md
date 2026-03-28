@@ -168,14 +168,14 @@ That execution-quality summary is surfaced both in the behavioral report and in 
 
 ## Main Docs
 
-- technical guide: [github-technical-guide.md](/Users/harry/Documents/git/Sentinel-Alpha/docs/github-technical-guide.md)
-- architecture: [architecture.md](/Users/harry/Documents/git/Sentinel-Alpha/docs/architecture.md)
-- configuration: [configuration.md](/Users/harry/Documents/git/Sentinel-Alpha/docs/configuration.md)
-- completion roadmap: [completion-roadmap.md](/Users/harry/Documents/git/Sentinel-Alpha/docs/completion-roadmap.md)
-- Docker deployment: [docker-deployment.md](/Users/harry/Documents/git/Sentinel-Alpha/docs/docker-deployment.md)
-- API spec: [api-spec.md](/Users/harry/Documents/git/Sentinel-Alpha/docs/api-spec.md)
-- database spec: [database-spec.md](/Users/harry/Documents/git/Sentinel-Alpha/docs/database-spec.md)
-- workflow skill: [SKILL.md](/Users/harry/Documents/git/Sentinel-Alpha/skills/sentinel-alpha-workflow/SKILL.md)
+- technical guide: [github-technical-guide.md](docs/github-technical-guide.md)
+- architecture: [architecture.md](docs/architecture.md)
+- configuration: [configuration.md](docs/configuration.md)
+- completion roadmap: [completion-roadmap.md](docs/completion-roadmap.md)
+- Docker deployment: [docker-deployment.md](docs/docker-deployment.md)
+- API spec: [api-spec.md](docs/api-spec.md)
+- database spec: [database-spec.md](docs/database-spec.md)
+- workflow skill: [SKILL.md](skills/sentinel-alpha-workflow/SKILL.md)
 
 ## Run
 
@@ -188,28 +188,28 @@ Default development flow:
 Backend, in-memory:
 
 ```bash
-cd /Users/harry/Documents/git/Sentinel-Alpha
+cd Sentinel-Alpha
 PYTHONPATH=src uvicorn sentinel_alpha.api.app:app --host 127.0.0.1 --port 8001
 ```
 
 Backend, persistent:
 
 ```bash
-cd /Users/harry/Documents/git/Sentinel-Alpha
+cd Sentinel-Alpha
 PYTHONPATH=src uvicorn sentinel_alpha.api.persistent_app:app --host 127.0.0.1 --port 8001
 ```
 
 Frontend WebUI, NiceGUI:
 
 ```bash
-cd /Users/harry/Documents/git/Sentinel-Alpha
+cd Sentinel-Alpha
 PYTHONPATH=src python -m sentinel_alpha.nicegui.app
 ```
 
 Local hot-reload development, API + NiceGUI together:
 
 ```bash
-cd /Users/harry/Documents/git/Sentinel-Alpha
+cd Sentinel-Alpha
 ./scripts/dev_local.sh
 ```
 
@@ -222,19 +222,19 @@ Default local URLs:
 Legacy static frontend redirect shell, compatibility only:
 
 ```bash
-cd /Users/harry/Documents/git/Sentinel-Alpha
+cd Sentinel-Alpha
 PYTHONPATH=src python -m sentinel_alpha.webapp.server
 ```
 
 Dependency baseline:
 
 - Python: `3.11+` locally, `python:3.13-slim` in Docker
-- package constraints: [pyproject.toml](/Users/harry/Documents/git/Sentinel-Alpha/pyproject.toml)
+- package constraints: [pyproject.toml](pyproject.toml)
 
 Docker, memory mode:
 
 ```bash
-cd /Users/harry/Documents/git/Sentinel-Alpha
+cd Sentinel-Alpha
 docker compose --profile memory up --build
 ```
 
@@ -244,13 +244,13 @@ Docker is not the default development loop anymore. Use local API + local NiceGU
 Docker, persistent mode:
 
 ```bash
-cd /Users/harry/Documents/git/Sentinel-Alpha
+cd Sentinel-Alpha
 docker compose --profile persistent up --build
 ```
 
 Docker deployment details:
 
-- [docker-deployment.md](/Users/harry/Documents/git/Sentinel-Alpha/docs/docker-deployment.md)
+- [docker-deployment.md](docs/docker-deployment.md)
 
 Market data APIs:
 
@@ -271,22 +271,22 @@ Local file market-data defaults:
 
 This project is licensed under the Apache License 2.0.
 
-- [LICENSE](/Users/harry/Documents/git/Sentinel-Alpha/LICENSE)
+- [LICENSE](LICENSE)
 
 ## Frontend
 
 Canonical frontend module:
 
-- [nicegui](/Users/harry/Documents/git/Sentinel-Alpha/src/sentinel_alpha/nicegui)
-- [app.py](/Users/harry/Documents/git/Sentinel-Alpha/src/sentinel_alpha/nicegui/app.py)
-- [webapp](/Users/harry/Documents/git/Sentinel-Alpha/src/sentinel_alpha/webapp)
-- [index.html](/Users/harry/Documents/git/Sentinel-Alpha/src/sentinel_alpha/webapp/static/index.html)
+- [nicegui](src/sentinel_alpha/nicegui)
+- [app.py](src/sentinel_alpha/nicegui/app.py)
+- [webapp](src/sentinel_alpha/webapp)
+- [index.html](src/sentinel_alpha/webapp/static/index.html)
 
 Frontend entry rule:
 
 - NiceGUI is the only canonical user-facing WebUI.
 - Legacy static pages under `src/sentinel_alpha/webapp/static/pages/` are redirect shells only and must not be treated as active feature surfaces.
-- Any new user-facing page capability must land in [app.py](/Users/harry/Documents/git/Sentinel-Alpha/src/sentinel_alpha/nicegui/app.py), not as a new static HTML workflow.
+- Any new user-facing page capability must land in [app.py](src/sentinel_alpha/nicegui/app.py), not as a new static HTML workflow.
 
 ## LLM Routing
 
@@ -363,7 +363,7 @@ The remaining production-critical areas are:
 
 Canonical gap and completion tracking:
 
-- [completion-roadmap.md](/Users/harry/Documents/git/Sentinel-Alpha/docs/completion-roadmap.md)
+- [completion-roadmap.md](docs/completion-roadmap.md)
 
 Current API support:
 
@@ -452,7 +452,7 @@ The strategy frontend now exposes:
 ## Validation
 
 ```bash
-cd /Users/harry/Documents/git/Sentinel-Alpha
+cd Sentinel-Alpha
 PYTHONPATH=src python -m pytest tests/test_api_workflow.py tests/test_strategy_interface.py tests/test_pipeline.py tests/test_scenario_generator.py
 PYTHONDONTWRITEBYTECODE=1 python -m py_compile src/sentinel_alpha/**/*.py tests/*.py
 node --check src/sentinel_alpha/webapp/static/script.js

@@ -6,121 +6,112 @@ from sentinel_alpha.agents.trading_terminal_integration_agent import (
 )
 
 
-def test_trading_terminal_integration_agent_generates_valid_code_and_test() -> None:
+def test_trading_terminal_integration_agent_generates_package_from_minimal_input() -> None:
     agent = TradingTerminalIntegrationAgent()
-    agent._fetch_text = lambda url: {"ok": True, "error": None, "content": "place order cancel order positions api"}  # type: ignore[method-assign]
     result = agent.build_terminal_package(
         TradingTerminalIntegrationRequest(
-            terminal_name="Example Broker",
-            terminal_type="broker_api",
-            official_docs_url="https://example.com/docs",
-            docs_search_url="https://example.com/search?q=orders",
-            api_base_url="https://api.example.com",
-            api_key_envs=["EXAMPLE_BROKER_KEY"],
-            auth_style="bearer",
-            order_endpoint="orders/place",
-            cancel_endpoint="orders/cancel",
-            order_status_endpoint="orders/status",
-            positions_endpoint="portfolio/positions",
-            balances_endpoint="account/balances",
-            docs_summary="REST trading API with limit-order support.",
-            user_notes="Need place, cancel, positions.",
-            response_field_map={"positions_root": "holdings", "balances_root": "account_info"},
+            interface_documentation=(
+                "https://broker.example/docs\n"
+                "Base URL: https://api.broker.example\n"
+                "Authentication: Bearer token\n"
+                "POST /orders place order\n"
+                "GET /orders/{id} query order status\n"
+                "GET /positions account positions\n"
+                "GET /balances account balances\n"
+                "GET /fills trade records\n"
+            ),
+            api_key="secret-key",
         )
     )
 
-    assert result["terminal_slug"] == "example_broker"
+    assert result["terminal_slug"] == "broker"
     assert result["validation"]["module_syntax_ok"] is True
     assert result["validation"]["test_syntax_ok"] is True
-    assert result["validation"]["docs_fetch_ok"] is True
-    assert result["integration_readiness_summary"]["status"] in {"ready", "caution", "blocked"}
-    assert result["integration_readiness_summary"]["endpoint_count"] == 5
-    assert result["config_candidate"]["provider_config"]["response_field_map"]["positions_root"] == "holdings"
-    assert result["config_candidate"]["provider_config"]["response_field_map"]["balances_root"] == "account_info"
-    assert "class ExampleBrokerTerminalAdapter" in result["generated_module_code"]
-    assert "def place_order" in result["generated_module_code"]
-    assert result["target_module"].startswith("src/sentinel_alpha/infra/generated_terminals/")
+    assert result["validation"]["module_smoke_ok"] is True
+    assert result["integration_readiness_summary"]["automatic_trading_ready"] is True
+    assert result["integration_readiness_summary"]["missing_required_capabilities"] == []
+    assert "trade_records" not in result["integration_readiness_summary"]["missing_optional_capabilities"]
+    assert result["exchange_support_summary"]["scope"] == "single_exchange"
+    assert result["exchange_support_summary"]["multi_exchange_ready"] is False
+    assert result["config_candidate"]["provider_config"]["capabilities"]["place_order"]["endpoint"] == "orders"
+    assert result["config_candidate"]["provider_config"]["capabilities"]["trade_records"]["endpoint"] == "fills"
+    assert "def fetch_trade_records" in result["generated_module_code"]
 
 
-def test_trading_terminal_integration_agent_preserves_docs_context_in_package() -> None:
+def test_trading_terminal_integration_agent_blocks_auto_trading_when_required_capabilities_are_missing() -> None:
     agent = TradingTerminalIntegrationAgent()
-    agent._fetch_text = lambda url: {"ok": True, "error": None, "content": f"doc for {url} order cancel position auth"}  # type: ignore[method-assign]
     result = agent.build_terminal_package(
         TradingTerminalIntegrationRequest(
-            terminal_name="Fix Bridge",
-            terminal_type="fix_gateway",
-            official_docs_url="https://broker.example/docs",
-            docs_search_url="https://broker.example/search?q=fix+order",
-            api_base_url="https://gateway.example",
-            api_key_envs=[],
-            auth_style="header",
-            order_endpoint="fix/order",
-            cancel_endpoint="fix/cancel",
-            order_status_endpoint="fix/order-status",
-            positions_endpoint="fix/positions",
-            balances_endpoint="fix/balances",
-            docs_summary="FIX gateway wrapper.",
-            user_notes=None,
+            interface_documentation=(
+                "https://broker.example/docs\n"
+                "Base URL: https://api.broker.example\n"
+                "Authentication: Header X-API-Key\n"
+                "POST /orders place order\n"
+                "GET /positions account positions\n"
+            ),
+            api_key="secret-key",
         )
     )
 
-    assert result["docs_context"]["docs_fetch_ok"] is True
-    assert "broker.example/docs" in result["docs_context"]["docs_excerpt"]
-    assert result["config_candidate"]["terminal_name"] == "fix_bridge"
-    assert result["integration_readiness_summary"]["status"] in {"ready", "caution"}
-    assert result["config_candidate"]["provider_config"]["response_field_map"]["positions_root"] == "positions"
-    assert result["config_candidate"]["provider_config"]["response_field_map"]["order_status_state"] == "status"
+    readiness = result["integration_readiness_summary"]
+    assert readiness["automatic_trading_ready"] is False
+    assert "order_status" in readiness["missing_required_capabilities"]
+    assert "balances" in readiness["missing_required_capabilities"]
+    assert readiness["status"] == "blocked"
 
 
-def test_trading_terminal_integration_agent_runs_smoke_test() -> None:
+def test_trading_terminal_integration_agent_warns_for_optional_capabilities() -> None:
+    agent = TradingTerminalIntegrationAgent()
+    result = agent.build_terminal_package(
+        TradingTerminalIntegrationRequest(
+            interface_documentation=(
+                "https://broker.example/docs\n"
+                "Base URL: https://api.broker.example\n"
+                "Authentication: Bearer token\n"
+                "POST /orders place order\n"
+                "GET /orders/{id} query order status\n"
+                "GET /positions account positions\n"
+                "GET /balances account balances\n"
+            ),
+            api_key="secret-key",
+        )
+    )
+
+    readiness = result["integration_readiness_summary"]
+    assert readiness["automatic_trading_ready"] is True
+    assert "trade_records" in readiness["missing_optional_capabilities"]
+    assert readiness["status"] == "caution"
+
+
+def test_trading_terminal_integration_agent_runs_smoke_test_with_capability_classification() -> None:
     agent = TradingTerminalIntegrationAgent()
     package = agent.build_terminal_package(
         TradingTerminalIntegrationRequest(
-            terminal_name="Smoke Broker",
-            terminal_type="broker_api",
-            official_docs_url="https://example.com/docs",
-            docs_search_url=None,
-            api_base_url="https://api.example.com",
-            api_key_envs=["SMOKE_KEY"],
-            auth_style="header",
-            order_endpoint="orders/place",
-            cancel_endpoint="orders/cancel",
-            order_status_endpoint="orders/status",
-            positions_endpoint="portfolio/positions",
-            balances_endpoint="account/balances",
-            docs_summary="REST trading API.",
-            user_notes=None,
+            interface_documentation=(
+                "https://broker.example/docs\n"
+                "Base URL: https://api.broker.example\n"
+                "Authentication: Bearer token\n"
+                "POST /orders place order\n"
+                "POST /orders/cancel cancel order\n"
+                "GET /orders/{id} query order status\n"
+                "GET /positions account positions\n"
+                "GET /balances account balances\n"
+                "GET /fills trade records\n"
+            ),
+            api_key="secret-key",
             response_field_map={
-                "positions_root": "holdings",
-                "position_symbol": "ticker",
-                "position_quantity": "shares",
-                "balances_root": "account_info",
-                "balance_cash": "cash_balance",
-                "balance_buying_power": "bp",
-                "order_status_root": "status_payload",
-                "order_status_id": "id",
-                "order_status_state": "state",
+                "positions_root": "positions",
+                "balances_root": "balances",
+                "order_status_root": "order",
+                "trade_records_root": "records",
             },
         )
     )
+
     result = agent.run_smoke_test(package)
-    assert result["status"] in {"ok", "warning"}
-    assert len(result["checks"]) == 9
-    assert any(item["name"] == "ping" for item in result["checks"])
-    assert any(item["name"] == "order_contract" for item in result["checks"])
-    assert any(item["name"] == "order_status_contract" for item in result["checks"])
-    assert any(item["name"] == "balances_contract" for item in result["checks"])
-    assert any(item["name"] == "positions_shape" for item in result["checks"])
-    assert any(item["name"] == "balances_shape" for item in result["checks"])
-    assert any(item["name"] == "order_status_shape" for item in result["checks"])
-    assert all(item["status"] == "pass" for item in result["checks"] if item["name"] in {"positions_shape", "balances_shape", "order_status_shape"})
-    assert len(result["calls"]) == 5
-    assert result["repair_summary"]["status"] in {"clear", "needs_repair"}
-    assert "primary_route" in result["repair_summary"]
-
-
-def test_trading_terminal_integration_agent_shape_checks_fail_on_invalid_types() -> None:
-    agent = TradingTerminalIntegrationAgent()
-    assert agent._is_valid_positions_shape([{"ticker": "AAPL", "shares": "100"}], "ticker", "shares") is False
-    assert agent._is_valid_balances_shape({"cash_balance": "100000", "bp": 180000.0}, "cash_balance", "bp") is False
-    assert agent._is_valid_order_status_shape({"id": "ORD-1", "state": 1}, "id", "state", "ORD-1") is False
+    assert result["status"] == "ok"
+    assert any(item["name"] == "place_order_capability" and item["status"] == "pass" for item in result["checks"])
+    assert any(item["name"] == "trade_records_capability" and item["status"] == "pass" for item in result["checks"])
+    assert any(item["name"] == "trade_records_shape" and item["status"] == "pass" for item in result["checks"])
+    assert len(result["calls"]) >= 5
+    assert result["repair_summary"]["status"] == "clear"

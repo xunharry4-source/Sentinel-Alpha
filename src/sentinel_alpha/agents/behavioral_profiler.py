@@ -20,6 +20,9 @@ class BehavioralProfilerAgent:
         rejected_or_unfilled = [e for e in events if e.execution_status in {"rejected", "unfilled"}]
         fast_events = [e for e in events if e.latency_seconds < 45]
         slow_events = [e for e in events if e.latency_seconds > 240]
+        hesitant_focus_events = [e for e in events if (e.chart_focus_seconds or 0.0) >= 180]
+        anxious_refresh_events = [e for e in events if (e.loss_refresh_count or 0) >= 3]
+        trust_decay_events = [e for e in events if (e.trust_decay_score or 0.0) >= 0.45]
         late_drawdown_events = [e for e in events if (e.intraday_progress_pct or 0.0) >= 60 and (e.current_drawdown_pct or e.price_drawdown_pct) <= -3]
         opening_impulse_events = [e for e in events if (e.intraday_progress_pct or 0.0) <= 15 and e.action in {"buy", "sell"}]
         downtrend_buy_events = [e for e in buy_events if (e.daily_trend_pct or 0.0) < -2.0]
@@ -79,6 +82,12 @@ class BehavioralProfilerAgent:
             notes.append("User reacts quickly and may be prone to impulse execution.")
         if slow_events and len(slow_events) / max(1, len(events)) > 0.35:
             notes.append("User often delays decisions and may hesitate before acting.")
+        if hesitant_focus_events and len(hesitant_focus_events) / max(1, len(events)) > 0.35:
+            notes.append("User spends a long time watching the chart before acting, which suggests hesitation under uncertainty.")
+        if anxious_refresh_events and len(anxious_refresh_events) / max(1, len(events)) > 0.25:
+            notes.append("User starts probing the market repeatedly once drawdown deepens, suggesting anxiety-driven refresh behavior.")
+        if trust_decay_events and len(trust_decay_events) / max(1, len(events)) > 0.2:
+            notes.append("User frequently overrides automated execution, indicating trust decay toward automation.")
         if opening_impulse_events and len(opening_impulse_events) / max(1, len(events)) > 0.3:
             notes.append("User often trades very early in the simulated session before price structure settles.")
         if late_drawdown_events and len(late_drawdown_events) / max(1, len(events)) > 0.3:

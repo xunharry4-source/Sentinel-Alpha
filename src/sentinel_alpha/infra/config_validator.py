@@ -246,6 +246,16 @@ class ConfigValidator:
                     }
                 )
                 continue
+            if provider == "akshare":
+                checks.append(
+                    {
+                        "name": f"{family}.{provider}",
+                        "status": "ok",
+                        "detail": "akshare uses local package access and does not require a base_url.",
+                        "recommendation": "Install akshare locally if you intend to use this provider.",
+                    }
+                )
+                continue
             checks.append(self._url_check(f"{family}.{provider}", base_url, f"{provider} base_url is invalid or empty."))
         return checks
 

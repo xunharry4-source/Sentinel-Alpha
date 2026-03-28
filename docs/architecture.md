@@ -4,7 +4,7 @@
 
 This architecture and the repository implementation are distributed under the Apache License 2.0.
 
-- [LICENSE](/Users/harry/Documents/git/Sentinel-Alpha/LICENSE)
+- [LICENSE](../LICENSE)
 
 ## Design Principle
 
@@ -245,7 +245,7 @@ The behavioral capture layer should store action context, not only orders:
 - floating PnL at action
 - control or pressure cohort label
 
-See [behavioral_log.sql](/Users/harry/Documents/git/Sentinel-Alpha/sql/behavioral_log.sql) and [scenario_generator.py](/Users/harry/Documents/git/Sentinel-Alpha/src/sentinel_alpha/research/scenario_generator.py).
+See [behavioral_log.sql](../sql/behavioral_log.sql) and [scenario_generator.py](../src/sentinel_alpha/research/scenario_generator.py).
 
 ## Fake Reversal Collaboration Logic
 

@@ -1,5 +1,11 @@
 # Sentinel-Alpha API Spec
 
+## Default Local Access
+
+- NiceGUI: `http://127.0.0.1:8010`
+- API: `http://127.0.0.1:8001`
+- API health: `http://127.0.0.1:8001/api/health`
+
 ## Product Flow APIs
 
 ### `POST /api/sessions`
@@ -68,8 +74,11 @@ The response includes structured intelligence documents attached to the session.
 It also archives:
 
 - summarized intelligence report
+- translated and localized intelligence documents preserved in current snapshot, run history, event history, and report history
 - source URLs
 - intelligence run history
+- historical intelligence behavior analysis, including whether searches are frequent, repeated, bursty, repeatedly centered on the same topic, or repeatedly re-checked within a short time window
+- simulation-training guidance derived from intelligence history, used to recommend initial simulation or retraining when behavior drifts or topic-level confirmation bias increases
 
 ### `POST /api/sessions/{session_id}/programmer/execute`
 

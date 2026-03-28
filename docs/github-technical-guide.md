@@ -22,7 +22,7 @@ Canonical logo asset:
 
 This repository is licensed under the Apache License 2.0.
 
-- [LICENSE](/Users/harry/Documents/git/Sentinel-Alpha/LICENSE)
+- [LICENSE](../LICENSE)
 
 ## Core Product Flow
 
@@ -153,7 +153,7 @@ Documentation rule:
 Use this for local UI and workflow development:
 
 ```bash
-cd /Users/harry/Documents/git/Sentinel-Alpha
+cd Sentinel-Alpha
 PYTHONPATH=src uvicorn sentinel_alpha.api.app:app --host 127.0.0.1 --port 8001
 ```
 
@@ -162,7 +162,7 @@ PYTHONPATH=src uvicorn sentinel_alpha.api.app:app --host 127.0.0.1 --port 8001
 Use this when PostgreSQL, TimescaleDB, Redis, and Qdrant are available:
 
 ```bash
-cd /Users/harry/Documents/git/Sentinel-Alpha
+cd Sentinel-Alpha
 PYTHONPATH=src uvicorn sentinel_alpha.api.persistent_app:app --host 127.0.0.1 --port 8001
 ```
 
@@ -171,7 +171,7 @@ PYTHONPATH=src uvicorn sentinel_alpha.api.persistent_app:app --host 127.0.0.1 --
 Serve the canonical frontend from NiceGUI:
 
 ```bash
-cd /Users/harry/Documents/git/Sentinel-Alpha
+cd Sentinel-Alpha
 PYTHONPATH=src python -m sentinel_alpha.nicegui.app
 ```
 
@@ -180,7 +180,7 @@ PYTHONPATH=src python -m sentinel_alpha.nicegui.app
 Use local API plus local NiceGUI as the default development path:
 
 ```bash
-cd /Users/harry/Documents/git/Sentinel-Alpha
+cd Sentinel-Alpha
 ./scripts/dev_local.sh
 ```
 
@@ -189,7 +189,7 @@ This is the preferred edit-run-debug loop. Docker should be reserved for later i
 The legacy static frontend module remains only as a redirect shell:
 
 ```bash
-cd /Users/harry/Documents/git/Sentinel-Alpha
+cd Sentinel-Alpha
 PYTHONPATH=src python -m sentinel_alpha.webapp.server
 ```
 
@@ -200,18 +200,18 @@ Use Docker Compose when you want a packaged runtime for the web module and API.
 Memory mode:
 
 ```bash
-cd /Users/harry/Documents/git/Sentinel-Alpha
+cd Sentinel-Alpha
 docker compose --profile memory up --build
 ```
 
 Persistent mode:
 
 ```bash
-cd /Users/harry/Documents/git/Sentinel-Alpha
+cd Sentinel-Alpha
 docker compose --profile persistent up --build
 ```
 
-Detailed container notes are documented in [docker-deployment.md](/Users/harry/Documents/git/Sentinel-Alpha/docs/docker-deployment.md).
+Detailed container notes are documented in [docker-deployment.md](docker-deployment.md).
 
 ## Configuration
 
@@ -241,11 +241,11 @@ These files define:
 - LangFuse settings
 - Grafana URL
 
-Detailed configuration rules are documented in [configuration.md](/Users/harry/Documents/git/Sentinel-Alpha/docs/configuration.md).
+Detailed configuration rules are documented in [configuration.md](configuration.md).
 
 ## Dependency Baseline
 
-The current dependency floor is tracked in [pyproject.toml](/Users/harry/Documents/git/Sentinel-Alpha/pyproject.toml).
+The current dependency floor is tracked in [pyproject.toml](../pyproject.toml).
 
 Docker images use `python:3.13-slim`. The package baseline has been updated to the latest stable versions verified from PyPI on March 21, 2026.
 
@@ -396,7 +396,7 @@ The current implementation does not allow arbitrary repo-wide mutation. It is co
 
 The canonical skill is:
 
-- [programmer-agent SKILL](/Users/harry/Documents/git/Sentinel-Alpha/skills/programmer-agent/SKILL.md)
+- [programmer-agent SKILL](../skills/programmer-agent/SKILL.md)
 
 ## Observability and Diagnostics
 
@@ -479,7 +479,7 @@ Not fully complete yet:
 Core local checks:
 
 ```bash
-cd /Users/harry/Documents/git/Sentinel-Alpha
+cd Sentinel-Alpha
 PYTHONPATH=src python -m pytest tests/test_api_workflow.py tests/test_strategy_interface.py tests/test_pipeline.py tests/test_scenario_generator.py
 PYTHONDONTWRITEBYTECODE=1 python -m py_compile src/sentinel_alpha/**/*.py tests/*.py
 node --check src/sentinel_alpha/webapp/static/script.js

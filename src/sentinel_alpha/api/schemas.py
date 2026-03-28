@@ -20,12 +20,22 @@ class BehaviorEventIn(BaseModel):
     noise_level: float | None = None
     sentiment_pressure: float | None = None
     latency_seconds: float | None = None
+    chart_focus_seconds: float | None = None
+    loss_refresh_count: int | None = Field(default=None, ge=0)
+    loss_refresh_drawdown_trigger_pct: float | None = None
+    manual_intervention_count: int | None = Field(default=None, ge=0)
+    manual_intervention_rate: float | None = Field(default=None, ge=0, le=1)
+    trust_decay_score: float | None = Field(default=None, ge=0, le=1)
     execution_status: Literal["filled", "partial_fill", "unfilled", "rejected", "hold"] | None = None
     execution_reason: str | None = None
 
 
 class CompleteSimulationRequest(BaseModel):
     symbol: str = "SIM"
+
+
+class SimulationRetrainRequest(BaseModel):
+    symbol: str | None = None
 
 
 class SimulationMarketInitializeRequest(BaseModel):
@@ -55,6 +65,8 @@ class TradingPreferenceRequest(BaseModel):
 class StrategyIterationRequest(BaseModel):
     feedback: str | None = None
     strategy_type: str = "rule_based_aligned"
+    strategy_method: str | None = None
+    strategy_description: str | None = None
     auto_iterations: int = Field(default=1, ge=1, le=10)
     iteration_mode: Literal["guided", "free"] = "guided"
     objective_metric: Literal["return", "win_rate", "drawdown", "max_loss"] = "return"
@@ -62,8 +74,14 @@ class StrategyIterationRequest(BaseModel):
     target_win_rate_pct: float | None = None
     target_drawdown_pct: float | None = None
     target_max_loss_pct: float | None = None
+    max_trade_allocation_pct: float | None = Field(default=None, gt=0, le=100)
+    max_trade_amount: float | None = Field(default=None, gt=0)
     training_start_date: date | None = None
     training_end_date: date | None = None
+
+
+class StrategyActiveSelectionRequest(BaseModel):
+    strategy_ref: str
 
 
 class MarketSnapshotIn(BaseModel):
@@ -155,22 +173,91 @@ class DataSourceTestRequest(BaseModel):
     api_key: str | None = None
 
 
-class TradingTerminalIntegrationRequestIn(BaseModel):
-    terminal_name: str
-    terminal_type: Literal["broker_api", "desktop_terminal", "rest_gateway", "fix_gateway", "local_sdk"] = "broker_api"
-    official_docs_url: str
-    docs_search_url: str | None = None
-    api_base_url: str
+class DataSourceRunUpdateRequest(BaseModel):
+    run_id: str
+    interface_documentation: str
+    api_key: str | None = None
+    provider_name: str | None = None
+    category: Literal["market_data", "fundamentals", "dark_pool", "options"] | None = None
+    base_url: str | None = None
     api_key_envs: list[str] = Field(default_factory=list)
-    auth_style: Literal["header", "query", "bearer"] = "header"
-    order_endpoint: str
-    cancel_endpoint: str
-    order_status_endpoint: str
-    positions_endpoint: str
-    balances_endpoint: str
-    docs_summary: str
+    docs_summary: str | None = None
+    docs_url: str | None = None
+    sample_endpoint: str | None = None
+    auth_style: Literal["header", "query", "bearer"] | None = None
+    response_format: Literal["json", "csv", "xml"] | None = None
+
+
+class DataSourceRunDeleteRequest(BaseModel):
+    run_id: str
+
+
+class DataSourceProviderUpdateRequest(BaseModel):
+    family: Literal["market_data", "fundamentals", "dark_pool", "options_data"]
+    provider: str
+    enabled: bool = True
+    set_as_default: bool = False
+    base_url: str | None = None
+    base_path: str | None = None
+    api_key_envs: list[str] = Field(default_factory=list)
+    docs_url: str | None = None
+    quote_filename: str | None = None
+    history_filename: str | None = None
+    financials_filename: str | None = None
+    dark_pool_filename: str | None = None
+    options_filename: str | None = None
+
+
+class DataSourceProviderDeleteRequest(BaseModel):
+    family: Literal["market_data", "fundamentals", "dark_pool", "options_data"]
+    provider: str
+
+
+class TradingTerminalIntegrationRequestIn(BaseModel):
+    interface_documentation: str
+    api_key: str | None = None
+    terminal_name: str | None = None
+    terminal_type: Literal["broker_api", "desktop_terminal", "rest_gateway", "fix_gateway", "local_sdk"] | None = None
+    official_docs_url: str | None = None
+    docs_search_url: str | None = None
+    api_base_url: str | None = None
+    api_key_envs: list[str] = Field(default_factory=list)
+    auth_style: Literal["header", "query", "bearer"] | None = None
+    order_endpoint: str | None = None
+    cancel_endpoint: str | None = None
+    order_status_endpoint: str | None = None
+    positions_endpoint: str | None = None
+    balances_endpoint: str | None = None
+    trade_records_endpoint: str | None = None
+    docs_summary: str | None = None
     user_notes: str | None = None
     response_field_map: dict[str, str] | None = None
+
+
+class TradingTerminalRunUpdateRequest(BaseModel):
+    run_id: str
+    interface_documentation: str
+    api_key: str | None = None
+    terminal_name: str | None = None
+    terminal_type: Literal["broker_api", "desktop_terminal", "rest_gateway", "fix_gateway", "local_sdk"] | None = None
+    official_docs_url: str | None = None
+    docs_search_url: str | None = None
+    api_base_url: str | None = None
+    api_key_envs: list[str] = Field(default_factory=list)
+    auth_style: Literal["header", "query", "bearer"] | None = None
+    order_endpoint: str | None = None
+    cancel_endpoint: str | None = None
+    order_status_endpoint: str | None = None
+    positions_endpoint: str | None = None
+    balances_endpoint: str | None = None
+    trade_records_endpoint: str | None = None
+    docs_summary: str | None = None
+    user_notes: str | None = None
+    response_field_map: dict[str, str] | None = None
+
+
+class TradingTerminalRunDeleteRequest(BaseModel):
+    run_id: str
 
 
 class TradingTerminalApplyRequest(BaseModel):
@@ -225,9 +312,14 @@ class SessionSnapshot(BaseModel):
     trading_preferences: dict | None
     trade_universe: dict | None
     strategy_package: dict | None
+    active_trading_strategy: dict | None = None
+    strategy_status_summary: dict | None = None
     strategy_checks: list[StrategyCheckResult]
     execution_mode: str | None
     profile_evolution: dict | None
+    habit_goal_evolution: dict | None = None
+    intelligence_history_analysis: dict | None = None
+    simulation_training_state: dict | None = None
     market_snapshots: list[dict]
     trade_records: list[dict]
     strategy_feedback_log: list[dict]
@@ -238,6 +330,7 @@ class SessionSnapshot(BaseModel):
     history_events: list[dict]
     report_history: list[dict]
     intelligence_runs: list[dict]
+    agent_activity: list[dict] = Field(default_factory=list)
     programmer_runs: list[dict]
     data_source_runs: list[dict]
     terminal_integration_runs: list[dict]

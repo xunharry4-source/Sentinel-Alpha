@@ -6,11 +6,11 @@ The Docker images use `python:3.13-slim` so the container runtime stays close to
 
 ## Files
 
-- compose file: [docker-compose.yml](/Users/harry/Documents/git/Sentinel-Alpha/docker-compose.yml)
-- API image: [Dockerfile.api](/Users/harry/Documents/git/Sentinel-Alpha/Dockerfile.api)
-- web image: [Dockerfile.web](/Users/harry/Documents/git/Sentinel-Alpha/Dockerfile.web)
-- Timescale init SQL: [001_extensions.sql](/Users/harry/Documents/git/Sentinel-Alpha/docker/timescaledb/init/001_extensions.sql)
-- schema SQL: [product_schema.sql](/Users/harry/Documents/git/Sentinel-Alpha/sql/product_schema.sql)
+- compose file: [docker-compose.yml](../docker-compose.yml)
+- API image: [Dockerfile.api](../Dockerfile.api)
+- web image: [Dockerfile.web](../Dockerfile.web)
+- Timescale init SQL: [001_extensions.sql](../docker/timescaledb/init/001_extensions.sql)
+- schema SQL: [product_schema.sql](../sql/product_schema.sql)
 
 ## Deployment Modes
 
@@ -19,7 +19,7 @@ The Docker images use `python:3.13-slim` so the container runtime stays close to
 Use this when you want the frontend plus the in-memory FastAPI workflow service.
 
 ```bash
-cd /Users/harry/Documents/git/Sentinel-Alpha
+cd Sentinel-Alpha
 docker compose --profile memory up --build
 ```
 
@@ -33,7 +33,7 @@ Exposed services:
 Use this when you want the persistent workflow service plus TimescaleDB, Redis, and Qdrant.
 
 ```bash
-cd /Users/harry/Documents/git/Sentinel-Alpha
+cd Sentinel-Alpha
 docker compose --profile persistent up --build
 ```
 
@@ -58,7 +58,7 @@ Exposed services:
 Use this when you want Prometheus, Grafana, and LangFuse alongside the application stack.
 
 ```bash
-cd /Users/harry/Documents/git/Sentinel-Alpha
+cd Sentinel-Alpha
 docker compose --profile observability up --build
 ```
 
@@ -87,16 +87,16 @@ The persistent profile mounts schema SQL into `docker-entrypoint-initdb.d` and i
 
 Mounted init files:
 
-- [001_extensions.sql](/Users/harry/Documents/git/Sentinel-Alpha/docker/timescaledb/init/001_extensions.sql)
-- [product_schema.sql](/Users/harry/Documents/git/Sentinel-Alpha/sql/product_schema.sql)
-- [behavioral_log.sql](/Users/harry/Documents/git/Sentinel-Alpha/sql/behavioral_log.sql)
+- [001_extensions.sql](../docker/timescaledb/init/001_extensions.sql)
+- [product_schema.sql](../sql/product_schema.sql)
+- [behavioral_log.sql](../sql/behavioral_log.sql)
 
 ## Runtime Configuration
 
 Container runtime still follows the same config rules:
 
-- base config file: [settings.toml](/Users/harry/Documents/git/Sentinel-Alpha/config/settings.toml)
-- frontend config file: [config.json](/Users/harry/Documents/git/Sentinel-Alpha/src/sentinel_alpha/webapp/static/config.json)
+- base config file: [settings.toml](../config/settings.toml)
+- frontend config file: [config.json](../src/sentinel_alpha/webapp/static/config.json)
 
 Docker overrides only the deployment-sensitive values through environment variables:
 
@@ -134,7 +134,7 @@ The project dependency floor has been updated to the latest stable versions veri
 - `sentry-sdk[fastapi]>=2.39.1`
 - `langfuse>=3.4.2`
 
-These package constraints live in [pyproject.toml](/Users/harry/Documents/git/Sentinel-Alpha/pyproject.toml).
+These package constraints live in [pyproject.toml](../pyproject.toml).
 
 ## Notes
 
@@ -146,13 +146,13 @@ These package constraints live in [pyproject.toml](/Users/harry/Documents/git/Se
 ## Stop
 
 ```bash
-cd /Users/harry/Documents/git/Sentinel-Alpha
+cd Sentinel-Alpha
 docker compose down
 ```
 
 To remove persistent volumes as well:
 
 ```bash
-cd /Users/harry/Documents/git/Sentinel-Alpha
+cd Sentinel-Alpha
 docker compose down -v
 ```

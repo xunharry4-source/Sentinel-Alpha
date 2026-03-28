@@ -203,6 +203,8 @@ class LLMRuntime:
     def usage_snapshot(self) -> dict:
         totals = list(self.usage_totals.values())
         recent_calls = self.recent_calls[-20:]
+        by_agent: dict[str, dict[str, object]] = {}
+        by_model: dict[str, dict[str, object]] = {}
         api_request_count = sum(int(item.get("calls", 0)) for item in totals)
         cache_hits = sum(int(item.get("cache_hits", 0)) for item in totals)
         rotated_credential_count = sum(int(item.get("rotated_credentials", 0)) for item in totals)
@@ -211,6 +213,115 @@ class LLMRuntime:
         recent_live_count = sum(1 for item in recent_calls if item.get("generation_mode") == "live_llm")
         recent_fallback_count = sum(1 for item in recent_calls if item.get("generation_mode") != "live_llm")
         active_api_key_envs = sorted({str(item.get("active_api_key_env")) for item in totals if item.get("active_api_key_env")})
+        for item in totals:
+            owner_agent = str(item.get("owner_agent") or item.get("task") or "unknown")
+            agent_bucket = by_agent.setdefault(
+                owner_agent,
+                {
+                    "agent": owner_agent,
+                    "calls": 0,
+                    "cache_hits": 0,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "live_calls": 0,
+                    "fallback_calls": 0,
+                    "tasks": set(),
+                    "models": set(),
+                    "fallback_reasons": {},
+                },
+            )
+            calls = int(item.get("calls", 0))
+            cache_hit_count = int(item.get("cache_hits", 0))
+            input_tokens = int(item.get("input_tokens", 0))
+            output_tokens = int(item.get("output_tokens", 0))
+            agent_bucket["calls"] = int(agent_bucket["calls"]) + calls
+            agent_bucket["cache_hits"] = int(agent_bucket["cache_hits"]) + cache_hit_count
+            agent_bucket["input_tokens"] = int(agent_bucket["input_tokens"]) + input_tokens
+            agent_bucket["output_tokens"] = int(agent_bucket["output_tokens"]) + output_tokens
+            if item.get("generation_mode") == "live_llm":
+                agent_bucket["live_calls"] = int(agent_bucket["live_calls"]) + calls
+            else:
+                agent_bucket["fallback_calls"] = int(agent_bucket["fallback_calls"]) + calls
+            agent_bucket["tasks"].add(str(item.get("task") or "unknown"))
+            agent_bucket["models"].add(f"{item.get('provider')}/{item.get('model')}")
+
+            model_key = f"{item.get('provider')}/{item.get('model')}"
+            model_bucket = by_model.setdefault(
+                model_key,
+                {"model": model_key, "calls": 0, "input_tokens": 0, "output_tokens": 0, "owner_agents": set()},
+            )
+            model_bucket["calls"] = int(model_bucket["calls"]) + calls
+            model_bucket["input_tokens"] = int(model_bucket["input_tokens"]) + input_tokens
+            model_bucket["output_tokens"] = int(model_bucket["output_tokens"]) + output_tokens
+            model_bucket["owner_agents"].add(owner_agent)
+
+        for item in recent_calls:
+            owner_agent = str(item.get("owner_agent") or item.get("task") or "unknown")
+            agent_bucket = by_agent.setdefault(
+                owner_agent,
+                {
+                    "agent": owner_agent,
+                    "calls": 0,
+                    "cache_hits": 0,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "live_calls": 0,
+                    "fallback_calls": 0,
+                    "tasks": set(),
+                    "models": set(),
+                    "fallback_reasons": {},
+                },
+            )
+            fallback_reason = str(item.get("fallback_reason") or "").strip()
+            if fallback_reason:
+                reasons = agent_bucket["fallback_reasons"]
+                reasons[fallback_reason] = int(reasons.get(fallback_reason, 0)) + 1
+
+        agent_summaries: dict[str, dict[str, object]] = {}
+        for agent, item in by_agent.items():
+            calls = int(item.get("calls", 0))
+            fallback_calls = int(item.get("fallback_calls", 0))
+            agent_summaries[agent] = {
+                "agent": agent,
+                "calls": calls,
+                "cache_hits": int(item.get("cache_hits", 0)),
+                "input_tokens": int(item.get("input_tokens", 0)),
+                "output_tokens": int(item.get("output_tokens", 0)),
+                "total_tokens": int(item.get("input_tokens", 0)) + int(item.get("output_tokens", 0)),
+                "live_calls": int(item.get("live_calls", 0)),
+                "fallback_calls": fallback_calls,
+                "fallback_ratio": round(fallback_calls / max(1, calls), 4),
+                "tasks": sorted(item.get("tasks") or []),
+                "models": sorted(item.get("models") or []),
+                "fallback_reasons": dict(sorted((item.get("fallback_reasons") or {}).items(), key=lambda pair: pair[1], reverse=True)),
+            }
+        model_summaries = {
+            model: {
+                "model": model,
+                "calls": int(item.get("calls", 0)),
+                "input_tokens": int(item.get("input_tokens", 0)),
+                "output_tokens": int(item.get("output_tokens", 0)),
+                "total_tokens": int(item.get("input_tokens", 0)) + int(item.get("output_tokens", 0)),
+                "owner_agents": sorted(item.get("owner_agents") or []),
+            }
+            for model, item in by_model.items()
+        }
+        model_switch_recommendations: list[dict[str, object]] = []
+        for agent, summary in sorted(agent_summaries.items()):
+            reasons = summary.get("fallback_reasons") or {}
+            primary_reason = next(iter(reasons.keys()), None)
+            if int(summary.get("calls", 0)) >= 3 and float(summary.get("fallback_ratio", 0.0)) >= 0.5:
+                model_switch_recommendations.append(
+                    {
+                        "agent": agent,
+                        "severity": "warning",
+                        "reason": primary_reason or "high_fallback_ratio",
+                        "message": (
+                            f"{agent} 最近大量请求落到 fallback，建议更换更强或更稳定的大模型，"
+                            "或单独为这个 Agent 指定不同模型。"
+                        ),
+                    }
+                )
         aggregate = {
             "api_request_count": api_request_count,
             "input_tokens": sum(int(item.get("input_tokens", 0)) for item in totals),
@@ -231,6 +342,9 @@ class LLMRuntime:
         return {
             "totals": self.usage_totals,
             "aggregate": aggregate,
+            "by_agent": agent_summaries,
+            "by_model": model_summaries,
+            "model_switch_recommendations": model_switch_recommendations,
             "recent_calls": recent_calls,
             "cache": self.cache_stats(),
         }
@@ -293,7 +407,7 @@ class LLMRuntime:
         )
         cached = self._cache_get(artifact_cache_key)
         if cached is not None:
-            self._record_cache_hit("strategy_codegen", codegen_profile)
+            self._record_cache_hit("strategy_codegen", codegen_profile, owner_agent="strategy_evolver")
             return cached
         symbols = ", ".join(selected_universe)
         signals = candidate_payload.get("signals", [])
@@ -323,7 +437,7 @@ class LLMRuntime:
             f"    }}\n"
         )
         prompt_basis = f"{strategy_type}|{selected_universe}|{candidate_payload}|{feedback or ''}"
-        self._record_usage("strategy_analysis", analysis_profile, prompt_basis, str(candidate_payload))
+        self._record_usage("strategy_analysis", analysis_profile, prompt_basis, str(candidate_payload), owner_agent="strategy_evolver")
         codegen_result = self.invoke_text_task(
             "strategy_codegen",
             prompt_basis,
@@ -364,7 +478,7 @@ class LLMRuntime:
         artifact_cache_key = ("market_summarization", query, repr(documents), profile.provider, tuple(profile.models))
         cached = self._cache_get(artifact_cache_key)
         if cached is not None:
-            self._record_cache_hit("market_summarization", profile)
+            self._record_cache_hit("market_summarization", profile, owner_agent="intelligence_agent")
             return cached
         source_urls = [item.get("url", "") for item in documents if item.get("url")]
         titles = [item.get("title", "untitled") for item in documents[:5]]
@@ -389,17 +503,42 @@ class LLMRuntime:
             for item in documents
             if float(item.get("sentiment_hint", 0.0)) > 0.05
         ][:3]
+        fallback_documents = self._fallback_translated_documents(documents)
         summary_text = (
             f"围绕“{query}”共整理 {len(documents)} 条情报，当前舆情基调偏{dominant_tone}。"
             f" 主要来源聚焦于 {', '.join(sorted({item.get('source', 'unknown') for item in documents[:4]})) or 'unknown'}。"
         )
         invocation_result = self.invoke_text_task(
             "market_summarization",
-            f"{query}|{documents}",
+            json.dumps({"query": query, "documents": documents[:8]}, ensure_ascii=False),
             fallback_agent="intelligence_agent",
-            fallback_text=summary_text,
-            system_prompt="Summarize market intelligence into a concise analyst note.",
+            fallback_text=json.dumps(
+                {
+                    "localized_summary": summary_text,
+                    "translated_documents": fallback_documents,
+                },
+                ensure_ascii=False,
+            ),
+            system_prompt=(
+                "Return strict JSON only. "
+                "Summarize the market intelligence in Chinese and translate each news item into concise Chinese. "
+                "Use exactly these keys: localized_summary, translated_documents. "
+                "translated_documents must be an array of objects with exactly these keys: "
+                "document_id, translated_title, translated_summary, brief_summary_cn. "
+                "Keep each field concise Chinese. Do not add markdown."
+            ),
             cache_key=("market_summarization_text", query, repr(documents), profile.provider, tuple(profile.models)),
+        )
+        translated_payload = self._parse_json_object(str(invocation_result["text"] or ""))
+        translated_documents_raw = translated_payload.get("translated_documents") if isinstance(translated_payload, dict) else None
+        translated_documents = self._merge_translated_documents(
+            documents,
+            translated_documents_raw if isinstance(translated_documents_raw, list) else fallback_documents,
+        )
+        localized_summary = (
+            str(translated_payload.get("localized_summary") or "").strip()
+            if isinstance(translated_payload, dict)
+            else ""
         )
         result = {
             "query": query,
@@ -410,12 +549,63 @@ class LLMRuntime:
             "opportunities": opportunities,
             "risks": risks,
             "headline_rollup": titles,
-            "summary": invocation_result["text"] or summary_text,
+            "summary": localized_summary or summary_text,
+            "translated_documents": translated_documents,
+            "translation_status": "live_llm_completed" if localized_summary else "fallback_completed",
             "source_urls": source_urls,
             "profile": asdict(invocation_result["profile"]),
             "invocation": invocation_result["invocation"],
         }
         return self._cache_set(artifact_cache_key, result)
+
+    def _parse_json_object(self, text: str) -> dict[str, object]:
+        payload = str(text or "").strip()
+        if not payload:
+            return {}
+        try:
+            parsed = json.loads(payload)
+        except Exception:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+    def _fallback_translated_documents(self, documents: list[dict]) -> list[dict[str, str]]:
+        translated: list[dict[str, str]] = []
+        for item in documents:
+            title = str(item.get("title") or "Untitled").strip()
+            base_summary = str(item.get("summary") or item.get("content") or title).strip()
+            translated.append(
+                {
+                    "document_id": str(item.get("document_id") or ""),
+                    "translated_title": title,
+                    "translated_summary": base_summary[:240],
+                    "brief_summary_cn": base_summary[:120],
+                }
+            )
+        return translated
+
+    def _merge_translated_documents(self, documents: list[dict], translated_documents: list[dict]) -> list[dict]:
+        translated_index = {
+            str(item.get("document_id") or ""): item
+            for item in translated_documents
+            if isinstance(item, dict)
+        }
+        merged: list[dict] = []
+        for item in documents:
+            document_id = str(item.get("document_id") or "")
+            translated = translated_index.get(document_id, {})
+            merged.append(
+                {
+                    **item,
+                    "translated_title": str(translated.get("translated_title") or item.get("title") or "").strip(),
+                    "translated_summary": str(
+                        translated.get("translated_summary") or item.get("summary") or item.get("content") or ""
+                    ).strip(),
+                    "brief_summary_cn": str(
+                        translated.get("brief_summary_cn") or item.get("summary") or item.get("content") or ""
+                    ).strip(),
+                }
+            )
+        return merged
 
     def invoke_text_task(
         self,
@@ -428,10 +618,11 @@ class LLMRuntime:
         cache_key: tuple | None = None,
     ) -> dict[str, object]:
         profile = self.task_profile(task, fallback_agent=fallback_agent)
+        owner_agent = fallback_agent or task
         if cache_key is not None:
             cached = self._cache_get(cache_key)
             if cached is not None:
-                self._record_cache_hit(task, profile)
+                self._record_cache_hit(task, profile, owner_agent=owner_agent)
                 return cached
 
         if bool(getattr(self.settings, "llm_strict", True)) and self.settings.llm_enabled and profile.generation_mode != "live_llm":
@@ -479,6 +670,7 @@ class LLMRuntime:
                     actual_profile,
                     prompt_text,
                     text,
+                    owner_agent=owner_agent,
                     input_tokens=int(live_result["input_tokens"]),
                     output_tokens=int(live_result["output_tokens"]),
                     active_api_key_env=live_result["active_api_key_env"],
@@ -521,6 +713,7 @@ class LLMRuntime:
             fallback_profile,
             prompt_text,
             text,
+            owner_agent=owner_agent,
             active_api_key_env=invocation["active_api_key_env"],
             rotated_credentials=bool(invocation["rotated_credentials"]),
             fallback_reason=str(invocation.get("fallback_reason")) if invocation.get("fallback_reason") else None,
@@ -541,6 +734,7 @@ class LLMRuntime:
         prompt_text: str,
         output_text: str,
         *,
+        owner_agent: str | None = None,
         input_tokens: int | None = None,
         output_tokens: int | None = None,
         active_api_key_env: str | None = None,
@@ -554,6 +748,7 @@ class LLMRuntime:
             key,
             {
                 "task": task,
+                "owner_agent": owner_agent or task,
                 "provider": profile.provider,
                 "model": profile.model,
                 "generation_mode": profile.generation_mode,
@@ -566,6 +761,7 @@ class LLMRuntime:
             },
         )
         bucket["calls"] = int(bucket["calls"]) + 1
+        bucket["owner_agent"] = owner_agent or task
         bucket["input_tokens"] = int(bucket["input_tokens"]) + input_tokens
         bucket["output_tokens"] = int(bucket["output_tokens"]) + output_tokens
         if active_api_key_env:
@@ -576,6 +772,7 @@ class LLMRuntime:
         self.recent_calls.append(
             {
                 "task": task,
+                "owner_agent": owner_agent or task,
                 "provider": profile.provider,
                 "model": profile.model,
                 "generation_mode": profile.generation_mode,
@@ -590,12 +787,13 @@ class LLMRuntime:
         self.recent_calls = self.recent_calls[-50:]
         self._trace_to_langfuse(task, profile, prompt_text, output_text, input_tokens, output_tokens)
 
-    def _record_cache_hit(self, task: str, profile: AgentLLMProfile) -> None:
+    def _record_cache_hit(self, task: str, profile: AgentLLMProfile, *, owner_agent: str | None = None) -> None:
         key = f"{task}:{profile.provider}:{profile.model}"
         bucket = self.usage_totals.setdefault(
             key,
             {
                 "task": task,
+                "owner_agent": owner_agent or task,
                 "provider": profile.provider,
                 "model": profile.model,
                 "generation_mode": profile.generation_mode,
@@ -606,6 +804,7 @@ class LLMRuntime:
                 "last_called_at": None,
             },
         )
+        bucket["owner_agent"] = owner_agent or task
         bucket["cache_hits"] = int(bucket.get("cache_hits", 0)) + 1
         bucket["last_called_at"] = datetime.now(timezone.utc).isoformat()
 

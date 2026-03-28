@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 import importlib.util
@@ -12,6 +13,8 @@ from uuid import UUID, uuid4
 
 from sentinel_alpha.agents.behavioral_profiler import BehavioralProfilerAgent
 from sentinel_alpha.agents.data_source_expansion_agent import DataSourceExpansionAgent, DataSourceExpansionRequest
+from sentinel_alpha.agents.habit_goal_evolution_agent import HabitGoalEvolutionAgent
+from sentinel_alpha.agents.intelligence_history_agent import IntelligenceHistoryAgent
 from sentinel_alpha.agents.intent_aligner import IntentAlignerAgent
 from sentinel_alpha.agents.intelligence_agent import IntelligenceAgent
 from sentinel_alpha.agents.market_asset_monitor_agent import MarketAssetMonitorAgent
@@ -33,6 +36,7 @@ from sentinel_alpha.analysis import SessionFeaturePipeline
 from sentinel_alpha.backtesting import DefaultStrategyMetricsEngine
 from sentinel_alpha.backtesting import SimpleBacktestEngine
 from sentinel_alpha.infra.free_market_data import FreeMarketDataService
+from sentinel_alpha.infra.config_validator import ConfigValidator
 from sentinel_alpha.infra.llm_runtime import LLMRuntime
 from sentinel_alpha.strategies.registry import StrategyRegistry
 from sentinel_alpha.domain.models import BehaviorEvent, MarketDataPoint, MarketSnapshot, ProfileEvolutionEvent, TradeExecutionRecord, UserProfile
@@ -56,9 +60,14 @@ class WorkflowSession:
     trading_preferences: dict | None = None
     trade_universe: dict | None = None
     strategy_package: dict | None = None
+    active_trading_strategy: dict | None = None
+    strategy_status_summary: dict | None = None
     strategy_checks: list[dict] = field(default_factory=list)
     execution_mode: str | None = None
     profile_evolution: dict | None = None
+    habit_goal_evolution: dict | None = None
+    intelligence_history_analysis: dict | None = None
+    simulation_training_state: dict | None = None
     market_snapshots: list[dict] = field(default_factory=list)
     trade_records: list[dict] = field(default_factory=list)
     strategy_feedback_log: list[dict] = field(default_factory=list)
@@ -70,6 +79,7 @@ class WorkflowSession:
     history_events: list[dict] = field(default_factory=list)
     report_history: list[dict] = field(default_factory=list)
     intelligence_runs: list[dict] = field(default_factory=list)
+    agent_activity: list[dict] = field(default_factory=list)
     programmer_runs: list[dict] = field(default_factory=list)
     data_source_runs: list[dict] = field(default_factory=list)
     terminal_integration_runs: list[dict] = field(default_factory=list)
@@ -93,6 +103,8 @@ class WorkflowService:
         self.scenario_director = ScenarioDirectorAgent(self.generator)
         self.noise_agent = NoiseAgent()
         self.profiler = BehavioralProfilerAgent()
+        self.habit_goal_evolution = HabitGoalEvolutionAgent()
+        self.intelligence_history = IntelligenceHistoryAgent()
         self.intent_aligner = IntentAlignerAgent()
         self.intelligence = IntelligenceAgent()
         self.portfolio_manager = PortfolioManagerAgent()
@@ -111,12 +123,14 @@ class WorkflowService:
         self.metrics_engine = DefaultStrategyMetricsEngine()
         self.feature_pipeline = SessionFeaturePipeline()
         self.market_data = FreeMarketDataService(self.settings)
+        self.config_validator = ConfigValidator()
         self.llm_runtime = LLMRuntime(self.settings)
         self.agent_activity_log: list[dict] = []
         self._dataset_plan_cache: dict[int, dict] = {}
         self._iteration_context_cache: dict[tuple, dict] = {}
         self._candidate_eval_cache: dict[tuple, dict] = {}
         self._intelligence_cache: dict[tuple, dict] = {}
+        self._runtime_data_source_api_keys: dict[tuple[str, str], str] = {}
         self._performance_counters = {
             "iteration_context_hits": 0,
             "iteration_context_misses": 0,
@@ -126,6 +140,344 @@ class WorkflowService:
             "candidate_eval_misses": 0,
             "intelligence_hits": 0,
             "intelligence_misses": 0,
+        }
+
+    def _habit_goal_input_payload(self, session: WorkflowSession) -> dict:
+        return self.habit_goal_evolution.build_analysis_payload(
+            behavioral_report=session.behavioral_report,
+            behavioral_user_report=session.behavioral_user_report,
+            profile_evolution=session.profile_evolution,
+            trading_preferences=session.trading_preferences,
+            active_trading_strategy=session.active_trading_strategy,
+            strategy_status_summary=session.strategy_status_summary,
+            strategy_package=session.strategy_package,
+            strategy_feedback_log=session.strategy_feedback_log,
+            trade_records=session.trade_records,
+            behavior_capture_summary=self._behavior_capture_summary(session),
+            intelligence_behavior_summary=self._intelligence_behavior_summary(session),
+            intelligence_history_analysis=session.intelligence_history_analysis,
+        )
+
+    def _intelligence_history_input_payload(self, session: WorkflowSession) -> dict:
+        return self.intelligence_history.build_analysis_payload(
+            intelligence_runs=session.intelligence_runs,
+            trade_universe=session.trade_universe,
+            active_trading_strategy=session.active_trading_strategy,
+        )
+
+    def _generate_intelligence_history_llm_analysis(self, session: WorkflowSession, payload: dict) -> dict:
+        fallback = self.intelligence_history.fallback_analysis(payload)
+        llm_result = self.llm_runtime.invoke_text_task(
+            "intelligence_history_analysis",
+            json.dumps(payload, ensure_ascii=False),
+            fallback_agent="intelligence_history_agent",
+            fallback_text=json.dumps(fallback, ensure_ascii=False),
+            system_prompt=(
+                "Return strict JSON only with exactly these keys: "
+                "query_frequency_summary, repeated_search_summary, history_summary, risk_flags, next_actions, "
+                "query_count, unique_query_count, repeated_query_ratio, burst_search_ratio, "
+                "is_frequent_querying, is_repeated_searching, is_burst_searching, "
+                "repeated_topic_group_count, burst_topic_group_count, has_topic_confirmation_bias, "
+                "has_topic_anxiety_confirmation, simulation_training_signal, simulation_training_note, "
+                "watchlist_alignment_count. "
+                "Use concise Chinese. risk_flags and next_actions must be arrays of short Chinese strings."
+            ),
+        )
+        invocation = llm_result["invocation"]
+        profile = llm_result["profile"]
+        parsed = self._parse_llm_json(str(llm_result.get("text", "") or ""))
+        required_keys = {
+            "query_frequency_summary",
+            "repeated_search_summary",
+            "history_summary",
+            "risk_flags",
+            "next_actions",
+            "query_count",
+            "unique_query_count",
+            "repeated_query_ratio",
+            "burst_search_ratio",
+            "is_frequent_querying",
+            "is_repeated_searching",
+            "is_burst_searching",
+            "repeated_topic_group_count",
+            "burst_topic_group_count",
+            "has_topic_confirmation_bias",
+            "has_topic_anxiety_confirmation",
+            "simulation_training_signal",
+            "simulation_training_note",
+            "watchlist_alignment_count",
+        }
+        if not isinstance(parsed, dict) or not required_keys.issubset(parsed.keys()):
+            result = dict(fallback)
+            result["generation_mode"] = "rule_based"
+            result["analysis_status"] = "fallback_completed"
+            result["analysis_warning"] = "情报历史分析 LLM 未返回有效结构，当前回退到规则分析。"
+            result["llm_invocation"] = invocation
+            return result
+        result = dict(fallback)
+        result.update(parsed)
+        result["generation_mode"] = profile.generation_mode
+        result["analysis_status"] = "live_llm_completed" if profile.generation_mode == "live_llm" else "fallback_completed"
+        result["analysis_warning"] = None if profile.generation_mode == "live_llm" else "当前未使用 live LLM，情报历史分析来自规则兜底。"
+        result["llm_invocation"] = invocation
+        return result
+
+    def _refresh_intelligence_history_analysis(self, session: WorkflowSession) -> None:
+        if not session.intelligence_runs:
+            session.intelligence_history_analysis = None
+            return
+        payload = self._intelligence_history_input_payload(session)
+        session.intelligence_history_analysis = self._generate_intelligence_history_llm_analysis(session, payload)
+
+    def _behavior_capture_summary(self, session: WorkflowSession, *, event_slice_start: int = 0) -> dict:
+        events = list(session.behavior_events or [])[event_slice_start:]
+        focus_values = [float(item.chart_focus_seconds or 0.0) for item in events if item.chart_focus_seconds is not None]
+        refresh_values = [int(item.loss_refresh_count or 0) for item in events if item.loss_refresh_count is not None]
+        refresh_trigger_values = [
+            float(item.loss_refresh_drawdown_trigger_pct or 0.0)
+            for item in events
+            if item.loss_refresh_drawdown_trigger_pct is not None
+        ]
+        anxious_refresh_events = [item for item in events if (item.loss_refresh_count or 0) >= 3]
+        trade_records = list(session.trade_records or [])
+        active_strategy = session.active_trading_strategy or {}
+        execution_mode = str(session.execution_mode or "").lower()
+        manual_intervention_records = [
+            item
+            for item in trade_records
+            if bool(item.get("user_initiated"))
+            and str(item.get("execution_mode") or execution_mode).lower() in {"autonomous", "advice_only"}
+        ]
+        total_trade_records = len(trade_records)
+        manual_intervention_count = len(manual_intervention_records)
+        manual_intervention_rate = round(manual_intervention_count / max(1, total_trade_records), 4)
+        trust_decay_score = round(
+            min(
+                1.0,
+                manual_intervention_rate * 0.75
+                + (0.15 if manual_intervention_count >= 3 else 0.0)
+                + (0.1 if active_strategy else 0.0),
+            ),
+            4,
+        )
+        intelligence_summary = self._intelligence_behavior_summary(session)
+        return {
+            "event_count": len(events),
+            "avg_chart_focus_seconds": round(sum(focus_values) / len(focus_values), 2) if focus_values else 0.0,
+            "max_chart_focus_seconds": round(max(focus_values), 2) if focus_values else 0.0,
+            "hesitation_event_ratio": round(len([item for item in events if (item.chart_focus_seconds or 0.0) >= 180]) / max(1, len(events)), 4),
+            "anxiety_refresh_event_ratio": round(len(anxious_refresh_events) / max(1, len(events)), 4),
+            "avg_loss_refresh_count": round(sum(refresh_values) / len(refresh_values), 2) if refresh_values else 0.0,
+            "max_loss_refresh_count": max(refresh_values) if refresh_values else 0,
+            "earliest_anxiety_drawdown_trigger_pct": round(min(refresh_trigger_values), 4) if refresh_trigger_values else None,
+            "manual_intervention_count": manual_intervention_count,
+            "manual_intervention_rate": manual_intervention_rate,
+            "trust_decay_score": trust_decay_score,
+            "active_strategy_ref": active_strategy.get("strategy_ref"),
+            "active_strategy_version": active_strategy.get("version_label"),
+            "execution_mode": session.execution_mode,
+            "intelligence_query_count": intelligence_summary.get("query_count", 0),
+            "intelligence_unique_query_count": intelligence_summary.get("unique_query_count", 0),
+            "intelligence_frequent_querying": bool(intelligence_summary.get("is_frequent_querying")),
+            "intelligence_repeated_query_ratio": intelligence_summary.get("repeated_query_ratio", 0.0),
+            "intelligence_burst_search_ratio": intelligence_summary.get("burst_search_ratio", 0.0),
+            "intelligence_topic_confirmation_bias": bool(intelligence_summary.get("has_topic_confirmation_bias")),
+            "intelligence_topic_anxiety_confirmation": bool(intelligence_summary.get("has_topic_anxiety_confirmation")),
+            "intelligence_simulation_training_signal": intelligence_summary.get("simulation_training_signal"),
+        }
+
+    def _intelligence_behavior_summary(self, session: WorkflowSession) -> dict:
+        analysis = session.intelligence_history_analysis or {}
+        if analysis:
+            return {
+                "query_count": int(analysis.get("query_count") or 0),
+                "unique_query_count": int(analysis.get("unique_query_count") or 0),
+                "repeated_query_ratio": float(analysis.get("repeated_query_ratio") or 0.0),
+                "burst_search_ratio": float(analysis.get("burst_search_ratio") or 0.0),
+                "is_frequent_querying": bool(analysis.get("is_frequent_querying")),
+                "is_repeated_searching": bool(analysis.get("is_repeated_searching")),
+                "is_burst_searching": bool(analysis.get("is_burst_searching")),
+                "repeated_topic_group_count": int(analysis.get("repeated_topic_group_count") or 0),
+                "burst_topic_group_count": int(analysis.get("burst_topic_group_count") or 0),
+                "has_topic_confirmation_bias": bool(analysis.get("has_topic_confirmation_bias")),
+                "has_topic_anxiety_confirmation": bool(analysis.get("has_topic_anxiety_confirmation")),
+                "simulation_training_signal": analysis.get("simulation_training_signal"),
+                "simulation_training_note": analysis.get("simulation_training_note"),
+                "history_summary": analysis.get("history_summary"),
+            }
+        fallback = self.intelligence_history.fallback_analysis(self._intelligence_history_input_payload(session))
+        return {
+            "query_count": int(fallback.get("query_count") or 0),
+            "unique_query_count": int(fallback.get("unique_query_count") or 0),
+            "repeated_query_ratio": float(fallback.get("repeated_query_ratio") or 0.0),
+            "burst_search_ratio": float(fallback.get("burst_search_ratio") or 0.0),
+            "is_frequent_querying": bool(fallback.get("is_frequent_querying")),
+            "is_repeated_searching": bool(fallback.get("is_repeated_searching")),
+            "is_burst_searching": bool(fallback.get("is_burst_searching")),
+            "repeated_topic_group_count": int(fallback.get("repeated_topic_group_count") or 0),
+            "burst_topic_group_count": int(fallback.get("burst_topic_group_count") or 0),
+            "has_topic_confirmation_bias": bool(fallback.get("has_topic_confirmation_bias")),
+            "has_topic_anxiety_confirmation": bool(fallback.get("has_topic_anxiety_confirmation")),
+            "simulation_training_signal": fallback.get("simulation_training_signal"),
+            "simulation_training_note": fallback.get("simulation_training_note"),
+            "history_summary": fallback.get("history_summary"),
+        }
+
+    def _refresh_simulation_training_state(self, session: WorkflowSession, *, trigger: str) -> None:
+        state = dict(session.simulation_training_state or {})
+        event_count = len(session.behavior_events or [])
+        baseline_count = int(state.get("baseline_behavior_event_count") or 0)
+        training_anchor = int(state.get("strategy_training_behavior_event_count") or 0)
+        since_training = max(0, event_count - training_anchor)
+        behavior_capture = self._behavior_capture_summary(session, event_slice_start=training_anchor)
+        invalidation_reasons: list[str] = []
+        if float(behavior_capture.get("trust_decay_score") or 0.0) >= 0.45:
+            invalidation_reasons.append("手动干预自动化频率升高，信任衰减明显")
+        if float(behavior_capture.get("anxiety_refresh_event_ratio") or 0.0) >= 0.3:
+            invalidation_reasons.append("亏损阶段频繁刷新情报或行情，焦虑行为上升")
+        if bool(behavior_capture.get("intelligence_topic_confirmation_bias")):
+            invalidation_reasons.append("同一情报主题被反复确认，说明确认偏误风险上升")
+        if bool(behavior_capture.get("intelligence_topic_anxiety_confirmation")):
+            invalidation_reasons.append("同一情报主题在短时间内被再次确认，说明焦虑确认增强")
+        if bool(behavior_capture.get("intelligence_frequent_querying")):
+            invalidation_reasons.append("近期情报查询频率明显上升，建议先用模拟验证信息依赖是否已改变")
+        if float(behavior_capture.get("intelligence_repeated_query_ratio") or 0.0) >= 0.35:
+            invalidation_reasons.append("重复搜索同类情报较多，说明确认偏误风险上升")
+        if float(behavior_capture.get("intelligence_burst_search_ratio") or 0.0) >= 0.5:
+            invalidation_reasons.append("短时间连续搜索情报过多，说明信息确认依赖增强")
+        if since_training >= 5:
+            invalidation_reasons.append("策略训练之后已经新增较多行为样本，建议重新训练模拟")
+
+        if not session.behavioral_report:
+            lifecycle_stage = "collecting_baseline"
+            invalidation_status = "waiting_baseline"
+            next_action = "先完成一轮模拟测试，建立初始行为基线，并验证情报依赖是否会改变执行行为。"
+        elif not session.strategy_package:
+            lifecycle_stage = "baseline_ready"
+            invalidation_status = "healthy"
+            next_action = "当前行为基线已经可用，可以开始策略训练。"
+        elif invalidation_reasons:
+            lifecycle_stage = "retrain_recommended"
+            invalidation_status = "invalid"
+            next_action = "请基于新增行为重新训练模拟，再继续依赖当前行为基线训练策略。"
+        else:
+            lifecycle_stage = "monitoring_after_training"
+            invalidation_status = "observe" if since_training >= 2 else "healthy"
+            next_action = "继续在策略模拟中收集行为；当行为明显漂移或用户主动要求时再重训模拟。"
+
+        state.update(
+            {
+                "lifecycle_stage": lifecycle_stage,
+                "invalidation_status": invalidation_status,
+                "baseline_behavior_event_count": max(baseline_count, event_count if session.behavioral_report else 0),
+                "strategy_training_behavior_event_count": training_anchor,
+                "behavior_event_count": event_count,
+                "post_training_behavior_event_count": since_training,
+                "latest_strategy_version": ((session.strategy_package or {}).get("version_label")),
+                "trigger": trigger,
+                "invalidation_reasons": invalidation_reasons,
+                "next_action": next_action,
+                "updated_at": self._now_iso(),
+            }
+        )
+        session.simulation_training_state = state
+
+    def _generate_habit_goal_llm_analysis(self, session: WorkflowSession, payload: dict) -> dict:
+        fallback = self.habit_goal_evolution.fallback_analysis(payload)
+        fallback_text = json.dumps(fallback, ensure_ascii=False)
+        system_prompt = (
+            "Return strict JSON only with no markdown and no extra prose. "
+            "Analyze the user's trading habit evolution and trading goal evolution using only the provided payload. "
+            "Output MINIFIED JSON with exactly these keys: "
+            "habit_summary, goal_summary, combined_summary, habit_shift, goal_shift, consistency_assessment, "
+            "current_focus, risk_flags, required_user_inputs, next_actions, confidence_note, trading_restriction_summary. "
+            "The values must be concise Chinese. risk_flags, required_user_inputs, next_actions must be arrays of short Chinese strings. "
+            "Do not invent missing data. If information is incomplete, say so directly in the relevant field."
+        )
+        llm_result = self.llm_runtime.invoke_text_task(
+            "habit_goal_evolution_analysis",
+            json.dumps(payload, ensure_ascii=False),
+            fallback_agent="habit_goal_evolution_agent",
+            fallback_text=fallback_text,
+            system_prompt=system_prompt,
+        )
+        invocation = llm_result["invocation"]
+        profile = llm_result["profile"]
+        parsed = self._parse_llm_json(str(llm_result.get("text", "") or ""))
+        required_keys = {
+            "habit_summary",
+            "goal_summary",
+            "combined_summary",
+            "habit_shift",
+            "goal_shift",
+            "consistency_assessment",
+            "current_focus",
+            "risk_flags",
+            "required_user_inputs",
+            "next_actions",
+            "confidence_note",
+            "trading_restriction_summary",
+        }
+        if not isinstance(parsed, dict) or not required_keys.issubset(parsed.keys()):
+            result = dict(fallback)
+            result["generation_mode"] = "rule_based"
+            result["analysis_status"] = "fallback_completed"
+            result["analysis_warning"] = "习惯与目标演化 LLM 未返回有效结构，当前回退到规则分析。"
+            result["llm_invocation"] = invocation
+            return result
+        result = dict(fallback)
+        result.update(parsed)
+        result["behavior_capture_summary"] = payload.get("behavior_capture_summary") or {}
+        result["generation_mode"] = profile.generation_mode
+        result["analysis_status"] = "live_llm_completed" if profile.generation_mode == "live_llm" else "fallback_completed"
+        result["analysis_warning"] = None if profile.generation_mode == "live_llm" else "当前未使用 live LLM，演化分析来自规则兜底。"
+        result["llm_invocation"] = invocation
+        return result
+
+    def _refresh_habit_goal_evolution(
+        self,
+        session: WorkflowSession,
+        *,
+        source_type: str,
+        source_ref: str,
+        note: str,
+    ) -> None:
+        if not any(
+            [
+                session.behavioral_report,
+                session.trading_preferences,
+                session.trade_records,
+                session.strategy_feedback_log,
+                session.active_trading_strategy,
+                session.intelligence_history_analysis,
+                session.intelligence_runs,
+            ]
+        ):
+            return
+        payload = self._habit_goal_input_payload(session)
+        analysis = self._generate_habit_goal_llm_analysis(session, payload)
+        current = session.habit_goal_evolution or {"history": []}
+        history = list(current.get("history") or [])
+        history.append(
+            {
+                "timestamp": self._now_iso(),
+                "source_type": source_type,
+                "source_ref": source_ref,
+                "note": note,
+                "generation_mode": analysis.get("generation_mode"),
+                "analysis_status": analysis.get("analysis_status"),
+                "habit_summary": analysis.get("habit_summary"),
+                "goal_summary": analysis.get("goal_summary"),
+                "combined_summary": analysis.get("combined_summary"),
+                "current_focus": analysis.get("current_focus"),
+                "risk_flags": list(analysis.get("risk_flags") or []),
+            }
+        )
+        session.habit_goal_evolution = {
+            "current": analysis,
+            "history": history[-60:],
+            "input_snapshot": payload,
+            "last_updated_at": self._now_iso(),
         }
 
     def _resolve_session_store_dir(self) -> Path:
@@ -242,6 +594,256 @@ class WorkflowService:
         payload = json.loads(json.dumps(apply_result, ensure_ascii=False, default=str))
         return payload
 
+    def _remember_data_source_api_key(self, session_id: UUID, run_id: str, api_key: str | None) -> None:
+        if api_key:
+            self._runtime_data_source_api_keys[(str(session_id), str(run_id))] = api_key
+
+    def _resolve_data_source_runtime_api_key(self, session_id: UUID, run: dict) -> str | None:
+        run_id = str(run.get("run_id") or "")
+        if run_id:
+            remembered = self._runtime_data_source_api_keys.get((str(session_id), run_id))
+            if remembered:
+                return remembered
+        env_candidates: list[str] = []
+        inference = run.get("inference") or {}
+        config_candidate = run.get("config_candidate") or {}
+        provider_config = config_candidate.get("provider_config") or {}
+        for raw in list(inference.get("api_key_envs") or []) + list(provider_config.get("api_key_envs") or []):
+            name = str(raw).strip()
+            if name and name not in env_candidates:
+                env_candidates.append(name)
+        for env_name in env_candidates:
+            value = os.getenv(env_name)
+            if value:
+                return value
+        return None
+
+    def _resolve_generated_adapter_class(self, namespace: dict[str, object], *, category: str) -> type:
+        module_name = str(namespace.get("__name__") or "")
+        quote_method_name = self._category_method_name(category, "quote")
+        history_method_name = self._category_method_name(category, "history")
+        candidates = [
+            value
+            for value in namespace.values()
+            if isinstance(value, type)
+            and getattr(value, "__module__", "") == module_name
+            and hasattr(value, quote_method_name)
+            and hasattr(value, history_method_name)
+        ]
+        if not candidates:
+            raise ValueError("Generated adapter code does not expose the expected adapter class.")
+        return candidates[0]
+
+    def _extract_generated_history_bars(self, payload: object) -> list[dict]:
+        if isinstance(payload, list):
+            candidates = payload
+        elif isinstance(payload, dict):
+            for key in ["bars", "data", "items", "results", "candles"]:
+                value = payload.get(key)
+                if isinstance(value, list):
+                    candidates = value
+                    break
+            else:
+                candidates = []
+        else:
+            candidates = []
+
+        normalized: list[dict] = []
+        for item in candidates:
+            if not isinstance(item, dict):
+                continue
+            timestamp = item.get("timestamp") or item.get("date") or item.get("time") or item.get("datetime")
+            close_value = item.get("close") or item.get("c") or item.get("price")
+            if timestamp in (None, "") or close_value in (None, ""):
+                continue
+            normalized.append(
+                {
+                    "timestamp": str(timestamp),
+                    "open": item.get("open") or item.get("o") or close_value,
+                    "high": item.get("high") or item.get("h") or close_value,
+                    "low": item.get("low") or item.get("l") or close_value,
+                    "close": close_value,
+                    "volume": item.get("volume") or item.get("v") or 0,
+                }
+            )
+        return normalized
+
+    def _persist_market_history_to_local_file(self, symbol: str, interval: str, bars: list[dict], *, provider: str, source_run_id: str | None = None) -> str:
+        config = self.settings.market_data_provider_configs.get("local_file", {})
+        base_path = Path(str(config.get("base_path", "data/local_market_data/market_data"))).expanduser()
+        base_path.mkdir(parents=True, exist_ok=True)
+        history_filename = str(config.get("history_filename", "{symbol}_{interval}.csv")).format(symbol=symbol, interval=interval)
+        history_path = base_path / history_filename
+        with history_path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=["timestamp", "open", "high", "low", "close", "volume"])
+            writer.writeheader()
+            for item in bars:
+                writer.writerow(
+                    {
+                        "timestamp": item.get("timestamp"),
+                        "open": item.get("open"),
+                        "high": item.get("high"),
+                        "low": item.get("low"),
+                        "close": item.get("close"),
+                        "volume": item.get("volume"),
+                    }
+                )
+
+        quote_filename = str(config.get("quote_filename", "{symbol}_quote.json")).format(symbol=symbol)
+        quote_path = base_path / quote_filename
+        latest = bars[-1] if bars else {}
+        quote_payload = {
+            "provider": provider,
+            "symbol": symbol,
+            "price": latest.get("close"),
+            "open": latest.get("open"),
+            "high": latest.get("high"),
+            "low": latest.get("low"),
+            "timestamp": latest.get("timestamp"),
+            "source_run_id": source_run_id,
+        }
+        quote_path.write_text(json.dumps(quote_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        self.market_data._response_cache.clear()
+        return str(history_path)
+
+    def _fetch_history_from_generated_run(
+        self,
+        *,
+        session_id: UUID,
+        run: dict,
+        symbol: str,
+        interval: str,
+        lookback: str,
+    ) -> dict:
+        api_key = self._resolve_data_source_runtime_api_key(session_id, run)
+        if not api_key:
+            raise ValueError("No runtime API KEY is available for the generated market-data source.")
+        category = str(run.get("category") or "market_data")
+        generated_code = str(run.get("generated_module_code") or "")
+        if not generated_code.strip():
+            raise ValueError("Generated market-data source is missing module code.")
+        namespace: dict[str, object] = {"__name__": "generated_data_source_training_backfill"}
+        exec(generated_code, namespace)
+        adapter_class = self._resolve_generated_adapter_class(namespace, category=category)
+        config_candidate = run.get("config_candidate") or {}
+        provider_config = config_candidate.get("provider_config") or {}
+        inference = run.get("inference") or {}
+        adapter = adapter_class(base_url=inference.get("base_url") or provider_config.get("base_url") or "")
+        try:
+            setattr(adapter, "api_key", api_key)
+        except Exception:
+            pass
+        history_method = getattr(adapter, self._category_method_name(category, "history"))
+        payload = history_method(symbol, interval=interval, lookback=lookback)
+        bars = self._extract_generated_history_bars(payload)
+        if not bars:
+            raise ValueError("Generated market-data source returned no usable history bars.")
+        return {
+            "provider": str(run.get("provider_slug") or run.get("provider_name") or "generated_source"),
+            "bars": bars,
+        }
+
+    def _usable_generated_market_data_runs(self, session: WorkflowSession) -> list[dict]:
+        runs: list[dict] = []
+        for run in reversed(session.data_source_runs):
+            if str(run.get("category") or "") != "market_data":
+                continue
+            validation = run.get("validation") or {}
+            if not validation.get("ready_for_programmer_agent"):
+                continue
+            runs.append(run)
+        return runs
+
+    def _attempt_auto_backfill_real_training_history(
+        self,
+        *,
+        session: WorkflowSession,
+        selected_universe: list[str],
+        history_summary: list[dict],
+    ) -> dict:
+        targets = [str(item.get("symbol")) for item in history_summary if item.get("symbol")]
+        if not targets:
+            targets = [str(symbol).strip().upper() for symbol in selected_universe if str(symbol).strip()]
+
+        fetched_files: list[dict] = []
+        failures: list[dict] = []
+        generated_runs = self._usable_generated_market_data_runs(session)
+        builtin_providers = [provider for provider in self.settings.market_data_enabled_providers if provider != "local_file"]
+
+        for symbol in targets:
+            history_result: dict | None = None
+            source_label: str | None = None
+
+            for run in generated_runs:
+                try:
+                    history_result = self._fetch_history_from_generated_run(
+                        session_id=session.session_id,
+                        run=run,
+                        symbol=symbol,
+                        interval="1d",
+                        lookback="10y",
+                    )
+                    source_label = f"generated:{run.get('provider_slug') or run.get('provider_name')}"
+                    break
+                except Exception as exc:
+                    failures.append({"symbol": symbol, "source": str(run.get("provider_slug") or run.get("provider_name") or "generated"), "error": str(exc)})
+
+            if history_result is None:
+                for provider in builtin_providers:
+                    try:
+                        payload = self.market_data.fetch_history(symbol=symbol, interval="1d", lookback="10y", provider=provider)
+                        bars = payload.get("bars") or []
+                        if not bars:
+                            raise ValueError("Provider returned no history bars.")
+                        history_result = {"provider": provider, "bars": bars}
+                        source_label = provider
+                        break
+                    except Exception as exc:
+                        failures.append({"symbol": symbol, "source": provider, "error": str(exc)})
+
+            if history_result is None:
+                continue
+
+            normalized = self._extract_generated_history_bars(history_result)
+            if not normalized:
+                failures.append({"symbol": symbol, "source": source_label or "unknown", "error": "Fetched history bars were empty after normalization."})
+                continue
+
+            saved_path = self._persist_market_history_to_local_file(
+                symbol,
+                "1d",
+                normalized,
+                provider=source_label or str(history_result.get("provider") or "unknown"),
+                source_run_id=next((str(run.get("run_id")) for run in generated_runs if f"generated:{run.get('provider_slug') or run.get('provider_name')}" == source_label), None),
+            )
+            fetched_files.append(
+                {
+                    "symbol": symbol,
+                    "provider": source_label or str(history_result.get("provider") or "unknown"),
+                    "saved_path": saved_path,
+                    "bar_count": len(normalized),
+                    "start": str(normalized[0].get("timestamp") or "")[:10],
+                    "end": str(normalized[-1].get("timestamp") or "")[:10],
+                }
+            )
+
+        if fetched_files:
+            self._append_history_event(
+                session,
+                "training_market_data_auto_backfilled",
+                "训练前已自动补充缺失的真实股票历史数据。",
+                {
+                    "fetched_files": fetched_files,
+                    "failure_count": len(failures),
+                },
+            )
+        return {
+            "fetched_files": fetched_files,
+            "failures": failures,
+            "attempted_generated_runs": [str(run.get("run_id") or "") for run in generated_runs],
+            "attempted_builtin_providers": builtin_providers,
+        }
+
     def _category_method_name(self, category: str, kind: str) -> str:
         if category == "market_data":
             return "fetch_quote" if kind == "quote" else "fetch_history"
@@ -302,23 +904,9 @@ class WorkflowService:
         quote_method_name = self._category_method_name(category, "quote")
         history_method_name = self._category_method_name(category, "history")
 
-        def resolve_generated_adapter(namespace: dict[str, object]) -> type:
-            module_name = str(namespace.get("__name__") or "")
-            candidates = [
-                value
-                for value in namespace.values()
-                if isinstance(value, type)
-                and getattr(value, "__module__", "") == module_name
-                and hasattr(value, quote_method_name)
-                and hasattr(value, history_method_name)
-            ]
-            if not candidates:
-                raise ValueError("Generated adapter code does not expose the expected adapter class for smoke testing.")
-            return candidates[0]
-
         namespace: dict[str, object] = {"__name__": "generated_data_source_smoke"}
         exec(generated_code, namespace)
-        adapter_class = resolve_generated_adapter(namespace)
+        adapter_class = self._resolve_generated_adapter_class(namespace, category=category)
 
         adapter = adapter_class(base_url=(run.get("inference") or {}).get("base_url") or (run.get("config_candidate") or {}).get("provider_config", {}).get("base_url") or "")
         if api_key:
@@ -359,7 +947,7 @@ class WorkflowService:
         if api_key:
             live_namespace: dict[str, object] = {"__name__": "generated_data_source_live_smoke"}
             exec(generated_code, live_namespace)
-            live_class = resolve_generated_adapter(live_namespace)
+            live_class = self._resolve_generated_adapter_class(live_namespace, category=category)
             live_adapter = live_class(base_url=(run.get("inference") or {}).get("base_url") or provider_config.get("base_url") or "")
             try:
                 setattr(live_adapter, "api_key", api_key)
@@ -511,6 +1099,7 @@ class WorkflowService:
         session = self.get_session(session_id)
         enriched_event = self._enrich_behavior_event_with_market(session, event)
         session.behavior_events.append(enriched_event)
+        self._refresh_simulation_training_state(session, trigger="behavior_event")
         self._record_agent_activity("behavioral_profiler", "ok", "append_behavior_event", f"Recorded action={event.action} for {event.scenario_id}.", session.session_id, request_payload={"scenario_id": event.scenario_id, "action": event.action, "drawdown_pct": event.price_drawdown_pct, "noise_level": event.noise_level, "latency_seconds": event.latency_seconds, "execution_status": event.execution_status, "execution_reason": event.execution_reason}, response_payload={"phase": session.phase, "event_count": len(session.behavior_events)})
         self._append_history_event(
             session,
@@ -523,6 +1112,9 @@ class WorkflowService:
                 "market_timestamp": enriched_event.timestamp,
                 "market_price": enriched_event.market_price,
                 "intraday_progress_pct": enriched_event.intraday_progress_pct,
+                "chart_focus_seconds": enriched_event.chart_focus_seconds,
+                "loss_refresh_count": enriched_event.loss_refresh_count,
+                "loss_refresh_drawdown_trigger_pct": enriched_event.loss_refresh_drawdown_trigger_pct,
             },
         )
         return session
@@ -675,6 +1267,15 @@ class WorkflowService:
         high_noise_events = [event for event in session.behavior_events if event.noise_level >= 0.7]
         high_noise_executed_events = [event for event in high_noise_events if event.execution_status in {"filled", "partial_fill"}]
         high_noise_hold_events = [event for event in high_noise_events if event.action == "hold" or event.execution_status == "hold"]
+        focus_values = [float(event.chart_focus_seconds or 0.0) for event in session.behavior_events if event.chart_focus_seconds is not None]
+        anxious_refresh_events = [event for event in session.behavior_events if int(event.loss_refresh_count or 0) >= 3]
+        refresh_values = [int(event.loss_refresh_count or 0) for event in session.behavior_events if event.loss_refresh_count is not None]
+        refresh_trigger_values = [
+            float(event.loss_refresh_drawdown_trigger_pct or 0.0)
+            for event in session.behavior_events
+            if event.loss_refresh_drawdown_trigger_pct is not None
+        ]
+        capture_summary = self._behavior_capture_summary(session)
         clean_execution_ratio = max(0.0, min(1.0, (len(executed_events) - len(partial_events)) / total_events))
         fast_event_ratio = round(sum(1 for event in session.behavior_events if event.latency_seconds < 45) / total_events, 4)
         slow_event_ratio = round(sum(1 for event in session.behavior_events if event.latency_seconds > 240) / total_events, 4)
@@ -693,6 +1294,12 @@ class WorkflowService:
             behavior_tags.append("noise_driven_execution")
         if len(high_noise_hold_events) / max(1, len(high_noise_events)) > 0.45:
             behavior_tags.append("noise_resistant_patience")
+        if focus_values and (sum(focus_values) / len(focus_values)) >= 180:
+            behavior_tags.append("hesitation_under_uncertainty")
+        if anxious_refresh_events and len(anxious_refresh_events) / total_events > 0.25:
+            behavior_tags.append("drawdown_anxiety_refresh")
+        if float(capture_summary.get("trust_decay_score") or 0.0) >= 0.45:
+            behavior_tags.append("automation_trust_decay")
         if len(rejected_events) / total_events > 0.3:
             execution_note = "用户存在较多被拒单行为，说明下单约束感知偏弱。"
         elif len(unfilled_events) / total_events > 0.3:
@@ -703,6 +1310,12 @@ class WorkflowService:
             execution_note = "用户在高噪音条件下仍频繁直接成交，存在明显的叙事驱动执行倾向。"
         elif len(high_noise_hold_events) / max(1, len(high_noise_events)) > 0.45:
             execution_note = "用户在高噪音条件下更常选择观望，说明对情绪叙事有一定抵抗力。"
+        elif anxious_refresh_events and len(anxious_refresh_events) / total_events > 0.25:
+            execution_note = "用户在回撤加深后会频繁刷新和追踪市场，存在焦虑驱动的盯盘行为。"
+        elif focus_values and (sum(focus_values) / len(focus_values)) >= 180:
+            execution_note = "用户在做决定前会长时间盯盘，说明犹豫和确认需求较强。"
+        elif float(capture_summary.get("trust_decay_score") or 0.0) >= 0.45:
+            execution_note = "用户对自动化执行的信任度正在下降，更容易手动介入。"
         elif fast_event_ratio > 0.4:
             execution_note = "用户经常在短时间内快速出手，存在冲动执行倾向。"
         elif slow_event_ratio > 0.35:
@@ -745,6 +1358,15 @@ class WorkflowService:
             "behavior_tags": behavior_tags,
             "high_noise_execution_ratio": round(len(high_noise_executed_events) / max(1, len(high_noise_events)), 4),
             "high_noise_hold_ratio": round(len(high_noise_hold_events) / max(1, len(high_noise_events)), 4),
+            "avg_chart_focus_seconds": round(sum(focus_values) / len(focus_values), 2) if focus_values else 0.0,
+            "max_chart_focus_seconds": round(max(focus_values), 2) if focus_values else 0.0,
+            "anxiety_refresh_event_ratio": round(len(anxious_refresh_events) / total_events, 4),
+            "avg_loss_refresh_count": round(sum(refresh_values) / len(refresh_values), 2) if refresh_values else 0.0,
+            "earliest_anxiety_drawdown_trigger_pct": round(min(refresh_trigger_values), 4) if refresh_trigger_values else None,
+            "manual_intervention_count": capture_summary.get("manual_intervention_count", 0),
+            "manual_intervention_rate": capture_summary.get("manual_intervention_rate", 0.0),
+            "trust_decay_score": capture_summary.get("trust_decay_score", 0.0),
+            "behavior_capture_summary": capture_summary,
             "execution_quality_note": execution_note,
             "simulation_market_context": market_context,
         }
@@ -766,6 +1388,11 @@ class WorkflowService:
             "high_noise_hold_ratio": system_report["high_noise_hold_ratio"],
             "fast_event_ratio": system_report["fast_event_ratio"],
             "slow_event_ratio": system_report["slow_event_ratio"],
+            "avg_chart_focus_seconds": system_report["avg_chart_focus_seconds"],
+            "anxiety_refresh_event_ratio": system_report["anxiety_refresh_event_ratio"],
+            "manual_intervention_rate": system_report["manual_intervention_rate"],
+            "trust_decay_score": system_report["trust_decay_score"],
+            "behavior_capture_summary": system_report["behavior_capture_summary"],
             "simulation_market_context": market_context,
         }
         llm_user_report, llm_system_report = self._generate_behavioral_llm_reports(
@@ -823,7 +1450,53 @@ class WorkflowService:
                 "system_report_ready": session.behavioral_system_report is not None,
             },
         )
+        self._refresh_habit_goal_evolution(
+            session,
+            source_type="simulation",
+            source_ref=symbol,
+            note="模拟测试完成后更新交易习惯与目标演化分析。",
+        )
+        session.simulation_training_state = {
+            "baseline_behavior_event_count": len(session.behavior_events),
+            "strategy_training_behavior_event_count": 0,
+            "last_profile_retrained_at": self._now_iso(),
+            "last_profile_retrained_reason": "simulation_complete",
+        }
+        self._refresh_simulation_training_state(session, trigger="simulation_complete")
         return session
+
+    def retrain_simulation_profile(self, session_id: UUID, symbol: str | None = None) -> WorkflowSession:
+        session = self.get_session(session_id)
+        if not session.behavior_events:
+            raise ValueError("Simulation retraining requires existing behavior events.")
+        resolved_symbol = (
+            (symbol or "").strip().upper()
+            or str((session.simulation_market or {}).get("symbol") or "").strip().upper()
+            or next(iter((session.trade_universe or {}).get("symbols") or []), "SIM")
+        )
+        updated = self.complete_simulation(session_id, resolved_symbol)
+        updated = self.get_session(session_id)
+        updated.simulation_training_state = {
+            **(updated.simulation_training_state or {}),
+            "baseline_behavior_event_count": len(updated.behavior_events),
+            "strategy_training_behavior_event_count": len(updated.behavior_events) if updated.strategy_package else 0,
+            "last_profile_retrained_at": self._now_iso(),
+            "last_profile_retrained_reason": "manual_retrain",
+        }
+        self._append_history_event(
+            updated,
+            "simulation_profile_retrained",
+            "已基于新增行为数据重新训练模拟画像。",
+            {"symbol": resolved_symbol, "behavior_event_count": len(updated.behavior_events)},
+        )
+        self._refresh_simulation_training_state(updated, trigger="simulation_retrain")
+        self._refresh_habit_goal_evolution(
+            updated,
+            source_type="simulation_retrain",
+            source_ref=resolved_symbol,
+            note="基于新增行为数据重新训练了模拟画像。",
+        )
+        return updated
 
     def _enrich_behavior_event_with_market(self, session: WorkflowSession, event: BehaviorEvent) -> BehaviorEvent:
         market = session.simulation_market or {}
@@ -873,6 +1546,16 @@ class WorkflowService:
             current_drawdown_pct=current_drawdown,
             daily_trend_pct=daily_trend,
             current_day_return_pct=day_return,
+            chart_focus_seconds=event.chart_focus_seconds if event.chart_focus_seconds is not None else event.latency_seconds,
+            loss_refresh_count=int(event.loss_refresh_count or 0),
+            loss_refresh_drawdown_trigger_pct=(
+                float(event.loss_refresh_drawdown_trigger_pct)
+                if event.loss_refresh_drawdown_trigger_pct is not None
+                else (float(current_drawdown) if int(event.loss_refresh_count or 0) > 0 and current_drawdown is not None else None)
+            ),
+            manual_intervention_count=event.manual_intervention_count,
+            manual_intervention_rate=event.manual_intervention_rate,
+            trust_decay_score=event.trust_decay_score,
         )
 
     def _simulation_market_analysis_context(self, session: WorkflowSession) -> dict:
@@ -1048,6 +1731,10 @@ class WorkflowService:
                 "noise_level": item.noise_level,
                 "sentiment_pressure": item.sentiment_pressure,
                 "latency_seconds": item.latency_seconds,
+                "chart_focus_seconds": item.chart_focus_seconds,
+                "loss_refresh_count": item.loss_refresh_count,
+                "loss_refresh_drawdown_trigger_pct": item.loss_refresh_drawdown_trigger_pct,
+                "trust_decay_score": item.trust_decay_score,
                 "execution_status": item.execution_status,
                 "execution_reason": item.execution_reason,
             }
@@ -1230,6 +1917,13 @@ class WorkflowService:
                 "preferred_timeframe": preferred_timeframe,
             },
         )
+        self._refresh_habit_goal_evolution(
+            session,
+            source_type="trading_preferences",
+            source_ref=f"{trading_frequency}:{preferred_timeframe}",
+            note="用户更新了交易偏好。",
+        )
+        self._refresh_simulation_training_state(session, trigger="trading_preferences")
         return session
 
     def set_trade_universe(self, session_id: UUID, input_type: str, symbols: list[str], allow_overfit_override: bool) -> WorkflowSession:
@@ -1269,17 +1963,24 @@ class WorkflowService:
         session_id: UUID,
         feedback: str | None,
         strategy_type: str = "rule_based_aligned",
+        strategy_method: str | None = None,
+        strategy_description: str | None = None,
         auto_iterations: int = 1,
         iteration_mode: str = "guided",
         objective_metric: str = "return",
         objective_targets: dict | None = None,
         training_window: dict | None = None,
+        trade_execution_limits: dict | None = None,
     ) -> WorkflowSession:
         session = self.get_session(session_id)
         if session.trade_universe is None or session.behavioral_report is None:
             raise ValueError("Trade universe and behavioral report must exist before strategy iteration.")
         expanded = session.trade_universe["expanded"]
         targets = self._normalize_objective_targets(objective_metric, objective_targets or {})
+        normalized_limits = self._normalize_trade_execution_limits(
+            session=session,
+            limits=trade_execution_limits or {},
+        )
         if feedback:
             self._apply_feedback_evolution(session, feedback, strategy_type)
         iteration_context = self._get_iteration_context(
@@ -1287,6 +1988,13 @@ class WorkflowService:
             strategy_type=strategy_type,
             expanded=expanded,
         )
+        strategy_requirements = self._build_strategy_data_requirements(
+            strategy_type=strategy_type,
+            strategy_method=strategy_method,
+            strategy_description=strategy_description,
+            features=iteration_context["features"],
+        )
+        self._assert_strategy_data_requirements(strategy_requirements)
         last_error: str | None = None
         for loop_index in range(max(1, auto_iterations)):
             iteration_no = 1 if session.strategy_package is None else session.strategy_package["iteration_no"] + 1
@@ -1328,6 +2036,8 @@ class WorkflowService:
                 analysis = self._analyze_strategy_iteration(
                     session=session,
                     strategy_type=strategy_type,
+                    strategy_method=strategy_method,
+                    strategy_description=strategy_description,
                     objective_metric=objective_metric,
                     objective_targets=targets,
                     current_candidate=candidate_payload,
@@ -1389,6 +2099,7 @@ class WorkflowService:
                     dataset_plan=dataset_plan,
                     features=iteration_context["features"],
                     objective_metric=objective_metric,
+                    strategy_requirements=strategy_requirements,
                 )
                 research_summary = self._build_research_summary(
                     strategy_type=strategy_type,
@@ -1411,11 +2122,15 @@ class WorkflowService:
                     "auto_iterations_requested": auto_iterations,
                     "objective_metric": objective_metric,
                     "objective_targets": targets,
+                    "strategy_method": strategy_method or "",
+                    "strategy_description": strategy_description or "",
+                    "strategy_data_requirements": strategy_requirements,
                     "training_window": training_window or {},
                     "expected_return_range": [0.10, 0.22],
                     "max_potential_loss": -0.12,
                     "expected_drawdown": -0.08,
-                    "position_limit": 0.18,
+                    "position_limit": normalized_limits.get("max_trade_allocation_ratio", 0.18),
+                    "trade_execution_limits": normalized_limits,
                     "behavioral_compatibility": compatibility,
                     "candidate": candidate_payload,
                     "baseline_candidate": baseline_payload,
@@ -1500,6 +2215,10 @@ class WorkflowService:
                         "iteration_mode": iteration_mode,
                         "objective_metric": objective_metric,
                         "objective_targets": targets,
+                        "strategy_method": strategy_method or "",
+                        "strategy_description": strategy_description or "",
+                        "strategy_data_requirements": strategy_requirements,
+                        "trade_execution_limits": normalized_limits,
                         "training_window": training_window or {},
                         "dataset_plan": dataset_plan,
                         "feature_snapshot": iteration_context["features"],
@@ -1537,6 +2256,19 @@ class WorkflowService:
                     },
                     related_refs=expanded,
                 )
+                self._refresh_habit_goal_evolution(
+                    session,
+                    source_type="strategy_iteration",
+                    source_ref=session.strategy_package["version_label"],
+                    note="策略训练完成一轮，并刷新了目标与习惯综合分析。",
+                )
+                session.simulation_training_state = {
+                    **(session.simulation_training_state or {}),
+                    "strategy_training_behavior_event_count": len(session.behavior_events),
+                    "last_strategy_trained_at": self._now_iso(),
+                    "latest_strategy_version": session.strategy_package["version_label"],
+                }
+                self._refresh_simulation_training_state(session, trigger="strategy_iteration")
                 self._append_history_event(
                     session,
                     "strategy_iteration_completed",
@@ -1607,6 +2339,179 @@ class WorkflowService:
             "strategy_rework_required"
             if any(check["status"] == "fail" for check in session.strategy_checks)
             else "strategy_checked"
+        )
+        self._ensure_active_trading_strategy(session)
+        session.strategy_status_summary = self._build_strategy_status_summary(session)
+        return session
+
+    def _strategy_reference_entries(self, session: WorkflowSession) -> list[dict]:
+        entries: list[dict] = []
+        current_pkg = session.strategy_package or {}
+        if current_pkg.get("version_label"):
+            entries.append(
+                {
+                    "strategy_ref": f"current:{current_pkg['version_label']}",
+                    "version_label": current_pkg["version_label"],
+                    "source": "current",
+                    "pkg": current_pkg,
+                    "strategy_checks": list(session.strategy_checks or []),
+                    "training_log_entry": (session.strategy_training_log or [])[-1] if session.strategy_training_log else {},
+                }
+            )
+        for item in session.report_history:
+            if item.get("report_type") != "strategy_iteration":
+                continue
+            body = item.get("body") or {}
+            pkg = body.get("strategy_package") or {}
+            version_label = pkg.get("version_label")
+            if not version_label:
+                continue
+            entries.append(
+                {
+                    "strategy_ref": version_label,
+                    "version_label": version_label,
+                    "source": "archive",
+                    "pkg": pkg,
+                    "strategy_checks": list(body.get("strategy_checks") or []),
+                    "training_log_entry": body.get("training_log_entry") or {},
+                }
+            )
+        return entries
+
+    def _resolve_strategy_reference(self, session: WorkflowSession, strategy_ref: str | None = None) -> dict | None:
+        entries = self._strategy_reference_entries(session)
+        if not entries:
+            return None
+        requested = str(strategy_ref or "").strip()
+        if requested:
+            for item in entries:
+                if item.get("strategy_ref") == requested:
+                    return item
+            for item in entries:
+                if item.get("version_label") == requested:
+                    return item
+            return None
+        active_ref = str((session.active_trading_strategy or {}).get("strategy_ref") or "").strip()
+        if active_ref:
+            for item in entries:
+                if item.get("strategy_ref") == active_ref:
+                    return item
+        return entries[0]
+
+    def _build_active_trading_strategy_payload(self, entry: dict) -> dict:
+        pkg = entry.get("pkg") or {}
+        recommended = pkg.get("recommended_variant") or {}
+        return {
+            "strategy_ref": entry.get("strategy_ref"),
+            "version_label": entry.get("version_label"),
+            "source": entry.get("source"),
+            "strategy_type": pkg.get("strategy_type"),
+            "recommended_variant_id": recommended.get("variant_id"),
+            "recommended_reason": recommended.get("reason"),
+            "selected_universe": list(pkg.get("selected_universe") or []),
+            "objective_metric": pkg.get("objective_metric"),
+            "trade_execution_limits": pkg.get("trade_execution_limits") or {},
+            "strategy_method": pkg.get("strategy_method") or "",
+            "strategy_description": pkg.get("strategy_description") or "",
+            "training_window": (pkg.get("dataset_plan") or {}).get("user_selected_window") or pkg.get("training_window") or {},
+        }
+
+    def _ensure_active_trading_strategy(self, session: WorkflowSession) -> None:
+        selected = self._resolve_strategy_reference(session)
+        if selected is None:
+            session.active_trading_strategy = None
+            return
+        current = session.active_trading_strategy or {}
+        if current.get("strategy_ref") == selected.get("strategy_ref"):
+            return
+        session.active_trading_strategy = self._build_active_trading_strategy_payload(selected)
+
+    def _build_strategy_status_summary(self, session: WorkflowSession) -> dict:
+        entry = self._resolve_strategy_reference(session)
+        if entry is None:
+            return {
+                "health_status": "失效",
+                "current_status": "开发中",
+                "reason": "当前还没有可用于交易的策略版本。",
+                "active_strategy_ref": None,
+                "available_strategy_refs": [],
+            }
+        pkg = entry.get("pkg") or {}
+        research = pkg.get("research_summary") or {}
+        gate = (research.get("final_release_gate_summary") or {}).get("gate_status") or "unknown"
+        data_quality = (pkg.get("input_manifest") or {}).get("data_quality") or {}
+        training_readiness = ((data_quality.get("training_readiness") or {}).get("status")) or "unknown"
+        evaluation_source = ((research.get("evaluation_snapshot") or {}).get("evaluation_source")) or "unknown"
+        checks = entry.get("strategy_checks") or []
+        failed_checks = [check for check in checks if check.get("status") == "fail"]
+        latest_log = entry.get("training_log_entry") or {}
+        latest_status = latest_log.get("status") or "unknown"
+        available_refs = [item.get("strategy_ref") for item in self._strategy_reference_entries(session) if item.get("strategy_ref")]
+
+        if latest_status == "error" or training_readiness == "blocked" or evaluation_source == "unknown":
+            health_status = "失效"
+            current_status = "开发中"
+            reason = "当前策略缺少可用训练结果或真实评估基础，不能作为自动交易策略。"
+        elif failed_checks or gate == "blocked":
+            health_status = "危险"
+            current_status = "测试中"
+            reason = "当前策略仍被质量检查或发布门阻塞，需要先修复后再进入验证或实盘。"
+        elif session.phase == "strategy_approved":
+            health_status = "健康"
+            current_status = "正常"
+            reason = "当前策略已通过检查并完成批准，可以作为当前交易策略使用。"
+        else:
+            health_status = "观察"
+            current_status = "验证中"
+            reason = "当前策略已经具备真实回测和基础检查结果，但还没有完成最终批准。"
+
+        return {
+            "health_status": health_status,
+            "current_status": current_status,
+            "reason": reason,
+            "gate_status": gate,
+            "training_readiness": training_readiness,
+            "evaluation_source": evaluation_source,
+            "failed_checks": [check.get("check_type") for check in failed_checks if check.get("check_type")],
+            "active_strategy_ref": (session.active_trading_strategy or {}).get("strategy_ref"),
+            "available_strategy_refs": available_refs,
+            "trading_restriction_status": ((pkg.get("trade_execution_limits") or {}).get("restriction_status")) or "未设置",
+            "trading_restriction_summary": ((pkg.get("trade_execution_limits") or {}).get("summary")) or "当前策略还没有设置交易金额限制。",
+            "trade_execution_limits": pkg.get("trade_execution_limits") or {},
+        }
+
+    def set_active_trading_strategy(self, session_id: UUID, *, strategy_ref: str) -> WorkflowSession:
+        session = self.get_session(session_id)
+        selected = self._resolve_strategy_reference(session, strategy_ref)
+        if selected is None:
+            raise ValueError(f"Unknown strategy reference: {strategy_ref}")
+        session.active_trading_strategy = self._build_active_trading_strategy_payload(selected)
+        session.strategy_status_summary = self._build_strategy_status_summary(session)
+        self._append_history_event(
+            session,
+            "active_trading_strategy_selected",
+            "当前交易策略已切换。",
+            {
+                "strategy_ref": session.active_trading_strategy.get("strategy_ref"),
+                "version_label": session.active_trading_strategy.get("version_label"),
+                "source": session.active_trading_strategy.get("source"),
+            },
+        )
+        self._refresh_habit_goal_evolution(
+            session,
+            source_type="active_strategy",
+            source_ref=session.active_trading_strategy.get("strategy_ref") or strategy_ref,
+            note="当前交易策略已切换。",
+        )
+        self._refresh_simulation_training_state(session, trigger="active_strategy")
+        self._record_agent_activity(
+            "portfolio_manager",
+            "ok",
+            "set_active_trading_strategy",
+            f"Selected {session.active_trading_strategy.get('version_label')} as the active trading strategy.",
+            session.session_id,
+            request_payload={"strategy_ref": strategy_ref},
+            response_payload={"active_trading_strategy": session.active_trading_strategy, "strategy_status_summary": session.strategy_status_summary},
         )
         return session
 
@@ -1851,11 +2756,22 @@ class WorkflowService:
     def _resolve_real_training_dataset_plan(self, *, session: WorkflowSession, selected_universe: list[str], dataset_plan: dict) -> dict:
         history_summary = self._collect_real_training_history(selected_universe)
         common_window = self._common_real_history_window(history_summary)
+        auto_backfill_result: dict | None = None
+        if common_window is None:
+            auto_backfill_result = self._attempt_auto_backfill_real_training_history(
+                session=session,
+                selected_universe=selected_universe,
+                history_summary=history_summary,
+            )
+            history_summary = self._collect_real_training_history(selected_universe)
+            common_window = self._common_real_history_window(history_summary)
         if common_window is None:
             raise ValueError(
                 "Strategy training requires real market data, but no shared real historical window is available. "
+                "No automatic stock-history backfill succeeded from the currently available providers. "
                 "Please open the Data Source Expansion workbench, provide API KEY and interface documentation, "
-                "let the system generate and apply the data-source integration, then fetch the missing stock history before training."
+                "let the system generate and test the market-data integration, then retry training. "
+                f"Auto-backfill summary: {json.dumps(auto_backfill_result or {}, ensure_ascii=False, default=str)}"
             )
 
         requested_start = dataset_plan.get("train", {}).get("start")
@@ -1875,20 +2791,41 @@ class WorkflowService:
                 {"start": common_window["start"], "end": common_window["end"]}
             )
 
+        auto_backfill_result = self._attempt_auto_backfill_real_training_history(
+            session=session,
+            selected_universe=selected_universe,
+            history_summary=history_summary,
+        )
+        history_summary = self._collect_real_training_history(selected_universe)
+        common_window = self._common_real_history_window(history_summary)
+        if common_window is not None:
+            common_days = common_window["days"]
+            if requested_start and requested_end and common_window["start"] <= requested_start and common_window["end"] >= requested_end:
+                return dataset_plan
+            is_recent_listing = common_days < 180 and (date.today() - date.fromisoformat(common_window["start"])).days <= 365
+            if is_recent_listing:
+                return self._build_recent_listing_dataset_plan_from_window(
+                    {"start": common_window["start"], "end": common_window["end"]}
+                )
+
         missing_symbols = [item["symbol"] for item in history_summary if not item.get("available")]
         if missing_symbols:
             raise ValueError(
                 "Strategy training stopped because real market data is missing for: "
                 + ", ".join(missing_symbols)
-                + ". Open the Data Source Expansion workbench, provide API KEY and interface documentation, "
-                "then let the system call the provider and fetch the missing stock data before retrying."
+                + ". Automatic stock-history backfill could not complete for those symbols. "
+                "Open the Data Source Expansion workbench, provide API KEY and interface documentation, "
+                "then let the system call the provider and fetch the missing stock data before retrying. "
+                f"Auto-backfill summary: {json.dumps(auto_backfill_result or {}, ensure_ascii=False, default=str)}"
             )
 
         raise ValueError(
             "Strategy training stopped because real historical market data is insufficient for the requested training window. "
             f"Requested {requested_days} days, but only {common_days} shared real-data days are available across the selected universe. "
+            "Automatic stock-history backfill already ran but could not extend coverage enough. "
             "Please supplement stock history through the Data Source Expansion workbench by providing API KEY and interface documentation. "
-            "The system will use the configured real provider to fetch the required stock data before training."
+            "The system will use the configured real provider to fetch the required stock data before training. "
+            f"Auto-backfill summary: {json.dumps(auto_backfill_result or {}, ensure_ascii=False, default=str)}"
         )
 
     def _collect_real_training_history(self, selected_universe: list[str]) -> list[dict]:
@@ -1960,6 +2897,108 @@ class WorkflowService:
         normalized["objective_metric"] = objective_metric
         return normalized
 
+    def _normalize_trade_execution_limits(self, *, session: WorkflowSession, limits: dict) -> dict[str, object]:
+        raw_pct = limits.get("max_trade_allocation_pct")
+        raw_amount = limits.get("max_trade_amount")
+        allocation_pct = float(raw_pct) if raw_pct is not None else 10.0
+        amount_limit = float(raw_amount) if raw_amount is not None else None
+        ratio = round(allocation_pct / 100.0, 6)
+        ratio_cap = round(session.starting_capital * ratio, 2)
+        effective_cap = ratio_cap if amount_limit is None else round(min(ratio_cap, amount_limit), 2)
+        mode = "ratio_and_amount" if amount_limit is not None else "ratio_only"
+        restriction_status = "受限"
+        summary = (
+            f"单笔交易最多使用当前资金的 {allocation_pct:.2f}%（约 {ratio_cap:.2f}）。"
+            if amount_limit is None
+            else f"单笔交易最多使用当前资金的 {allocation_pct:.2f}% 且不超过 {amount_limit:.2f}，当前生效上限约 {effective_cap:.2f}。"
+        )
+        return {
+            "max_trade_allocation_pct": round(allocation_pct, 4),
+            "max_trade_allocation_ratio": ratio,
+            "max_trade_amount": round(amount_limit, 2) if amount_limit is not None else None,
+            "ratio_cap_amount": ratio_cap,
+            "effective_trade_cap_amount": effective_cap,
+            "restriction_mode": mode,
+            "restriction_status": restriction_status,
+            "summary": summary,
+        }
+
+    def _build_strategy_data_requirements(
+        self,
+        *,
+        strategy_type: str,
+        strategy_method: str | None,
+        strategy_description: str | None,
+        features: dict,
+    ) -> dict:
+        available_sections = set(((features.get("data_quality") or {}).get("available_sections") or []))
+        # Real market-history sufficiency is enforced separately by _resolve_real_training_dataset_plan.
+        # Do not block generic strategy training here just because the feature snapshot lacks a market
+        # snapshot section.
+        available_sections.add("market")
+        raw = " ".join(
+            [
+                str(strategy_type or ""),
+                str(strategy_method or ""),
+                str(strategy_description or ""),
+            ]
+        ).lower()
+        required_sections = ["market"]
+        optional_sections: list[str] = ["behavioral", "preferences"]
+        reasons = {"market": "所有策略训练都必须先有真实历史行情。"}
+        keyword_groups = [
+            ("intelligence", ["news", "情报", "舆情", "事件", "宏观", "earnings", "sentiment", "headline"], "该策略依赖事件、新闻或情绪信息。"),
+            ("fundamentals", ["fundamental", "财报", "估值", "现金流", "balance sheet", "revenue", "quality investing", "value"], "该策略依赖财务或基本面数据。"),
+            ("dark_pool", ["dark pool", "暗池", "block trade", "finra"], "该策略依赖暗池或大宗成交线索。"),
+            ("options", ["option", "期权", "iv", "volatility surface", "gamma", "delta", "skew"], "该策略依赖期权链或隐含波动率数据。"),
+        ]
+        for section, keywords, reason in keyword_groups:
+            if any(token in raw for token in keywords):
+                required_sections.append(section)
+                reasons[section] = reason
+        if strategy_type == "trend_following_aligned":
+            optional_sections.extend(["intelligence", "fundamentals"])
+        elif strategy_type == "mean_reversion_aligned":
+            optional_sections.extend(["options", "dark_pool"])
+        required_sections = list(dict.fromkeys(required_sections))
+        optional_sections = [item for item in dict.fromkeys(optional_sections) if item not in required_sections]
+        missing_required = [item for item in required_sections if item not in available_sections]
+        guidance = {
+            "market": "请至少提供训练股票池的真实历史日线数据；如果要做更细粒度策略，再补充分钟级数据。",
+            "intelligence": "请提供新闻、事件、情报或舆情数据源。",
+            "fundamentals": "请提供财报、估值、现金流或资产负债表数据。",
+            "dark_pool": "请提供暗池或大宗成交数据。",
+            "options": "请提供期权链、隐含波动率或相关衍生品数据。",
+        }
+        return {
+            "strategy_type": strategy_type,
+            "strategy_method": strategy_method or "",
+            "strategy_description": strategy_description or "",
+            "required_sections": required_sections,
+            "optional_sections": optional_sections,
+            "available_sections": sorted(available_sections),
+            "missing_required_sections": missing_required,
+            "reasons": reasons,
+            "guidance": {key: guidance[key] for key in required_sections if key in guidance},
+            "status": "blocked" if missing_required else "ready",
+        }
+
+    def _assert_strategy_data_requirements(self, requirements: dict) -> None:
+        missing = list(requirements.get("missing_required_sections") or [])
+        if not missing:
+            return
+        guidance = requirements.get("guidance") or {}
+        reason_map = requirements.get("reasons") or {}
+        detail_lines = [
+            f"{section}: {reason_map.get(section, '缺少必需训练数据。')} {guidance.get(section, '')}".strip()
+            for section in missing
+        ]
+        raise ValueError(
+            "当前策略方式所需数据不足，训练已停止。缺少的必需数据包括："
+            + "；".join(detail_lines)
+            + "。请先补充这些数据后再训练。"
+        )
+
     def _strategy_version_label(self, major: int, minor: int, test_no: int, strategy_name: str) -> str:
         normalized_name = str(strategy_name).replace(" ", "_").replace("/", "_")
         return f"V{major}.{minor}-{test_no}-{normalized_name}"
@@ -1983,6 +3022,8 @@ class WorkflowService:
         self,
         session: WorkflowSession,
         strategy_type: str,
+        strategy_method: str | None,
+        strategy_description: str | None,
         objective_metric: str,
         objective_targets: dict[str, float],
         current_candidate: dict,
@@ -1997,6 +3038,10 @@ class WorkflowService:
             issues.append("user tends to overtrade, so turnover and re-entry frequency should be reduced")
         if strategy_type == "mean_reversion_aligned" and float(profile.get("bottom_fishing_tendency", 0.0)) > 0.4:
             issues.append("mean reversion can amplify the user's bottom-fishing bias")
+        if strategy_method:
+            issues.append(f"user supplied strategy method must remain respected: {strategy_method}")
+        if strategy_description:
+            issues.append(f"user supplied strategy description must stay aligned: {strategy_description[:140]}")
         if previous_failure.get("exists"):
             issues.append(f"previous failure reasons must be addressed: {', '.join(previous_failure.get('failed_checks', [])) or previous_failure.get('summary')}")
         if not issues:
@@ -2010,6 +3055,8 @@ class WorkflowService:
             "feedback": feedback or "",
             "current_strategy_snapshot": {
                 "strategy_type": strategy_type,
+                "strategy_method": strategy_method or "",
+                "strategy_description": strategy_description or "",
                 "signal_count": len(current_candidate.get('signals', [])),
                 "parameter_count": len(current_candidate.get('parameters', {})),
             },
@@ -3020,6 +4067,8 @@ class WorkflowService:
             self._record_agent_activity("risk_guardian", "error", "approve_strategy", message, session.session_id)
             raise ValueError(message)
         session.phase = "strategy_approved"
+        self._ensure_active_trading_strategy(session)
+        session.strategy_status_summary = self._build_strategy_status_summary(session)
         self._record_agent_activity("risk_guardian", "ok", "approve_strategy", message, session.session_id)
         self._append_history_event(
             session,
@@ -3071,11 +4120,27 @@ class WorkflowService:
                 "realized_pnl_pct": trade.realized_pnl_pct,
             },
         )
+        self._refresh_habit_goal_evolution(
+            session,
+            source_type="trade_record",
+            source_ref=trade.symbol,
+            note="新增了一条真实交易记录。",
+        )
+        self._refresh_simulation_training_state(session, trigger="trade_record")
         return session
 
     def search_intelligence(self, session_id: UUID, query: str, max_documents: int | None = None) -> WorkflowSession:
         session = self.get_session(session_id)
         cache_key = ("search_intelligence", str(session.session_id), query, max_documents or 0)
+        self._record_agent_activity(
+            "intelligence_agent",
+            "running",
+            "search_intelligence",
+            f"Started intelligence search for query={query}.",
+            session.session_id,
+            request_payload={"query": query, "max_documents": max_documents},
+            response_payload={"step": "start"},
+        )
         cached_run = self._get_intelligence_cache(cache_key)
         if cached_run is not None:
             session.intelligence_documents = cached_run["documents"]
@@ -3088,10 +4153,27 @@ class WorkflowService:
                 }
             )
             self._record_agent_activity("intelligence_agent", "ok", "search_intelligence", f"Cache hit for query={query}.", session.session_id, request_payload={"query": query, "max_documents": max_documents}, response_payload={"cache_hit": True, "document_count": cached_run.get("document_count"), "source_urls": (cached_run.get("report") or {}).get("source_urls", [])[:5]})
+            self._refresh_intelligence_history_analysis(session)
+            self._refresh_habit_goal_evolution(
+                session,
+                source_type="intelligence_search",
+                source_ref=query,
+                note="新增了一次情报查询记录。",
+            )
+            self._refresh_simulation_training_state(session, trigger="intelligence_search")
             self._auto_enrich_market_intelligence(session, query)
             return session
         try:
             documents = [asdict(item) for item in self.intelligence.search(query, max_documents)]
+            self._record_agent_activity(
+                "intelligence_agent",
+                "running",
+                "search_intelligence",
+                f"Collected {len(documents)} raw documents for query={query}.",
+                session.session_id,
+                request_payload={"query": query, "max_documents": max_documents},
+                response_payload={"step": "documents_collected", "document_count": len(documents)},
+            )
         except Exception as exc:
             error_detail = f"{exc.__class__.__name__}: {exc}"
             run = {
@@ -3127,17 +4209,35 @@ class WorkflowService:
                 "情报搜索失败。",
                 {"query": query, "error": error_detail},
             )
+            self._refresh_intelligence_history_analysis(session)
+            self._refresh_habit_goal_evolution(
+                session,
+                source_type="intelligence_search",
+                source_ref=query,
+                note="新增了一次失败的情报查询记录。",
+            )
+            self._refresh_simulation_training_state(session, trigger="intelligence_search")
             return session
+        self._record_agent_activity(
+            "intelligence_agent",
+            "running",
+            "search_intelligence",
+            f"Summarizing intelligence report for query={query}.",
+            session.session_id,
+            request_payload={"query": query, "document_count": len(documents)},
+            response_payload={"step": "summarizing"},
+        )
         report = self.llm_runtime.summarize_intelligence(query, documents)
+        enriched_documents = list(report.get("translated_documents") or documents)
         report["factors"] = self._extract_intelligence_factors(documents, report)
         self._record_agent_activity("intelligence_agent", "ok", "search_intelligence", f"Collected {len(documents)} documents for query={query}.", session.session_id, request_payload={"query": query, "max_documents": max_documents}, response_payload={"cache_hit": False, "document_count": len(documents), "source_urls": report.get("source_urls", [])[:5], "factors": report.get("factors") or {}})
-        session.intelligence_documents = documents
+        session.intelligence_documents = enriched_documents
         run = {
             "run_id": f"intel-{len(session.intelligence_runs) + 1}",
             "query": query,
             "generated_at": self._now_iso(),
             "document_count": len(documents),
-            "documents": documents,
+            "documents": enriched_documents,
             "report": report,
             "cache_hit": False,
         }
@@ -3156,7 +4256,7 @@ class WorkflowService:
             {
                 "query": query,
                 "document_count": len(documents),
-                "documents": documents,
+                "documents": enriched_documents,
                 "report": report,
             },
         )
@@ -3171,8 +4271,22 @@ class WorkflowService:
             session,
             "intelligence_search_completed",
             "情报搜索与摘要已完成。",
-            {"query": query, "document_count": len(documents)},
+            {
+                "query": query,
+                "document_count": len(documents),
+                "translated_document_count": len(enriched_documents),
+                "translation_status": report.get("translation_status"),
+                "localized_summary": report.get("summary"),
+            },
         )
+        self._refresh_intelligence_history_analysis(session)
+        self._refresh_habit_goal_evolution(
+            session,
+            source_type="intelligence_search",
+            source_ref=query,
+            note="新增了一次情报查询记录。",
+        )
+        self._refresh_simulation_training_state(session, trigger="intelligence_search")
         self._auto_enrich_market_intelligence(session, query)
         return session
 
@@ -3194,8 +4308,26 @@ class WorkflowService:
         symbols = self._resolve_market_enrichment_symbols(session, query)
         if not symbols:
             return
+        self._record_agent_activity(
+            "intelligence_agent",
+            "running",
+            "auto_enrich_market_intelligence",
+            f"Starting automatic market-data enrichment for {len(symbols)} symbols.",
+            session.session_id,
+            request_payload={"query": query, "symbols": symbols},
+            response_payload={"step": "start"},
+        )
         enriched: list[str] = []
         for symbol in symbols:
+            self._record_agent_activity(
+                "intelligence_agent",
+                "running",
+                "auto_enrich_market_intelligence",
+                f"Enriching market intelligence for {symbol}.",
+                session.session_id,
+                request_payload={"query": query, "symbol": symbol},
+                response_payload={"step": "symbol_start"},
+            )
             try:
                 self.fetch_financials_data(session.session_id, symbol)
                 self.fetch_dark_pool_data(session.session_id, symbol)
@@ -3212,6 +4344,15 @@ class WorkflowService:
                     response_payload={"status": "partial_failure"},
                 )
         if enriched:
+            self._record_agent_activity(
+                "intelligence_agent",
+                "ok",
+                "auto_enrich_market_intelligence",
+                f"Completed automatic market-data enrichment for {len(enriched)} symbols.",
+                session.session_id,
+                request_payload={"query": query, "symbols": symbols},
+                response_payload={"step": "completed", "enriched_symbols": enriched},
+            )
             self._append_history_event(
                 session,
                 "intelligence_market_enriched",
@@ -3657,6 +4798,7 @@ class WorkflowService:
         result = self.data_source_expander.build_integration_package(request)
         result["run_id"] = f"datasource-{len(session.data_source_runs) + 1}"
         result["timestamp"] = self._now_iso()
+        self._remember_data_source_api_key(session.session_id, result["run_id"], api_key)
         local_paths = self._persist_data_source_record(
             run=result,
             stage="expand",
@@ -3705,6 +4847,237 @@ class WorkflowService:
                 "analysis": result.get("analysis") or {},
                 "local_registry_paths": local_paths,
             },
+        )
+        return session
+
+    def data_source_health(self, session_id: UUID) -> dict:
+        session = self.get_session(session_id)
+        validation = self.config_validator.validate(self.settings)
+        provider_matrix = {
+            "market_data": self.market_data.provider_matrix(),
+            "fundamentals": self.market_data.fundamentals_provider_matrix(),
+            "dark_pool": self.market_data.dark_pool_provider_matrix(),
+            "options_data": self.market_data.options_provider_matrix(),
+        }
+        runs: list[dict] = []
+        for run in session.data_source_runs:
+            smoke = run.get("smoke_test") or {}
+            apply_result = run.get("programmer_apply") or {}
+            validation_info = run.get("validation") or {}
+            status = "configured"
+            if smoke.get("status") == "ok":
+                status = "healthy"
+            elif smoke.get("status") in {"warning", "blocked"}:
+                status = "warning"
+            elif validation_info.get("ready_for_programmer_agent"):
+                status = "generated_not_tested"
+            else:
+                status = "error"
+            runs.append(
+                {
+                    "run_id": run.get("run_id"),
+                    "provider_name": run.get("provider_name"),
+                    "provider_slug": run.get("provider_slug"),
+                    "category": run.get("category"),
+                    "status": status,
+                    "analysis_mode": ((run.get("analysis") or {}).get("generation_mode")),
+                    "smoke_status": smoke.get("status", "not_run"),
+                    "live_fetch_status": ((smoke.get("live_fetch") or {}).get("status", "not_run")),
+                    "live_fetch_classification": ((smoke.get("live_fetch") or {}).get("classification")),
+                    "apply_status": apply_result.get("status", "not_applied"),
+                    "ready_for_programmer_agent": bool(validation_info.get("ready_for_programmer_agent")),
+                    "timestamp": run.get("timestamp"),
+                    "local_registry_paths": run.get("local_registry_paths", []),
+                    "detail": (smoke.get("live_fetch") or {}).get("next_action")
+                    or (smoke.get("live_fetch") or {}).get("detail")
+                    or run.get("summary")
+                    or "",
+                }
+            )
+        overall_status = "ok"
+        if validation.get("status") == "error" or any(item["status"] == "error" for item in runs):
+            overall_status = "error"
+        elif validation.get("status") == "warning" or any(item["status"] in {"warning", "generated_not_tested"} for item in runs):
+            overall_status = "warning"
+        summary = self.summarize_data_source_health_payload(
+            validation=validation,
+            provider_matrix=provider_matrix,
+            expanded_runs=runs,
+            overall_status=overall_status,
+        )
+        return {
+            "status": overall_status,
+            "configured_providers": provider_matrix,
+            "configured_validation": validation,
+            "expanded_runs": runs,
+            "summary": summary,
+        }
+
+    def summarize_data_source_health_payload(
+        self,
+        *,
+        validation: dict,
+        provider_matrix: dict[str, list[dict]],
+        expanded_runs: list[dict],
+        overall_status: str,
+    ) -> dict:
+        summary = {
+            "configured_provider_count": sum(len(items) for items in provider_matrix.values()),
+            "expanded_run_count": len(expanded_runs),
+            "healthy_runs": sum(1 for item in expanded_runs if item["status"] == "healthy"),
+            "warning_runs": sum(1 for item in expanded_runs if item["status"] == "warning"),
+            "generated_not_tested_runs": sum(1 for item in expanded_runs if item["status"] == "generated_not_tested"),
+        }
+        notes: list[str] = []
+        next_actions: list[str] = []
+        validation_checks = validation.get("checks") or []
+        missing_keys = [
+            item for family_items in provider_matrix.values() for item in family_items
+            if item.get("status") == "warning" and "api_key" in str(item.get("detail", "")).lower()
+        ]
+        if missing_keys:
+            notes.append(f"{len(missing_keys)} 个已启用 provider 缺少 API KEY。")
+            next_actions.append("为需要 live 数据的 provider 补充 API KEY，或显式禁用暂时不用的 provider。")
+        generated_not_tested = [item for item in expanded_runs if item["status"] == "generated_not_tested"]
+        if generated_not_tested:
+            notes.append(f"{len(generated_not_tested)} 个扩展数据源尚未做 smoke test。")
+            next_actions.append("对新扩展的数据源先执行 smoke test，再让训练或情报流程自动复用它。")
+        blocked_runs = [item for item in expanded_runs if item.get("live_fetch_status") == "blocked"]
+        if blocked_runs:
+            notes.append(f"{len(blocked_runs)} 个扩展数据源被 API KEY、权限或套餐限制阻塞。")
+            next_actions.append("检查扩展数据源的 API KEY、权限范围和计费套餐，再重新测试。")
+        local_path_warnings = [item for item in validation_checks if str(item.get("name", "")).endswith(".local_file") and item.get("status") != "ok"]
+        if local_path_warnings:
+            notes.append("本地数据目录仍有路径异常。")
+            next_actions.append("检查 local_file 的 base_path，确保目录存在且可写。")
+        if not notes:
+            notes.append("当前数据源配置和扩展数据源整体可用。")
+        if not next_actions:
+            next_actions.append("当前无需额外修复；如新增数据源，先扩展、测试，再投入训练或情报流程。")
+        if overall_status == "ok":
+            conclusion = "数据源整体健康，可直接用于训练、情报和补数流程。"
+        elif overall_status == "warning":
+            conclusion = "数据源整体可用，但仍有告警项需要处理，建议在进入高频训练前先收敛。"
+        else:
+            conclusion = "数据源存在阻塞问题，部分流程可能无法可靠运行。"
+        summary["conclusion"] = conclusion
+        summary["notes"] = notes
+        summary["next_actions"] = next_actions
+        return summary
+
+    def update_data_source_expansion(
+        self,
+        session_id: UUID,
+        *,
+        run_id: str,
+        interface_documentation: str,
+        api_key: str | None,
+        provider_name: str | None,
+        category: str | None,
+        base_url: str | None,
+        api_key_envs: list[str],
+        docs_summary: str | None,
+        docs_url: str | None,
+        sample_endpoint: str | None,
+        auth_style: str | None,
+        response_format: str | None,
+    ) -> WorkflowSession:
+        session = self.get_session(session_id)
+        selected_run = next((item for item in session.data_source_runs if item.get("run_id") == run_id), None)
+        if selected_run is None:
+            raise ValueError(f"Unknown data-source run: {run_id}")
+        if not interface_documentation.strip():
+            raise ValueError("Data-source expansion update requires interface documentation.")
+        analysis = self._analyze_data_source_documentation(
+            interface_documentation=interface_documentation,
+            provider_name=provider_name,
+            category=category,
+            base_url=base_url,
+            docs_url=docs_url,
+            sample_endpoint=sample_endpoint,
+            auth_style=auth_style,
+            response_format=response_format,
+            api_key_envs=api_key_envs,
+        )
+        request = DataSourceExpansionRequest(
+            interface_documentation=interface_documentation,
+            api_key=api_key,
+            provider_name=provider_name or analysis.get("provider_name"),
+            category=category or analysis.get("category"),
+            base_url=base_url or analysis.get("base_url"),
+            api_key_envs=api_key_envs,
+            docs_summary=docs_summary,
+            docs_url=docs_url or analysis.get("docs_url"),
+            sample_endpoint=sample_endpoint or analysis.get("sample_endpoint"),
+            auth_style=auth_style or analysis.get("auth_style"),
+            response_format=response_format or analysis.get("response_format"),
+            integration_spec=analysis,
+        )
+        updated = self.data_source_expander.build_integration_package(request)
+        updated["run_id"] = run_id
+        updated["timestamp"] = self._now_iso()
+        updated["updated_from_run_id"] = run_id
+        self._remember_data_source_api_key(session.session_id, run_id, api_key)
+        local_paths = self._persist_data_source_record(
+            run=updated,
+            stage="expand",
+            payload=self._sanitize_data_source_run_for_local_storage(updated),
+        )
+        updated["local_registry_paths"] = local_paths
+        index = session.data_source_runs.index(selected_run)
+        session.data_source_runs[index] = updated
+        self._archive_report(
+            session,
+            report_type="data_source_expansion_updated",
+            title=f"Data Source Expansion Updated: {updated['provider_name']}",
+            body=updated,
+            related_refs=[updated.get("target_module"), updated.get("target_test")],
+        )
+        self._append_history_event(
+            session,
+            "data_source_expansion_updated",
+            "数据源扩展方案已更新。",
+            {"run_id": run_id, "provider_name": updated["provider_name"], "local_registry_paths": local_paths},
+        )
+        self._record_agent_activity(
+            "data_source_expansion_agent",
+            "ok" if updated["validation"]["ready_for_programmer_agent"] else "warning",
+            "update_data_source_expansion",
+            f"Updated adapter package for {updated['provider_name']} ({updated['category']}).",
+            session.session_id,
+            request_payload={"run_id": run_id, "api_key": "[REDACTED]" if api_key else None},
+            response_payload={"validation": updated["validation"], "local_registry_paths": local_paths},
+        )
+        return session
+
+    def delete_data_source_expansion(self, session_id: UUID, *, run_id: str) -> WorkflowSession:
+        session = self.get_session(session_id)
+        selected_run = next((item for item in session.data_source_runs if item.get("run_id") == run_id), None)
+        if selected_run is None:
+            raise ValueError(f"Unknown data-source run: {run_id}")
+        session.data_source_runs = [item for item in session.data_source_runs if item.get("run_id") != run_id]
+        self._runtime_data_source_api_keys.pop((str(session.session_id), run_id), None)
+        self._archive_report(
+            session,
+            report_type="data_source_expansion_deleted",
+            title=f"Data Source Expansion Deleted: {selected_run.get('provider_name', run_id)}",
+            body={"run_id": run_id, "provider_name": selected_run.get("provider_name"), "category": selected_run.get("category")},
+            related_refs=[selected_run.get("target_module"), selected_run.get("target_test")],
+        )
+        self._append_history_event(
+            session,
+            "data_source_expansion_deleted",
+            "数据源扩展方案已删除。",
+            {"run_id": run_id, "provider_name": selected_run.get("provider_name")},
+        )
+        self._record_agent_activity(
+            "data_source_expansion_agent",
+            "ok",
+            "delete_data_source_expansion",
+            f"Deleted data-source run {run_id}.",
+            session.session_id,
+            request_payload={"run_id": run_id},
+            response_payload={"remaining_runs": len(session.data_source_runs)},
         )
         return session
 
@@ -3878,6 +5251,172 @@ class WorkflowService:
                     for item_key, item_value in value.items()
                     if str(item_key).strip()
                 }
+        notes = payload.get("notes")
+        if isinstance(notes, list):
+            sanitized["notes"] = [str(item).strip() for item in notes if str(item).strip()]
+        return sanitized
+
+    def _analyze_trading_terminal_documentation(
+        self,
+        *,
+        interface_documentation: str,
+        terminal_name: str | None,
+        terminal_type: str | None,
+        official_docs_url: str | None,
+        docs_search_url: str | None,
+        api_base_url: str | None,
+        api_key_envs: list[str],
+        auth_style: str | None,
+        order_endpoint: str | None,
+        cancel_endpoint: str | None,
+        order_status_endpoint: str | None,
+        positions_endpoint: str | None,
+        balances_endpoint: str | None,
+        trade_records_endpoint: str | None,
+        docs_summary: str | None,
+        response_field_map: dict[str, str] | None,
+    ) -> dict:
+        fallback_request = TradingTerminalIntegrationRequest(
+            interface_documentation=interface_documentation,
+            terminal_name=terminal_name,
+            terminal_type=terminal_type,
+            official_docs_url=official_docs_url,
+            docs_search_url=docs_search_url,
+            api_base_url=api_base_url,
+            api_key_envs=api_key_envs,
+            auth_style=auth_style,
+            order_endpoint=order_endpoint,
+            cancel_endpoint=cancel_endpoint,
+            order_status_endpoint=order_status_endpoint,
+            positions_endpoint=positions_endpoint,
+            balances_endpoint=balances_endpoint,
+            trade_records_endpoint=trade_records_endpoint,
+            docs_summary=docs_summary,
+            response_field_map=response_field_map,
+        )
+        fallback_resolved = self.terminal_integrator.analyze_request(fallback_request)
+        fallback_spec = dict(fallback_resolved["structured_integration_spec"])
+        fallback_spec["analysis_generation_mode"] = "rule_based"
+        fallback_spec["analysis_status"] = "heuristic_completed"
+        fallback_spec["fallback_reason"] = "live_llm_unavailable"
+
+        prompt_payload = {
+            "interface_documentation": interface_documentation,
+            "user_overrides": {
+                "terminal_name": terminal_name,
+                "terminal_type": terminal_type,
+                "official_docs_url": official_docs_url,
+                "docs_search_url": docs_search_url,
+                "api_base_url": api_base_url,
+                "api_key_envs": api_key_envs,
+                "auth_style": auth_style,
+                "order_endpoint": order_endpoint,
+                "cancel_endpoint": cancel_endpoint,
+                "order_status_endpoint": order_status_endpoint,
+                "positions_endpoint": positions_endpoint,
+                "balances_endpoint": balances_endpoint,
+                "trade_records_endpoint": trade_records_endpoint,
+                "docs_summary": docs_summary,
+                "response_field_map": response_field_map,
+            },
+            "required_output_keys": [
+                "terminal_name",
+                "terminal_type",
+                "api_base_url",
+                "official_docs_url",
+                "docs_search_url",
+                "auth_style",
+                "auth_header_name",
+                "auth_query_param",
+                "capabilities",
+                "response_field_map",
+                "notes",
+            ],
+        }
+        fallback_text = json.dumps(fallback_spec, ensure_ascii=False)
+        system_prompt = (
+            "Return strict JSON only, no markdown and no prose. "
+            "You are analyzing non-structured technical documentation for a trading terminal or broker execution API. "
+            "Extract a deterministic integration specification that a Python code generator can consume. "
+            "Allowed terminal_type values: broker_api, desktop_terminal, rest_gateway, fix_gateway, local_sdk. "
+            "Allowed auth_style values: header, query, bearer. "
+            "Output a capabilities object with keys place_order, cancel_order, order_status, positions, balances, trade_records. "
+            "Each capability value must be an object with endpoint only. Keep endpoint relative, without scheme or host. "
+            "place_order, order_status, positions, balances are required capabilities for automatic trading. "
+            "cancel_order and trade_records are optional; leave endpoint as empty string when docs do not provide them. "
+            "response_field_map must be a JSON object of string:string. "
+            "If a field is unknown, return an empty string or {} as appropriate. "
+            "Output only compact minified JSON."
+        )
+        try:
+            llm_result = self.llm_runtime.invoke_text_task(
+                "trading_terminal_doc_analysis",
+                json.dumps(prompt_payload, ensure_ascii=False),
+                fallback_agent="programmer_agent",
+                fallback_text=fallback_text,
+                system_prompt=system_prompt,
+            )
+            parsed = self._parse_llm_json(str(llm_result.get("text", "") or ""))
+            invocation = dict(llm_result["invocation"])
+            profile = llm_result["profile"]
+            if isinstance(parsed, dict) and self._is_valid_trading_terminal_spec(parsed):
+                sanitized = self._sanitize_trading_terminal_spec(parsed, fallback_spec=fallback_spec)
+                sanitized["analysis_generation_mode"] = profile.generation_mode
+                sanitized["analysis_status"] = "live_llm_completed" if profile.generation_mode == "live_llm" else "fallback_completed"
+                sanitized["fallback_reason"] = invocation.get("fallback_reason")
+                sanitized["llm_invocation"] = invocation
+                return sanitized
+            fallback = dict(fallback_spec)
+            fallback["analysis_generation_mode"] = "rule_based"
+            fallback["analysis_status"] = "fallback_completed"
+            fallback["fallback_reason"] = f"invalid_llm_output:{invocation.get('fallback_reason') or 'invalid_json_shape'}"
+            fallback["llm_invocation"] = invocation
+            return fallback
+        except Exception as exc:
+            fallback = dict(fallback_spec)
+            fallback["analysis_generation_mode"] = "rule_based"
+            fallback["analysis_status"] = "fallback_completed"
+            fallback["fallback_reason"] = f"llm_analysis_error:{exc}"
+            return fallback
+
+    def _is_valid_trading_terminal_spec(self, payload: dict) -> bool:
+        required = ["terminal_name", "terminal_type", "api_base_url", "auth_style", "capabilities", "response_field_map"]
+        if not all(key in payload for key in required):
+            return False
+        if str(payload.get("terminal_type") or "").strip() not in {"broker_api", "desktop_terminal", "rest_gateway", "fix_gateway", "local_sdk"}:
+            return False
+        if str(payload.get("auth_style") or "").strip() not in {"header", "query", "bearer"}:
+            return False
+        capabilities = payload.get("capabilities")
+        if not isinstance(capabilities, dict):
+            return False
+        for key in ["place_order", "cancel_order", "order_status", "positions", "balances", "trade_records"]:
+            if key not in capabilities or not isinstance(capabilities.get(key), dict):
+                return False
+        return True
+
+    def _sanitize_trading_terminal_spec(self, payload: dict, *, fallback_spec: dict) -> dict:
+        sanitized = dict(fallback_spec)
+        for key in ["terminal_name", "terminal_type", "api_base_url", "official_docs_url", "docs_search_url", "auth_style", "auth_header_name", "auth_query_param"]:
+            value = payload.get(key)
+            if value not in (None, ""):
+                sanitized[key] = str(value).strip()
+        capabilities = payload.get("capabilities")
+        if isinstance(capabilities, dict):
+            normalized_caps: dict[str, dict[str, str]] = {}
+            for name in ["place_order", "cancel_order", "order_status", "positions", "balances", "trade_records"]:
+                item = capabilities.get(name)
+                if isinstance(item, dict):
+                    normalized_caps[name] = {"endpoint": str(item.get("endpoint") or "").strip().strip("/")}
+            if normalized_caps:
+                sanitized["capabilities"] = {**(sanitized.get("capabilities") or {}), **normalized_caps}
+        field_map = payload.get("response_field_map")
+        if isinstance(field_map, dict):
+            sanitized["response_field_map"] = {
+                str(item_key).strip(): str(item_value).strip()
+                for item_key, item_value in field_map.items()
+                if str(item_key).strip() and str(item_value).strip()
+            }
         notes = payload.get("notes")
         if isinstance(notes, list):
             sanitized["notes"] = [str(item).strip() for item in notes if str(item).strip()]
@@ -4076,7 +5615,7 @@ class WorkflowService:
         result = self._build_data_source_smoke_test(
             selected_run,
             symbol=symbol.strip().upper() or "AAPL",
-            api_key=api_key,
+            api_key=api_key or self._resolve_data_source_runtime_api_key(session.session_id, selected_run),
         )
         local_test_paths = self._persist_data_source_record(run=selected_run, stage="test", payload=result)
         result["local_registry_paths"] = local_test_paths
@@ -4114,39 +5653,64 @@ class WorkflowService:
     def expand_trading_terminal(
         self,
         session_id: UUID,
-        terminal_name: str,
-        terminal_type: str,
-        official_docs_url: str,
-        docs_search_url: str | None,
-        api_base_url: str,
-        api_key_envs: list[str],
-        auth_style: str,
-        order_endpoint: str,
-        cancel_endpoint: str,
-        order_status_endpoint: str,
-        positions_endpoint: str,
-        balances_endpoint: str,
-        docs_summary: str,
+        interface_documentation: str,
+        api_key: str | None = None,
+        terminal_name: str | None = None,
+        terminal_type: str | None = None,
+        official_docs_url: str | None = None,
+        docs_search_url: str | None = None,
+        api_base_url: str | None = None,
+        api_key_envs: list[str] | None = None,
+        auth_style: str | None = None,
+        order_endpoint: str | None = None,
+        cancel_endpoint: str | None = None,
+        order_status_endpoint: str | None = None,
+        positions_endpoint: str | None = None,
+        balances_endpoint: str | None = None,
+        trade_records_endpoint: str | None = None,
+        docs_summary: str | None = None,
         user_notes: str | None = None,
         response_field_map: dict[str, str] | None = None,
     ) -> WorkflowSession:
         session = self.get_session(session_id)
-        request = TradingTerminalIntegrationRequest(
+        analyzed_spec = self._analyze_trading_terminal_documentation(
+            interface_documentation=interface_documentation,
             terminal_name=terminal_name,
             terminal_type=terminal_type,
             official_docs_url=official_docs_url,
             docs_search_url=docs_search_url,
             api_base_url=api_base_url,
-            api_key_envs=api_key_envs,
+            api_key_envs=list(api_key_envs or []),
             auth_style=auth_style,
             order_endpoint=order_endpoint,
             cancel_endpoint=cancel_endpoint,
             order_status_endpoint=order_status_endpoint,
             positions_endpoint=positions_endpoint,
             balances_endpoint=balances_endpoint,
+            trade_records_endpoint=trade_records_endpoint,
+            docs_summary=docs_summary,
+            response_field_map=response_field_map,
+        )
+        request = TradingTerminalIntegrationRequest(
+            interface_documentation=interface_documentation,
+            api_key=api_key,
+            terminal_name=terminal_name,
+            terminal_type=terminal_type,
+            official_docs_url=official_docs_url,
+            docs_search_url=docs_search_url,
+            api_base_url=api_base_url,
+            api_key_envs=list(api_key_envs or []),
+            auth_style=auth_style,
+            order_endpoint=order_endpoint,
+            cancel_endpoint=cancel_endpoint,
+            order_status_endpoint=order_status_endpoint,
+            positions_endpoint=positions_endpoint,
+            balances_endpoint=balances_endpoint,
+            trade_records_endpoint=trade_records_endpoint,
             docs_summary=docs_summary,
             user_notes=user_notes,
             response_field_map=response_field_map,
+            integration_spec=analyzed_spec,
         )
         result = self.terminal_integrator.build_terminal_package(request)
         result["run_id"] = f"terminal-{len(session.terminal_integration_runs) + 1}"
@@ -4157,31 +5721,179 @@ class WorkflowService:
         self._archive_report(
             session,
             report_type="trading_terminal_integration",
-            title=f"Trading Terminal Integration: {terminal_name}",
+            title=f"Trading Terminal Integration: {result['terminal_name']}",
             body=result,
-            related_refs=[official_docs_url, api_base_url],
+            related_refs=[result.get("official_docs_url"), ((result.get("config_candidate") or {}).get("provider_config") or {}).get("base_url")],
         )
         self._append_history_event(
             session,
             "trading_terminal_integration_generated",
             "交易终端接入方案已生成。",
             {
-                "terminal_name": terminal_name,
-                "terminal_type": terminal_type,
+                "terminal_name": result["terminal_name"],
+                "terminal_type": result["terminal_type"],
                 "target_module": result["target_module"],
                 "target_test": result["target_test"],
                 "docs_fetch_ok": result["docs_context"]["docs_fetch_ok"],
                 "integration_readiness": result.get("integration_readiness_summary", {}).get("status"),
+                "automatic_trading_ready": result.get("integration_readiness_summary", {}).get("automatic_trading_ready"),
+                "missing_required_capabilities": result.get("integration_readiness_summary", {}).get("missing_required_capabilities", []),
+                "missing_optional_capabilities": result.get("integration_readiness_summary", {}).get("missing_optional_capabilities", []),
             },
         )
         self._record_agent_activity(
             "trading_terminal_integration_agent",
             "ok" if result["validation"]["ready_for_programmer_agent"] else "warning",
             "expand_trading_terminal",
-            f"Prepared terminal adapter package for {terminal_name} ({terminal_type}).",
+            f"Prepared trading-terminal adapter package for {result['terminal_name']} ({result['terminal_type']}).",
             session.session_id,
-            request_payload=asdict(request),
-            response_payload={"target_module": result["target_module"], "target_test": result["target_test"], "validation": result["validation"], "integration_readiness_summary": result.get("integration_readiness_summary") or {}},
+            request_payload={**asdict(request), "api_key": "[REDACTED]" if api_key else None},
+            response_payload={
+                "target_module": result["target_module"],
+                "target_test": result["target_test"],
+                "validation": result["validation"],
+                "integration_readiness_summary": result.get("integration_readiness_summary") or {},
+                "analysis": result.get("analysis") or {},
+            },
+        )
+        return session
+
+    def update_trading_terminal_integration(
+        self,
+        session_id: UUID,
+        *,
+        run_id: str,
+        interface_documentation: str,
+        api_key: str | None = None,
+        terminal_name: str | None = None,
+        terminal_type: str | None = None,
+        official_docs_url: str | None = None,
+        docs_search_url: str | None = None,
+        api_base_url: str | None = None,
+        api_key_envs: list[str] | None = None,
+        auth_style: str | None = None,
+        order_endpoint: str | None = None,
+        cancel_endpoint: str | None = None,
+        order_status_endpoint: str | None = None,
+        positions_endpoint: str | None = None,
+        balances_endpoint: str | None = None,
+        trade_records_endpoint: str | None = None,
+        docs_summary: str | None = None,
+        user_notes: str | None = None,
+        response_field_map: dict[str, str] | None = None,
+    ) -> WorkflowSession:
+        session = self.get_session(session_id)
+        selected_run = next((item for item in session.terminal_integration_runs if item.get("run_id") == run_id), None)
+        if selected_run is None:
+            raise ValueError(f"Unknown trading-terminal run: {run_id}")
+        if not interface_documentation.strip():
+            raise ValueError("Trading-terminal update requires technical documentation.")
+        analyzed_spec = self._analyze_trading_terminal_documentation(
+            interface_documentation=interface_documentation,
+            terminal_name=terminal_name,
+            terminal_type=terminal_type,
+            official_docs_url=official_docs_url,
+            docs_search_url=docs_search_url,
+            api_base_url=api_base_url,
+            api_key_envs=list(api_key_envs or []),
+            auth_style=auth_style,
+            order_endpoint=order_endpoint,
+            cancel_endpoint=cancel_endpoint,
+            order_status_endpoint=order_status_endpoint,
+            positions_endpoint=positions_endpoint,
+            balances_endpoint=balances_endpoint,
+            trade_records_endpoint=trade_records_endpoint,
+            docs_summary=docs_summary,
+            response_field_map=response_field_map,
+        )
+        request = TradingTerminalIntegrationRequest(
+            interface_documentation=interface_documentation,
+            api_key=api_key,
+            terminal_name=terminal_name,
+            terminal_type=terminal_type,
+            official_docs_url=official_docs_url,
+            docs_search_url=docs_search_url,
+            api_base_url=api_base_url,
+            api_key_envs=list(api_key_envs or []),
+            auth_style=auth_style,
+            order_endpoint=order_endpoint,
+            cancel_endpoint=cancel_endpoint,
+            order_status_endpoint=order_status_endpoint,
+            positions_endpoint=positions_endpoint,
+            balances_endpoint=balances_endpoint,
+            trade_records_endpoint=trade_records_endpoint,
+            docs_summary=docs_summary,
+            user_notes=user_notes,
+            response_field_map=response_field_map,
+            integration_spec=analyzed_spec,
+        )
+        updated = self.terminal_integrator.build_terminal_package(request)
+        updated["run_id"] = run_id
+        updated["timestamp"] = self._now_iso()
+        updated["updated_from_run_id"] = run_id
+        updated["terminal_runtime_summary"] = self._build_terminal_runtime_summary(updated)
+        updated["terminal_reliability_summary"] = self._build_terminal_reliability_summary(updated)
+        index = session.terminal_integration_runs.index(selected_run)
+        session.terminal_integration_runs[index] = updated
+        self._archive_report(
+            session,
+            report_type="trading_terminal_integration_updated",
+            title=f"Trading Terminal Integration Updated: {updated['terminal_name']}",
+            body=updated,
+            related_refs=[updated.get("target_module"), updated.get("target_test")],
+        )
+        self._append_history_event(
+            session,
+            "trading_terminal_integration_updated",
+            "交易终端接入方案已更新。",
+            {
+                "run_id": run_id,
+                "terminal_name": updated.get("terminal_name"),
+                "automatic_trading_ready": (updated.get("integration_readiness_summary") or {}).get("automatic_trading_ready"),
+            },
+        )
+        self._record_agent_activity(
+            "trading_terminal_integration_agent",
+            "ok" if updated["validation"]["ready_for_programmer_agent"] else "warning",
+            "update_trading_terminal_integration",
+            f"Updated trading-terminal adapter package for {updated['terminal_name']} ({updated['terminal_type']}).",
+            session.session_id,
+            request_payload={"run_id": run_id, "api_key": "[REDACTED]" if api_key else None},
+            response_payload={
+                "validation": updated["validation"],
+                "integration_readiness_summary": updated.get("integration_readiness_summary") or {},
+                "exchange_support_summary": updated.get("exchange_support_summary") or {},
+            },
+        )
+        return session
+
+    def delete_trading_terminal_integration(self, session_id: UUID, *, run_id: str) -> WorkflowSession:
+        session = self.get_session(session_id)
+        selected_run = next((item for item in session.terminal_integration_runs if item.get("run_id") == run_id), None)
+        if selected_run is None:
+            raise ValueError(f"Unknown trading-terminal run: {run_id}")
+        session.terminal_integration_runs = [item for item in session.terminal_integration_runs if item.get("run_id") != run_id]
+        self._archive_report(
+            session,
+            report_type="trading_terminal_integration_deleted",
+            title=f"Trading Terminal Integration Deleted: {selected_run.get('terminal_name', run_id)}",
+            body={"run_id": run_id, "terminal_name": selected_run.get("terminal_name"), "terminal_type": selected_run.get("terminal_type")},
+            related_refs=[selected_run.get("target_module"), selected_run.get("target_test")],
+        )
+        self._append_history_event(
+            session,
+            "trading_terminal_integration_deleted",
+            "交易终端接入方案已删除。",
+            {"run_id": run_id, "terminal_name": selected_run.get("terminal_name")},
+        )
+        self._record_agent_activity(
+            "trading_terminal_integration_agent",
+            "ok",
+            "delete_trading_terminal_integration",
+            f"Deleted trading-terminal run {run_id}.",
+            session.session_id,
+            request_payload={"run_id": run_id},
+            response_payload={"remaining_runs": len(session.terminal_integration_runs)},
         )
         return session
 
@@ -4349,6 +6061,9 @@ class WorkflowService:
         repair = test.get("repair_summary") or {}
         checks = test.get("checks") or []
         shape_checks = [item for item in checks if str(item.get("name") or "").endswith("_shape")]
+        required_checks = [item for item in checks if bool(item.get("required"))]
+        required_failed = [item for item in required_checks if item.get("status") == "fail"]
+        warnings = [item for item in checks if item.get("status") == "warning"]
         passed = sum(1 for item in checks if item.get("status") == "pass")
         shape_passed = sum(1 for item in shape_checks if item.get("status") == "pass")
         total = len(checks)
@@ -4363,39 +6078,40 @@ class WorkflowService:
         runtime_status = runtime.get("status") or "unknown"
         test_status = test.get("status") or runtime.get("test_status") or "not_tested"
         docs_fetch_ok = bool((run.get("docs_context") or {}).get("docs_fetch_ok"))
-        field_map = ((run.get("config_candidate") or {}).get("provider_config") or {}).get("response_field_map") or {}
-        field_map_ready = bool(field_map)
+        required_missing = readiness.get("missing_required_capabilities") or []
+        optional_missing = readiness.get("missing_optional_capabilities") or []
 
         if (
             readiness_status == "ready"
             and runtime_status == "healthy"
             and test_status == "ok"
             and docs_fetch_ok
-            and field_map_ready
+            and not required_missing
             and float(contract_confidence or 0.0) >= 0.95
             and (shape_confidence is None or float(shape_confidence) >= 1.0)
         ):
             status = "healthy"
-            note = "Terminal package is reliable enough for sustained integration work and stronger endpoint verification."
-            next_action = "Proceed to deeper endpoint verification while keeping periodic smoke-test revalidation."
+            note = "交易终端接入已经具备自动交易所需必需能力，并通过当前 smoke test。"
+            next_action = "继续做更强的连通性验证，或进入受控自动交易前的最终核验。"
             revalidation_required = False
         elif (
             readiness_status == "blocked"
             or runtime_status == "fragile"
-            or test_status in {"warning", "error"}
+            or test_status == "error"
             or not docs_fetch_ok
-            or not field_map_ready
+            or bool(required_missing)
+            or bool(required_failed)
             or float(contract_confidence or 0.0) < 0.6
             or (shape_confidence is not None and float(shape_confidence) < 0.67)
         ):
             status = "fragile"
-            note = "Terminal package is not reliable enough yet; fix readiness, contract failures, field mapping, or payload shape issues first."
-            next_action = (repair.get("actions") or [runtime.get("next_action") or "Return to the terminal integration page and repair failed contracts before depending on this package."])[0]
+            note = "交易终端接入仍缺少自动交易必需能力，或必需能力测试失败，当前不能进入自动交易。"
+            next_action = (repair.get("actions") or [runtime.get("next_action") or "重新提供更完整的技术文档，补齐必需能力后再测试。"])[0]
             revalidation_required = True
         else:
             status = "warning"
-            note = "Terminal package is partially reliable, but still needs another controlled validation pass before stronger dependence."
-            next_action = runtime.get("next_action") or "Rerun readiness and smoke tests after reviewing endpoint coverage and field mapping."
+            note = "交易终端接入的必需能力已经齐备，但仍有可选能力或字段映射告警。"
+            next_action = runtime.get("next_action") or "如需要交易记录或撤单能力，请继续补充技术文档；否则可带告警继续。"
             revalidation_required = True
 
         return {
@@ -4405,11 +6121,14 @@ class WorkflowService:
             "runtime_status": runtime_status,
             "test_status": test_status,
             "docs_fetch_ok": docs_fetch_ok,
-            "field_map_ready": field_map_ready,
+            "required_missing_capabilities": required_missing,
+            "optional_missing_capabilities": optional_missing,
             "contract_confidence": contract_confidence,
             "shape_confidence": shape_confidence,
             "passed_check_count": passed,
             "total_check_count": total,
+            "required_failed_check_count": len(required_failed),
+            "warning_check_count": len(warnings),
             "next_action": next_action,
             "primary_route": runtime.get("primary_route") or repair.get("primary_route") or "none",
             "revalidation_required": revalidation_required,
@@ -4423,12 +6142,20 @@ class WorkflowService:
         passed = sum(1 for item in checks if item.get("status") == "pass")
         shape_checks = [item for item in checks if str(item.get("name") or "").endswith("_shape")]
         shape_passed = sum(1 for item in shape_checks if item.get("status") == "pass")
+        required_failed = [item for item in checks if bool(item.get("required")) and item.get("status") == "fail"]
+        warnings = [item for item in checks if item.get("status") == "warning"]
         readiness_status = readiness.get("status") or "unknown"
         test_status = test.get("status") or "not_tested"
         total_count = len(checks)
         contract_confidence = round(passed / max(1, total_count), 4)
         shape_confidence = round(shape_passed / max(1, len(shape_checks)), 4) if shape_checks else None
-        if test_status == "ok" and readiness_status == "ready" and contract_confidence >= 0.95 and (shape_confidence is None or shape_confidence >= 1.0):
+        if (
+            test_status == "ok"
+            and readiness_status == "ready"
+            and not readiness.get("missing_required_capabilities")
+            and contract_confidence >= 0.95
+            and (shape_confidence is None or shape_confidence >= 1.0)
+        ):
             return {
                 "status": "healthy",
                 "readiness_status": readiness_status,
@@ -4437,11 +6164,18 @@ class WorkflowService:
                 "total_check_count": total_count,
                 "contract_confidence": contract_confidence,
                 "shape_confidence": shape_confidence,
-                "note": "Terminal package is ready for the next connectivity stage with strong smoke-test coverage.",
-                "next_action": "Proceed to stronger endpoint verification or controlled local integration.",
+                "note": "交易终端接入的自动交易必需能力已经齐备，可以继续做更强的连通性验证。",
+                "next_action": "继续做 live 连通性验证或进入受控自动交易前核验。",
                 "primary_route": repair.get("primary_route") or "none",
             }
-        if readiness_status == "blocked" or test_status in {"warning", "error"} or contract_confidence < 0.6 or (shape_confidence is not None and shape_confidence < 0.67):
+        if (
+            readiness_status == "blocked"
+            or test_status == "error"
+            or bool(readiness.get("missing_required_capabilities"))
+            or bool(required_failed)
+            or contract_confidence < 0.6
+            or (shape_confidence is not None and shape_confidence < 0.67)
+        ):
             return {
                 "status": "fragile",
                 "readiness_status": readiness_status,
@@ -4450,9 +6184,9 @@ class WorkflowService:
                 "total_check_count": total_count,
                 "contract_confidence": contract_confidence,
                 "shape_confidence": shape_confidence,
-                "note": "Terminal package is not ready yet. Fix readiness gaps, failed smoke-test contracts, or weak payload-shape coverage first.",
-                "next_action": (repair.get("actions") or ["Return to the terminal integration page and fix the failed contract or endpoint."])[0],
-                "primary_route": repair.get("primary_route") or "data_shape_repair",
+                "note": "交易终端接入仍缺少自动交易必需能力，当前不能进入自动交易。",
+                "next_action": (repair.get("actions") or ["重新提供更完整的技术文档，补齐必需能力后再测试。"])[0],
+                "primary_route": repair.get("primary_route") or "terminal_required_capability_repair",
             }
         return {
             "status": "warning",
@@ -4462,9 +6196,9 @@ class WorkflowService:
             "total_check_count": total_count,
             "contract_confidence": contract_confidence,
             "shape_confidence": shape_confidence,
-            "note": "Terminal package has partial readiness but still needs another validation pass.",
-            "next_action": "Run or rerun smoke tests after reviewing endpoint coverage and field mapping.",
-            "primary_route": repair.get("primary_route") or "readiness_review",
+            "note": "交易终端接入已具备自动交易必需能力，但仍存在可选能力或字段映射告警。",
+            "next_action": (repair.get("actions") or ["如需要交易记录或撤单能力，请继续补充技术文档；否则可带告警继续。"])[0],
+            "primary_route": repair.get("primary_route") or ("terminal_optional_capability_review" if warnings else "readiness_review"),
         }
 
     def compose_market_template_campaign(
@@ -5372,6 +7106,7 @@ class WorkflowService:
         dataset_plan: dict,
         features: dict,
         objective_metric: str,
+        strategy_requirements: dict,
     ) -> dict:
         meta = features.get("meta") or {}
         lineage = features.get("source_lineage") or {}
@@ -5388,6 +7123,7 @@ class WorkflowService:
             "provider_coverage": data_quality.get("provider_coverage") or [],
             "data_quality": data_quality,
             "source_lineage": lineage,
+            "strategy_data_requirements": strategy_requirements,
         }
 
     def _register_data_bundle(self, session: WorkflowSession, manifest: dict) -> None:
@@ -5470,6 +7206,12 @@ class WorkflowService:
             },
         )
         self._merge_profile_evolution(session, event)
+        self._refresh_habit_goal_evolution(
+            session,
+            source_type="strategy_feedback",
+            source_ref=strategy_type,
+            note="用户提供了新的训练反馈。",
+        )
 
     def _apply_trade_evolution(self, session: WorkflowSession, trade: TradeExecutionRecord) -> None:
         delta_panic = 0.0
@@ -5480,6 +7222,9 @@ class WorkflowService:
         delta_confidence = 0.0
         if trade.user_initiated:
             delta_intervention += 0.03
+            if str(trade.execution_mode or "").lower() in {"autonomous", "advice_only"}:
+                delta_intervention += 0.04
+                delta_confidence -= 0.03
         if trade.realized_pnl_pct <= -8.0:
             delta_panic += 0.04
             delta_confidence -= 0.05
@@ -5608,19 +7353,29 @@ class WorkflowService:
         request_payload=None,
         response_payload=None,
     ) -> None:
-        self.agent_activity_log.append(
-            {
-                "timestamp": self._now_iso(),
-                "agent": agent,
-                "status": status,
-                "operation": operation,
-                "detail": detail,
-                "session_id": str(session_id) if session_id else None,
-                "request_payload": self._debug_preview(request_payload),
-                "response_payload": self._debug_preview(response_payload),
-            }
-        )
+        timestamp = self._now_iso()
+        session_obj: WorkflowSession | None = None
+        if session_id:
+            session_obj = self.sessions.get(session_id)
+        sequence = len(self.agent_activity_log) + 1
+        event = {
+            "activity_id": f"act-{sequence}",
+            "sequence": sequence,
+            "timestamp": timestamp,
+            "agent": agent,
+            "status": status,
+            "operation": operation,
+            "detail": detail,
+            "session_id": str(session_id) if session_id else None,
+            "request_payload": self._debug_preview(request_payload),
+            "response_payload": self._debug_preview(response_payload),
+        }
+        self.agent_activity_log.append(event)
         self.agent_activity_log = self.agent_activity_log[-200:]
+        if session_obj is not None:
+            session_obj.agent_activity.append(dict(event))
+            session_obj.agent_activity = session_obj.agent_activity[-500:]
+            self._persist_session(session_obj)
 
     def _agent_diagnostics(self) -> list[dict]:
         known_agents = [

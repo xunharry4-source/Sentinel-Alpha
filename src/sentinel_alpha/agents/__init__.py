@@ -2,6 +2,8 @@
 
 from sentinel_alpha.agents.behavioral_profiler import BehavioralProfilerAgent
 from sentinel_alpha.agents.data_source_expansion_agent import DataSourceExpansionAgent
+from sentinel_alpha.agents.habit_goal_evolution_agent import HabitGoalEvolutionAgent
+from sentinel_alpha.agents.intelligence_history_agent import IntelligenceHistoryAgent
 from sentinel_alpha.agents.intent_aligner import IntentAlignerAgent
 from sentinel_alpha.agents.intelligence_agent import IntelligenceAgent
 from sentinel_alpha.agents.market_asset_monitor_agent import MarketAssetMonitorAgent
@@ -20,6 +22,8 @@ from sentinel_alpha.agents.user_monitor_agent import UserMonitorAgent
 __all__ = [
     "BehavioralProfilerAgent",
     "DataSourceExpansionAgent",
+    "HabitGoalEvolutionAgent",
+    "IntelligenceHistoryAgent",
     "IntentAlignerAgent",
     "IntelligenceAgent",
     "MarketAssetMonitorAgent",

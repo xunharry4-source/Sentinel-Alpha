@@ -32,9 +32,23 @@ class FreeMarketDataService:
 
     def __init__(self, settings: AppSettings | None = None) -> None:
         self.settings = settings or get_settings()
+        self._ensure_local_data_directories()
         self._response_cache: dict[tuple, dict] = {}
         self._cache_hits = 0
         self._cache_misses = 0
+
+    def _ensure_local_data_directories(self) -> None:
+        paths = [
+            str(self.settings.market_data_provider_configs.get("local_file", {}).get("base_path", "data/local_market_data/market_data")),
+            str(self.settings.fundamentals_provider_configs.get("local_file", {}).get("base_path", "data/local_market_data/fundamentals")),
+            str(self.settings.dark_pool_provider_configs.get("local_file", {}).get("base_path", "data/local_market_data/dark_pool")),
+            str(self.settings.options_provider_configs.get("local_file", {}).get("base_path", "data/local_market_data/options")),
+        ]
+        for raw in paths:
+            try:
+                Path(raw).expanduser().mkdir(parents=True, exist_ok=True)
+            except Exception:
+                continue
 
     def provider_matrix(self) -> list[dict]:
         providers: list[dict] = []

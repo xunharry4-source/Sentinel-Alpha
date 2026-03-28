@@ -4,14 +4,14 @@
 
 The project and its configuration artifacts are distributed under the Apache License 2.0.
 
-- [LICENSE](/Users/harry/Documents/git/Sentinel-Alpha/LICENSE)
+- [LICENSE](../LICENSE)
 
 Sentinel-Alpha must not rely on hardcoded runtime endpoints or storage addresses inside business logic.
 
 ## Canonical Config Sources
 
-- Backend runtime config: [config/settings.toml](/Users/harry/Documents/git/Sentinel-Alpha/config/settings.toml)
-- Frontend runtime config: [config.json](/Users/harry/Documents/git/Sentinel-Alpha/src/sentinel_alpha/webapp/static/config.json)
+- Backend runtime config: [config/settings.toml](../config/settings.toml)
+- Frontend runtime config: [config.json](../src/sentinel_alpha/webapp/static/config.json)
 
 ## Backend Config
 
@@ -130,15 +130,15 @@ Options providers:
 
 Default resolved local roots in this repository:
 
-- `/Users/harry/Documents/git/Sentinel-Alpha/data/local_market_data/market_data`
-- `/Users/harry/Documents/git/Sentinel-Alpha/data/local_market_data/fundamentals`
-- `/Users/harry/Documents/git/Sentinel-Alpha/data/local_market_data/dark_pool`
-- `/Users/harry/Documents/git/Sentinel-Alpha/data/local_market_data/options`
+- `data/local_market_data/market_data`
+- `data/local_market_data/fundamentals`
+- `data/local_market_data/dark_pool`
+- `data/local_market_data/options`
 
 Data-source expansion local registry:
 
 - generated and supplemented data-source definitions are also persisted under:
-  - `/Users/harry/Documents/git/Sentinel-Alpha/config/data_source_registry/{provider_slug}/`
+  - `config/data_source_registry/{provider_slug}/`
 - each provider directory stores:
   - `{run_id}.expand.json`
   - `{run_id}.apply.json`
@@ -268,4 +268,4 @@ Container deployment must preserve the same configuration contract rather than i
 - Docker images may override host, port, and external service DSNs through environment variables.
 - Docker Compose must not duplicate business thresholds outside the canonical config contract.
 - schema initialization for TimescaleDB/PostgreSQL must come from tracked SQL files in `sql/` or `docker/`.
-- the canonical Docker deployment spec lives in [docker-deployment.md](/Users/harry/Documents/git/Sentinel-Alpha/docs/docker-deployment.md).
+- the canonical Docker deployment spec lives in [docker-deployment.md](docker-deployment.md).
