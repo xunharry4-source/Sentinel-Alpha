@@ -2,3 +2,24 @@
 .env
 .env.*
 .idea
+.DS_Store
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# Runtime and local data artifacts
+config/backups/
+config/session_store/
+config/data_source_registry/
+data/local_market_data/
+
+# Frontend build and dependency artifacts
+frontend/node_modules/
+frontend/dist/
+frontend/.npm_cache/
